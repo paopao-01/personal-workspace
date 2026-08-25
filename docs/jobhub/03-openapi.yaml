@@ -798,7 +798,10 @@ components:
         type: { $ref: '#/components/schemas/RequirementType' }
         proficiencyText: { type: string, maxLength: 500 }
         confirmationStatus: { $ref: '#/components/schemas/RequirementConfirmationStatus' }
-        reason: { type: string, maxLength: 1000 }
+        reason: { type: string, maxLength: 1000, description: 人工修正匹配状态时的原因；与 manualMatchStatus 配合使用。 }
+        manualMatchStatus:
+          $ref: '#/components/schemas/GapStatus'
+          description: 可选。用户提供后，对应要求的 requirement_match 将被人工修正为此状态；reason 字段作为修正原因保留。原计算依据通过 evidence_snapshot_json 保留（AT-04）。
     RequirementMergeRequest:
       type: object
       required: [targetRequirementId, sourceRequirementIds]

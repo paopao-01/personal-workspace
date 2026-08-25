@@ -1,0 +1,9 @@
+package com.jobhub.job.domain;
+
+public enum GapStatus {
+	SATISFIED_WITH_EVIDENCE,
+	SELF_REPORTED_NO_EVIDENCE,
+	NOT_MET,
+	INSUFFICIENT_INFO,
+	PENDING_CONFIRMATION
+}
