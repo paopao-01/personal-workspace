@@ -1,0 +1,190 @@
+{
+  "fixtureVersion": "0.1.0",
+  "purpose": "脱敏演示、接口联调与端到端测试；不代表真实公司、联系人或个人经历。",
+  "clock": "2026-08-25T09:00:00Z",
+  "user": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "displayName": "演示用户",
+    "timeZone": "Asia/Shanghai",
+    "jobTarget": "Java 后端开发工程师"
+  },
+  "skills": [
+    { "id": "10000000-0000-0000-0000-000000000001", "name": "Java", "selfLevel": 3, "evidenceStatus": "VALID" },
+    { "id": "10000000-0000-0000-0000-000000000002", "name": "Spring Boot", "selfLevel": 3, "evidenceStatus": "VALID" },
+    { "id": "10000000-0000-0000-0000-000000000003", "name": "MySQL", "selfLevel": 2, "evidenceStatus": "WEAK" },
+    { "id": "10000000-0000-0000-0000-000000000004", "name": "Redis", "selfLevel": 2, "evidenceStatus": "NO_EVIDENCE" },
+    { "id": "10000000-0000-0000-0000-000000000005", "name": "消息队列", "selfLevel": 1, "evidenceStatus": "NO_EVIDENCE" }
+  ],
+  "knowledgePoints": [
+    { "id": "20000000-0000-0000-0000-000000000001", "name": "Redis 缓存一致性", "category": "Redis" },
+    { "id": "20000000-0000-0000-0000-000000000002", "name": "MySQL 索引与执行计划", "category": "MySQL" },
+    { "id": "20000000-0000-0000-0000-000000000003", "name": "Java 线程池", "category": "并发" },
+    { "id": "20000000-0000-0000-0000-000000000004", "name": "消息可靠投递", "category": "消息队列" }
+  ],
+  "projects": [
+    {
+      "id": "30000000-0000-0000-0000-000000000001",
+      "title": "库存服务改造（虚构）",
+      "scenario": "订单高峰期的库存查询接口需要降低数据库压力。",
+      "approach": "在 Spring Boot 服务中引入 Redis 缓存，并为热点 Key 设置短过期时间。",
+      "problemSolved": "减少重复查询并保持库存展示可接受的最终一致性。",
+      "result": "演示数据不提供虚构指标；实际项目应由用户补充可验证结果。",
+      "skillIds": [
+        "10000000-0000-0000-0000-000000000001",
+        "10000000-0000-0000-0000-000000000002",
+        "10000000-0000-0000-0000-000000000004"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "40000000-0000-0000-0000-000000000001",
+      "type": "ARCHITECTURE_DIAGRAM",
+      "title": "库存服务缓存流程图（示例）",
+      "whereUsed": "库存查询接口",
+      "problemSolved": "解释缓存命中、回源和失效路径",
+      "approach": "Cache Aside",
+      "urlOrPath": "C:/example/jobhub-demo/inventory-cache-diagram.png"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "50000000-0000-0000-0000-000000000001",
+      "companyName": "云仓科技（虚构）",
+      "title": "Java 后端开发工程师",
+      "location": "上海",
+      "source": "演示招聘站",
+      "jdRawText": "负责订单与库存相关服务开发。要求熟悉 Java、Spring Boot、MySQL，了解 Redis 和消息队列；有 1 年以上后端项目经验优先。",
+      "decisionStatus": "APPLY",
+      "decisionReason": "核心技术栈匹配，Redis 和消息队列需重点准备。",
+      "requirements": [
+        { "id": "51000000-0000-0000-0000-000000000001", "rawText": "熟悉 Java", "normalizedName": "Java", "type": "MUST", "confirmationStatus": "CONFIRMED", "gapStatus": "SATISFIED_WITH_EVIDENCE" },
+        { "id": "51000000-0000-0000-0000-000000000002", "rawText": "熟悉 Spring Boot", "normalizedName": "Spring Boot", "type": "MUST", "confirmationStatus": "CONFIRMED", "gapStatus": "SATISFIED_WITH_EVIDENCE" },
+        { "id": "51000000-0000-0000-0000-000000000003", "rawText": "熟悉 MySQL", "normalizedName": "MySQL", "type": "MUST", "confirmationStatus": "CONFIRMED", "gapStatus": "SELF_REPORTED_NO_EVIDENCE" },
+        { "id": "51000000-0000-0000-0000-000000000004", "rawText": "了解 Redis", "normalizedName": "Redis", "type": "BONUS", "confirmationStatus": "CONFIRMED", "gapStatus": "SELF_REPORTED_NO_EVIDENCE" },
+        { "id": "51000000-0000-0000-0000-000000000005", "rawText": "有消息队列经验", "normalizedName": "消息队列", "type": "TO_CONFIRM", "confirmationStatus": "PENDING", "gapStatus": "PENDING_CONFIRMATION" }
+      ]
+    },
+    {
+      "id": "50000000-0000-0000-0000-000000000002",
+      "companyName": "星河支付（虚构）",
+      "title": "初级 Java 开发工程师",
+      "location": "杭州",
+      "source": "内推演示",
+      "jdRawText": "参与支付流水和对账平台开发。要求了解 Java 并发、MySQL 索引、分布式事务，能参与线上问题排查。",
+      "decisionStatus": "DEFER",
+      "decisionReason": "方向感兴趣，但需先补齐并发与数据库案例。",
+      "requirements": [
+        { "id": "52000000-0000-0000-0000-000000000001", "rawText": "了解 Java 并发", "normalizedName": "Java 线程池", "type": "MUST", "confirmationStatus": "CONFIRMED", "gapStatus": "INSUFFICIENT_INFO" },
+        { "id": "52000000-0000-0000-0000-000000000002", "rawText": "熟悉 MySQL 索引", "normalizedName": "MySQL 索引与执行计划", "type": "MUST", "confirmationStatus": "CONFIRMED", "gapStatus": "SELF_REPORTED_NO_EVIDENCE" }
+      ]
+    }
+  ],
+  "applications": [
+    {
+      "id": "60000000-0000-0000-0000-000000000001",
+      "jobId": "50000000-0000-0000-0000-000000000001",
+      "appliedAt": "2026-08-20",
+      "channel": "演示招聘站",
+      "status": "INTERVIEWING",
+      "nextAction": "完成 Redis 缓存一致性准备并参加一面",
+      "nextActionDueAt": "2026-08-27T01:00:00Z",
+      "statusHistory": [
+        { "fromStatus": "DRAFT", "toStatus": "APPLIED", "occurredAt": "2026-08-20T02:00:00Z" },
+        { "fromStatus": "APPLIED", "toStatus": "RESUME_PASSED", "occurredAt": "2026-08-22T03:00:00Z" },
+        { "fromStatus": "RESUME_PASSED", "toStatus": "INTERVIEWING", "occurredAt": "2026-08-23T03:00:00Z" }
+      ]
+    }
+  ],
+  "interviews": [
+    {
+      "id": "70000000-0000-0000-0000-000000000001",
+      "applicationId": "60000000-0000-0000-0000-000000000001",
+      "roundName": "技术一面",
+      "startsAt": "2026-08-27T02:00:00Z",
+      "eventTimeZone": "Asia/Shanghai",
+      "mode": "ONLINE",
+      "scheduleStatus": "SCHEDULED",
+      "result": "PENDING",
+      "preparationChecklist": [
+        { "id": "71000000-0000-0000-0000-000000000001", "text": "测试会议链接和耳机", "completed": false },
+        { "id": "71000000-0000-0000-0000-000000000002", "text": "准备库存服务项目讲解", "completed": false }
+      ]
+    },
+    {
+      "id": "70000000-0000-0000-0000-000000000002",
+      "applicationId": "60000000-0000-0000-0000-000000000001",
+      "roundName": "模拟面试（历史示例）",
+      "startsAt": "2026-08-10T02:00:00Z",
+      "eventTimeZone": "Asia/Shanghai",
+      "mode": "ONLINE",
+      "scheduleStatus": "COMPLETED",
+      "result": "FAILED"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "80000000-0000-0000-0000-000000000001",
+      "interviewId": "70000000-0000-0000-0000-000000000002",
+      "status": "COMPLETED",
+      "interviewResult": "FAILED",
+      "noQuestionsRecorded": false,
+      "questions": [
+        {
+          "id": "81000000-0000-0000-0000-000000000001",
+          "content": "缓存与数据库双写时如何处理一致性问题？",
+          "answerStatus": "UNANSWERED",
+          "knowledgePointIds": ["20000000-0000-0000-0000-000000000001"],
+          "errorReason": "没有从更新顺序、失效策略和异常补偿展开。"
+        },
+        {
+          "id": "81000000-0000-0000-0000-000000000002",
+          "content": "如何判断 MySQL 查询是否走了合适的索引？",
+          "answerStatus": "PARTIALLY_ANSWERED",
+          "knowledgePointIds": ["20000000-0000-0000-0000-000000000002"],
+          "errorReason": "提到 EXPLAIN，但未说明关键字段和优化判断。"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "90000000-0000-0000-0000-000000000001",
+      "title": "梳理 Redis 缓存一致性方案",
+      "status": "IN_PROGRESS",
+      "priority": "HIGH",
+      "dueAt": "2026-08-27T01:00:00Z",
+      "knowledgePointIds": ["20000000-0000-0000-0000-000000000001"],
+      "sourceQuestionIds": ["81000000-0000-0000-0000-000000000001"],
+      "acceptanceCriteria": "能用 3 分钟说明 Cache Aside 的更新顺序、失效方式和异常场景。",
+      "verificationMethod": "口述演练并记录自评结果"
+    },
+    {
+      "id": "90000000-0000-0000-0000-000000000002",
+      "title": "复习 MySQL EXPLAIN 与索引优化",
+      "status": "TODO",
+      "priority": "MEDIUM",
+      "knowledgePointIds": ["20000000-0000-0000-0000-000000000002"],
+      "sourceQuestionIds": ["81000000-0000-0000-0000-000000000002"],
+      "acceptanceCriteria": "能解释至少 5 个 EXPLAIN 关键字段并给出一个索引优化例子。",
+      "verificationMethod": "完成自测题并关联笔记链接"
+    }
+  ],
+  "edgeCaseFixtures": {
+    "duplicateApplication": {
+      "jobId": "50000000-0000-0000-0000-000000000001",
+      "expectedError": "DUPLICATE_APPLICATION"
+    },
+    "illegalTransition": {
+      "applicationStatus": "DRAFT",
+      "targetStatus": "OFFER",
+      "expectedError": "ILLEGAL_STATE_TRANSITION"
+    },
+    "staleVersion": {
+      "resource": "learningTask",
+      "currentVersion": 4,
+      "submittedVersion": 3,
+      "expectedError": "VERSION_CONFLICT"
+    }
+  }
+}

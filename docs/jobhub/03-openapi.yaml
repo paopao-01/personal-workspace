@@ -1,0 +1,1240 @@
+openapi: 3.0.3
+info:
+  title: JobHub V0.1 API
+  version: 0.1.0
+  description: |
+    本地单用户模式 API。状态转换以 `02-state-machines.md` 为准；未经用户确认的候选要求不得作为确定性结论。
+    所有 POST、PUT、DELETE 及状态转换接口均应支持 Idempotency-Key；带 version 的资源更新应提交 If-Match-Version。
+servers:
+  - url: http://localhost:8080/api
+    description: 本地开发服务
+tags:
+  - name: Jobs
+  - name: Applications
+  - name: Interviews
+  - name: Reviews
+  - name: Tasks
+  - name: SkillsAndEvidence
+  - name: DataManagement
+paths:
+  /dashboard:
+    get:
+      tags: [Jobs, Applications, Interviews, Tasks]
+      summary: 获取首页工作台聚合数据
+      responses:
+        '200': { description: 今日行动、未来面试、进行中投递和薄弱点, content: { application/json: { schema: { $ref: '#/components/schemas/DashboardOverview' } } } }
+  /jobs:
+    get:
+      tags: [Jobs]
+      summary: 查询岗位列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: decisionStatus
+          in: query
+          schema: { $ref: '#/components/schemas/JobDecisionStatus' }
+        - name: jobStatus
+          in: query
+          schema: { $ref: '#/components/schemas/JobStatus' }
+        - name: query
+          in: query
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: 岗位分页列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageJob' }
+    post:
+      tags: [Jobs]
+      summary: 创建岗位并保存 JD 原文
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobCreateRequest' }
+      responses:
+        '201':
+          description: 创建成功
+          content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/IdempotencyConflict' }
+  /jobs/{jobId}:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Jobs]
+      summary: 获取岗位详情
+      responses:
+        '200': { description: 岗位详情, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Jobs]
+      summary: 更新岗位基础信息或投递决定
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobUpdateRequest' }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /jobs/{jobId}/archive:
+    parameters: [ { $ref: '#/components/parameters/JobId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+    post:
+      tags: [Jobs]
+      summary: 归档岗位
+      responses:
+        '200': { description: 已归档, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /jobs/{jobId}/restore:
+    parameters: [ { $ref: '#/components/parameters/JobId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+    post:
+      tags: [Jobs]
+      summary: 恢复已归档岗位
+      responses:
+        '200': { description: 已恢复, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+  /jobs/{jobId}/requirements/extract:
+    parameters: [ { $ref: '#/components/parameters/JobId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+    post:
+      tags: [Jobs]
+      summary: 使用基础规则提取候选岗位要求
+      description: P0 同步规则提取；不使用 AI，结果均为 PENDING，且不会自动覆盖已确认要求。
+      responses:
+        '200':
+          description: 候选要求
+          content: { application/json: { schema: { $ref: '#/components/schemas/RequirementExtractionResult' } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /jobs/{jobId}/requirements:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Jobs]
+      summary: 查询岗位要求及确认状态
+      responses:
+        '200':
+          description: 岗位要求列表
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/JobRequirement' } } } }
+  /job-requirements/{requirementId}:
+    parameters: [ { $ref: '#/components/parameters/RequirementId' } ]
+    put:
+      tags: [Jobs]
+      summary: 确认、编辑、忽略或恢复单项岗位要求
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequirementUpdateRequest' }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/JobRequirement' } } } }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+  /job-requirements/merge:
+    post:
+      tags: [Jobs]
+      summary: 合并同一岗位的重复要求
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequirementMergeRequest' }
+      responses:
+        '200': { description: 合并后的目标要求, content: { application/json: { schema: { $ref: '#/components/schemas/JobRequirement' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /jobs/{jobId}/gap-list:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Jobs]
+      summary: 获取可解释差距清单
+      responses:
+        '200':
+          description: 差距项；只基于 CONFIRMED 要求
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/GapItem' } } } }
+
+  /applications:
+    get:
+      tags: [Applications]
+      summary: 查询投递列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ApplicationStatus' }
+        - name: overdueActionOnly
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { description: 投递分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/PageApplication' } } } }
+    post:
+      tags: [Applications]
+      summary: 创建投递记录
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplicationCreateRequest' }
+      responses:
+        '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/DuplicateApplication' }
+  /applications/{applicationId}:
+    parameters: [ { $ref: '#/components/parameters/ApplicationId' } ]
+    get:
+      tags: [Applications]
+      summary: 获取投递详情
+      responses:
+        '200': { description: 投递详情, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationDetail' } } } }
+    put:
+      tags: [Applications]
+      summary: 更新投递元数据与下一步行动，不改变当前状态
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplicationUpdateRequest' }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+  /applications/{applicationId}/transition:
+    parameters: [ { $ref: '#/components/parameters/ApplicationId' } ]
+    post:
+      tags: [Applications]
+      summary: 转换投递状态
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplicationTransitionRequest' }
+      responses:
+        '200': { description: 转换成功, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /applications/{applicationId}/status-history:
+    parameters: [ { $ref: '#/components/parameters/ApplicationId' } ]
+    get:
+      tags: [Applications]
+      summary: 查询投递状态历史
+      responses:
+        '200': { description: 状态历史, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StatusLog' } } } } }
+
+  /interviews:
+    get:
+      tags: [Interviews]
+      summary: 查询面试日程（列表或日历）
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: scheduleStatus
+          in: query
+          schema: { $ref: '#/components/schemas/InterviewScheduleStatus' }
+      responses:
+        '200': { description: 面试列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Interview' } } } } }
+    post:
+      tags: [Interviews]
+      summary: 创建面试日程
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterviewCreateRequest' }
+      responses:
+        '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /interviews/upcoming:
+    get:
+      tags: [Interviews]
+      summary: 查询未来面试
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/InterviewScheduleStatus' }
+      responses:
+        '200': { description: 面试列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Interview' } } } } }
+  /interviews/{interviewId}:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    get:
+      tags: [Interviews]
+      summary: 获取面试详情
+      responses:
+        '200': { description: 面试详情, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewDetail' } } } }
+    put:
+      tags: [Interviews]
+      summary: 更新非状态字段
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterviewUpdateRequest' }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+  /interviews/{interviewId}/complete:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    post:
+      tags: [Interviews]
+      summary: 标记面试完成
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/InterviewCompleteRequest' } } }
+      responses:
+        '200': { description: 已完成, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /interviews/{interviewId}/cancel:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    post:
+      tags: [Interviews]
+      summary: 取消面试
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReasonRequest' } } }
+      responses:
+        '200': { description: 已取消, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+  /interviews/{interviewId}/reschedule:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    post:
+      tags: [Interviews]
+      summary: 改期面试并重算提醒
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/InterviewRescheduleRequest' } } }
+      responses:
+        '200': { description: 改期成功, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /interviews/{interviewId}/preparation:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    get:
+      tags: [Interviews]
+      summary: 获取面试准备包
+      responses:
+        '200': { description: 由现有数据聚合，不复制业务数据, content: { application/json: { schema: { $ref: '#/components/schemas/PreparationPack' } } } }
+  /interviews/{interviewId}/reminders:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    get:
+      tags: [Interviews]
+      summary: 查询提醒计划
+      responses:
+        '200': { description: 提醒列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Reminder' } } } } }
+    post:
+      tags: [Interviews]
+      summary: 创建或重新生成提醒节点
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReminderCreateRequest' } } }
+      responses:
+        '201': { description: 提醒已创建, content: { application/json: { schema: { $ref: '#/components/schemas/Reminder' } } } }
+  /reminders/{reminderId}:
+    parameters: [ { $ref: '#/components/parameters/ReminderId' } ]
+    put:
+      tags: [Interviews]
+      summary: 更新未触发提醒或关闭提醒
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReminderUpdateRequest' } } }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Reminder' } } } }
+
+  /interviews/{interviewId}/review:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    get:
+      tags: [Reviews]
+      summary: 获取当前复盘
+      responses:
+        '200': { description: 当前复盘, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewReview' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Reviews]
+      summary: 创建或保存复盘草稿
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersionOptional' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReviewUpsertRequest' } } }
+      responses:
+        '200': { description: 草稿已保存, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewReview' } } } }
+  /reviews/{reviewId}/complete:
+    parameters: [ { $ref: '#/components/parameters/ReviewId' } ]
+    post:
+      tags: [Reviews]
+      summary: 完成复盘
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '200': { description: 复盘已完成, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewReview' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /reviews/{reviewId}/questions:
+    parameters: [ { $ref: '#/components/parameters/ReviewId' } ]
+    post:
+      tags: [Reviews]
+      summary: 为复盘新增问题
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/QuestionCreateRequest' } } }
+      responses:
+        '201': { description: 问题已创建, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewQuestion' } } } }
+  /interview-questions/{questionId}:
+    parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
+    put:
+      tags: [Reviews]
+      summary: 更新面试问题、回答状态和知识点
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/QuestionUpdateRequest' } } }
+      responses:
+        '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewQuestion' } } } }
+    delete:
+      tags: [Reviews]
+      summary: 软删除面试问题
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
+  /interview-questions/{questionId}/create-task:
+    parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
+    post:
+      tags: [Reviews]
+      summary: 从问题创建或关联学习任务
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateTaskFromQuestionRequest' } } }
+      responses:
+        '201': { description: 新任务已创建, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+        '200': { description: 已关联至现有任务, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+  /knowledge-points/weak:
+    get:
+      tags: [Reviews]
+      summary: 查询可下钻的薄弱知识点
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: jobId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: 薄弱点统计, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WeakKnowledgePoint' } } } } }
+  /knowledge-points:
+    get:
+      tags: [Reviews]
+      summary: 查询标准与自定义知识点
+      parameters:
+        - name: query
+          in: query
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200': { description: 知识点列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/KnowledgePoint' } } } } }
+    post:
+      tags: [Reviews]
+      summary: 创建自定义知识点
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/KnowledgePointCreateRequest' } } }
+      responses:
+        '201': { description: 知识点已创建, content: { application/json: { schema: { $ref: '#/components/schemas/KnowledgePoint' } } } }
+
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: 查询学习任务
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TaskStatus' }
+        - name: knowledgePointId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: 任务分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/PageTask' } } } }
+    post:
+      tags: [Tasks]
+      summary: 手工创建学习任务
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskCreateRequest' } } }
+      responses:
+        '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+  /tasks/{taskId}:
+    parameters: [ { $ref: '#/components/parameters/TaskId' } ]
+    put:
+      tags: [Tasks]
+      summary: 更新任务内容、验收与验证信息
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskUpdateRequest' } } }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+  /tasks/{taskId}/transition:
+    parameters: [ { $ref: '#/components/parameters/TaskId' } ]
+    post:
+      tags: [Tasks]
+      summary: 转换学习任务状态
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskTransitionRequest' } } }
+      responses:
+        '200': { description: 转换成功, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+
+  /skills/profile:
+    get:
+      tags: [SkillsAndEvidence]
+      summary: 获取技能画像
+      responses:
+        '200': { description: 技能画像, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SkillProfile' } } } } }
+  /skills/{skillId}/self-level:
+    parameters: [ { $ref: '#/components/parameters/SkillId' } ]
+    put:
+      tags: [SkillsAndEvidence]
+      summary: 显式修改技能自评等级
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SelfLevelUpdateRequest' } } }
+      responses:
+        '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/SkillProfile' } } } }
+  /projects:
+    get:
+      tags: [SkillsAndEvidence]
+      summary: 查询项目案例
+      responses:
+        '200': { description: 项目案例列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ProjectCaseSummary' } } } } }
+    post:
+      tags: [SkillsAndEvidence]
+      summary: 创建最小项目案例
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseCreateRequest' } } }
+      responses:
+        '201': { description: 项目案例已创建, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseSummary' } } } }
+  /projects/{projectId}:
+    parameters: [ { $ref: '#/components/parameters/ProjectId' } ]
+    put:
+      tags: [SkillsAndEvidence]
+      summary: 更新项目案例
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseCreateRequest' } } }
+      responses:
+        '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseSummary' } } } }
+  /evidence:
+    get:
+      tags: [SkillsAndEvidence]
+      summary: 查询证据引用
+      responses:
+        '200': { description: 证据列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Evidence' } } } } }
+    post:
+      tags: [SkillsAndEvidence]
+      summary: 创建证据引用
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceCreateRequest' } } }
+      responses:
+        '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/Evidence' } } } }
+  /evidence/{evidenceId}:
+    parameters: [ { $ref: '#/components/parameters/EvidenceId' } ]
+    put:
+      tags: [SkillsAndEvidence]
+      summary: 更新证据引用
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceCreateRequest' } } }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Evidence' } } } }
+
+  /data-exports:
+    post:
+      tags: [DataManagement]
+      summary: 创建完整 JSON 数据导出
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ExportCreateRequest' } } }
+      responses:
+        '202': { description: 导出任务已创建, content: { application/json: { schema: { $ref: '#/components/schemas/DataExport' } } } }
+  /settings:
+    get:
+      tags: [DataManagement]
+      summary: 获取本地用户设置
+      responses:
+        '200': { description: 设置, content: { application/json: { schema: { $ref: '#/components/schemas/UserSettings' } } } }
+    put:
+      tags: [DataManagement]
+      summary: 更新时区与默认提醒节点
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UserSettingsUpdateRequest' } } }
+      responses:
+        '200': { description: 设置已更新, content: { application/json: { schema: { $ref: '#/components/schemas/UserSettings' } } } }
+  /data-exports/{exportId}:
+    parameters: [ { $ref: '#/components/parameters/ExportId' } ]
+    get:
+      tags: [DataManagement]
+      summary: 查询导出任务与下载地址
+      responses:
+        '200': { description: 导出详情, content: { application/json: { schema: { $ref: '#/components/schemas/DataExport' } } } }
+  /trash:
+    get:
+      tags: [DataManagement]
+      summary: 查询最近删除
+      responses:
+        '200': { description: 最近删除列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TrashItem' } } } } }
+  /trash/{trashId}/restore:
+    parameters: [ { $ref: '#/components/parameters/TrashId' } ]
+    post:
+      tags: [DataManagement]
+      summary: 恢复最近删除记录
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 已恢复, content: { application/json: { schema: { $ref: '#/components/schemas/TrashItem' } } } }
+  /trash/{trashId}/permanent:
+    parameters: [ { $ref: '#/components/parameters/TrashId' } ]
+    delete:
+      tags: [DataManagement]
+      summary: 永久删除最近删除记录
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: X-Confirm-Permanent-Delete
+          in: header
+          required: true
+          schema: { type: boolean, enum: [true] }
+      responses:
+        '204': { description: 已永久删除 }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    IfMatchVersion:
+      name: If-Match-Version
+      in: header
+      required: true
+      schema: { type: integer, minimum: 0 }
+    IfMatchVersionOptional:
+      name: If-Match-Version
+      in: header
+      required: false
+      schema: { type: integer, minimum: 0 }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    JobId: { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+    RequirementId: { name: requirementId, in: path, required: true, schema: { type: string, format: uuid } }
+    ApplicationId: { name: applicationId, in: path, required: true, schema: { type: string, format: uuid } }
+    InterviewId: { name: interviewId, in: path, required: true, schema: { type: string, format: uuid } }
+    ReminderId: { name: reminderId, in: path, required: true, schema: { type: string, format: uuid } }
+    ReviewId: { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+    QuestionId: { name: questionId, in: path, required: true, schema: { type: string, format: uuid } }
+    TaskId: { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+    ProjectId: { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    SkillId: { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+    EvidenceId: { name: evidenceId, in: path, required: true, schema: { type: string, format: uuid } }
+    ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
+    TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    NotFound:
+      description: 资源不存在或不可见
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: 请求字段校验失败
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    VersionConflict:
+      description: 版本冲突
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    IdempotencyConflict:
+      description: 幂等键与既有请求不一致
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    DuplicateApplication:
+      description: 已有同岗位有效投递，需显式确认二次投递
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    IllegalTransition:
+      description: 非法状态转换
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    BusinessRuleError:
+      description: 业务规则不满足
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      required: [code, message, traceId]
+      properties:
+        code: { type: string, example: ILLEGAL_STATE_TRANSITION }
+        message: { type: string, example: 当前状态不允许转换为目标状态 }
+        traceId: { type: string }
+        fieldErrors: { type: array, items: { $ref: '#/components/schemas/FieldError' } }
+        currentState: { type: string }
+        targetState: { type: string }
+        reason: { type: string }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties: { field: { type: string }, message: { type: string } }
+    DashboardOverview:
+      type: object
+      required: [actionItems, upcomingInterviews, activeApplications, weakKnowledgePoints, recentJobs]
+      properties:
+        actionItems: { type: array, items: { $ref: '#/components/schemas/ActionItem' } }
+        upcomingInterviews: { type: array, items: { $ref: '#/components/schemas/Interview' } }
+        activeApplications: { type: array, items: { $ref: '#/components/schemas/Application' } }
+        weakKnowledgePoints: { type: array, items: { $ref: '#/components/schemas/WeakKnowledgePoint' } }
+        recentJobs: { type: array, items: { $ref: '#/components/schemas/Job' } }
+    ActionItem:
+      type: object
+      required: [id, type, title, priority, sourceRef]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [UPCOMING_INTERVIEW, REVIEW_DUE, APPLICATION_ACTION_DUE, TASK_DUE] }
+        title: { type: string }
+        dueAt: { type: string, format: date-time, nullable: true }
+        priority: { type: integer, minimum: 1 }
+        sourceRef: { $ref: '#/components/schemas/SourceRef' }
+    JobStatus: { type: string, enum: [ACTIVE, ARCHIVED] }
+    JobDecisionStatus: { type: string, nullable: true, enum: [TO_APPLY, APPLY, DEFER, IGNORE] }
+    RequirementConfirmationStatus: { type: string, enum: [PENDING, CONFIRMED, IGNORED] }
+    RequirementType: { type: string, enum: [MUST, BONUS, RESPONSIBILITY, EXPERIENCE, DOMAIN, TO_CONFIRM] }
+    GapStatus: { type: string, enum: [SATISFIED_WITH_EVIDENCE, SELF_REPORTED_NO_EVIDENCE, NOT_MET, INSUFFICIENT_INFO, PENDING_CONFIRMATION] }
+    ApplicationStatus: { type: string, enum: [DRAFT, APPLIED, RESUME_PASSED, INTERVIEWING, OFFER, REJECTED, WITHDRAWN, ON_HOLD] }
+    InterviewScheduleStatus: { type: string, enum: [SCHEDULED, COMPLETED, CANCELED, NO_SHOW] }
+    InterviewResult: { type: string, enum: [PENDING, PASSED, FAILED] }
+    ReminderStatus: { type: string, enum: [PENDING, PROCESSING, SENT, FAILED, CANCELED] }
+    ReviewStatus: { type: string, enum: [NOT_STARTED, DRAFT, COMPLETED] }
+    AnswerStatus: { type: string, enum: [FULLY_ANSWERED, PARTIALLY_ANSWERED, UNANSWERED] }
+    TaskStatus: { type: string, enum: [TODO, IN_PROGRESS, COMPLETED, ABANDONED] }
+    EvidenceStatus: { type: string, enum: [NO_EVIDENCE, WEAK, VALID] }
+    JobCreateRequest:
+      type: object
+      required: [companyName, title, jdRawText]
+      properties:
+        companyName: { type: string, maxLength: 100 }
+        title: { type: string, maxLength: 150 }
+        jdRawText: { type: string, minLength: 20, maxLength: 50000 }
+        source: { type: string, maxLength: 100 }
+        sourceUrl: { type: string, format: uri, nullable: true }
+        location: { type: string, maxLength: 100 }
+        salaryRange: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 5000 }
+    JobUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/JobCreateRequest'
+        - type: object
+          properties:
+            decisionStatus: { $ref: '#/components/schemas/JobDecisionStatus' }
+            decisionReason: { type: string, maxLength: 1000, nullable: true }
+    Job:
+      type: object
+      required: [id, companyName, title, jdRawText, status, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        companyName: { type: string }
+        title: { type: string }
+        jdRawText: { type: string }
+        source: { type: string, nullable: true }
+        sourceUrl: { type: string, format: uri, nullable: true }
+        location: { type: string, nullable: true }
+        salaryRange: { type: string, nullable: true }
+        decisionStatus: { $ref: '#/components/schemas/JobDecisionStatus' }
+        decisionReason: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        notes: { type: string, nullable: true }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    JobRequirement:
+      type: object
+      required: [id, jobId, rawText, type, confirmationStatus, version]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        rawText: { type: string }
+        normalizedName: { type: string, nullable: true }
+        type: { $ref: '#/components/schemas/RequirementType' }
+        proficiencyText: { type: string, nullable: true }
+        confirmationStatus: { $ref: '#/components/schemas/RequirementConfirmationStatus' }
+        source: { type: string, enum: [RULE, USER, AI], default: RULE }
+        version: { type: integer }
+    RequirementUpdateRequest:
+      type: object
+      required: [confirmationStatus]
+      properties:
+        rawText: { type: string, maxLength: 2000 }
+        normalizedName: { type: string, maxLength: 200 }
+        type: { $ref: '#/components/schemas/RequirementType' }
+        proficiencyText: { type: string, maxLength: 500 }
+        confirmationStatus: { $ref: '#/components/schemas/RequirementConfirmationStatus' }
+        reason: { type: string, maxLength: 1000 }
+    RequirementMergeRequest:
+      type: object
+      required: [targetRequirementId, sourceRequirementIds]
+      properties:
+        targetRequirementId: { type: string, format: uuid }
+        sourceRequirementIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+    RequirementExtractionResult:
+      type: object
+      required: [jobId, extractedAt, candidates]
+      properties:
+        jobId: { type: string, format: uuid }
+        extractedAt: { type: string, format: date-time }
+        candidates: { type: array, items: { $ref: '#/components/schemas/JobRequirement' } }
+    GapItem:
+      type: object
+      required: [requirement, status, evidence]
+      properties:
+        requirement: { $ref: '#/components/schemas/JobRequirement' }
+        status: { $ref: '#/components/schemas/GapStatus' }
+        evidence:
+          type: array
+          description: 用于本项结论的用户事实；可为空。
+          items: { $ref: '#/components/schemas/EvidenceReference' }
+        manualOverrideReason: { type: string, nullable: true }
+    ApplicationCreateRequest:
+      type: object
+      required: [jobId, appliedAt, channel]
+      properties:
+        jobId: { type: string, format: uuid }
+        appliedAt: { type: string, format: date }
+        channel: { type: string, maxLength: 100 }
+        resumeVersion: { type: string, maxLength: 200 }
+        expectedSalary: { type: string, maxLength: 100 }
+        contact: { type: string, maxLength: 200 }
+        nextAction: { type: string, maxLength: 500 }
+        nextActionDueAt: { type: string, format: date-time }
+        allowDuplicate: { type: boolean, default: false }
+        notes: { type: string, maxLength: 5000 }
+    ApplicationUpdateRequest:
+      type: object
+      properties:
+        channel: { type: string, maxLength: 100 }
+        resumeVersion: { type: string, maxLength: 200 }
+        expectedSalary: { type: string, maxLength: 100 }
+        contact: { type: string, maxLength: 200 }
+        nextAction: { type: string, maxLength: 500, nullable: true }
+        nextActionDueAt: { type: string, format: date-time, nullable: true }
+        rejectionReason: { type: string, maxLength: 1000, nullable: true }
+        notes: { type: string, maxLength: 5000 }
+    ApplicationTransitionRequest:
+      type: object
+      required: [targetStatus]
+      properties:
+        targetStatus: { $ref: '#/components/schemas/ApplicationStatus' }
+        reason: { type: string, maxLength: 1000 }
+        allowOfferWithoutCompletedInterview: { type: boolean, default: false }
+    Application:
+      type: object
+      required: [id, jobId, status, appliedAt, channel, version]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ApplicationStatus' }
+        previousActiveStatus: { $ref: '#/components/schemas/ApplicationStatus', nullable: true }
+        appliedAt: { type: string, format: date }
+        channel: { type: string }
+        resumeVersion: { type: string, nullable: true }
+        expectedSalary: { type: string, nullable: true }
+        contact: { type: string, nullable: true }
+        nextAction: { type: string, nullable: true }
+        nextActionDueAt: { type: string, format: date-time, nullable: true }
+        rejectionReason: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        version: { type: integer }
+    ApplicationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Application'
+        - type: object
+          properties:
+            job: { $ref: '#/components/schemas/Job' }
+            statusHistory: { type: array, items: { $ref: '#/components/schemas/StatusLog' } }
+            interviews: { type: array, items: { $ref: '#/components/schemas/Interview' } }
+    StatusLog:
+      type: object
+      required: [id, fromStatus, toStatus, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        fromStatus: { $ref: '#/components/schemas/ApplicationStatus' }
+        toStatus: { $ref: '#/components/schemas/ApplicationStatus' }
+        reason: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+    InterviewCreateRequest:
+      type: object
+      required: [applicationId, roundName, startsAt, eventTimeZone]
+      properties:
+        applicationId: { type: string, format: uuid }
+        roundName: { type: string, maxLength: 100 }
+        startsAt: { type: string, format: date-time, description: UTC instant }
+        eventTimeZone: { type: string, example: Asia/Shanghai }
+        mode: { type: string, enum: [ONLINE, ONSITE, PHONE] }
+        meetingUrlOrAddress: { type: string, maxLength: 2000 }
+        contact: { type: string, maxLength: 200 }
+        preparationChecklist: { type: array, items: { type: string, maxLength: 300 } }
+        notes: { type: string, maxLength: 5000 }
+    InterviewUpdateRequest:
+      type: object
+      properties:
+        roundName: { type: string, maxLength: 100 }
+        mode: { type: string, enum: [ONLINE, ONSITE, PHONE] }
+        meetingUrlOrAddress: { type: string, maxLength: 2000 }
+        contact: { type: string, maxLength: 200 }
+        preparationChecklist: { type: array, items: { type: string, maxLength: 300 } }
+        notes: { type: string, maxLength: 5000 }
+        result: { $ref: '#/components/schemas/InterviewResult' }
+    InterviewCompleteRequest:
+      type: object
+      properties:
+        result: { $ref: '#/components/schemas/InterviewResult' }
+        note: { type: string, maxLength: 1000 }
+    InterviewRescheduleRequest:
+      type: object
+      required: [startsAt, eventTimeZone]
+      properties:
+        startsAt: { type: string, format: date-time }
+        eventTimeZone: { type: string }
+        reason: { type: string, maxLength: 1000 }
+    ReasonRequest:
+      type: object
+      properties: { reason: { type: string, maxLength: 1000 } }
+    Interview:
+      type: object
+      required: [id, applicationId, roundName, startsAt, eventTimeZone, scheduleStatus, result, version]
+      properties:
+        id: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        roundName: { type: string }
+        startsAt: { type: string, format: date-time }
+        eventTimeZone: { type: string }
+        mode: { type: string, enum: [ONLINE, ONSITE, PHONE], nullable: true }
+        meetingUrlOrAddress: { type: string, nullable: true }
+        contact: { type: string, nullable: true }
+        scheduleStatus: { $ref: '#/components/schemas/InterviewScheduleStatus' }
+        result: { $ref: '#/components/schemas/InterviewResult' }
+        preparationChecklist: { type: array, items: { type: string } }
+        notes: { type: string, nullable: true }
+        version: { type: integer }
+    InterviewDetail:
+      allOf:
+        - $ref: '#/components/schemas/Interview'
+        - type: object
+          properties:
+            application: { $ref: '#/components/schemas/Application' }
+            reviewStatus: { $ref: '#/components/schemas/ReviewStatus' }
+            reminders: { type: array, items: { $ref: '#/components/schemas/Reminder' } }
+    Reminder:
+      type: object
+      required: [id, interviewId, reminderType, scheduledAt, status, version]
+      properties:
+        id: { type: string, format: uuid }
+        interviewId: { type: string, format: uuid }
+        reminderType: { type: string, enum: [ONE_DAY, TWO_HOURS, THIRTY_MINUTES, CUSTOM] }
+        scheduledAt: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/ReminderStatus' }
+        failureReason: { type: string, nullable: true }
+        version: { type: integer }
+    ReminderCreateRequest:
+      type: object
+      required: [reminderType, scheduledAt]
+      properties:
+        reminderType: { type: string, enum: [ONE_DAY, TWO_HOURS, THIRTY_MINUTES, CUSTOM] }
+        scheduledAt: { type: string, format: date-time }
+    ReminderUpdateRequest:
+      type: object
+      properties:
+        scheduledAt: { type: string, format: date-time }
+        enabled: { type: boolean }
+    PreparationPack:
+      type: object
+      required: [interview, prioritizedItems, requirements, projectCases, historicalQuestions, openTasks]
+      properties:
+        interview: { $ref: '#/components/schemas/Interview' }
+        prioritizedItems: { type: array, items: { $ref: '#/components/schemas/PreparationItem' } }
+        requirements: { type: array, items: { $ref: '#/components/schemas/GapItem' } }
+        projectCases: { type: array, items: { $ref: '#/components/schemas/ProjectCaseSummary' } }
+        historicalQuestions: { type: array, items: { $ref: '#/components/schemas/InterviewQuestion' } }
+        openTasks: { type: array, items: { $ref: '#/components/schemas/LearningTask' } }
+        checklist: { type: array, items: { $ref: '#/components/schemas/ChecklistItem' } }
+    PreparationItem:
+      type: object
+      required: [type, title, priority, reasons, sourceRefs]
+      properties:
+        type: { type: string, enum: [REQUIREMENT, PROJECT_CASE, QUESTION, TASK, CHECKLIST] }
+        title: { type: string }
+        priority: { type: integer, minimum: 1 }
+        reasons: { type: array, minItems: 1, items: { type: string } }
+        sourceRefs: { type: array, items: { $ref: '#/components/schemas/SourceRef' } }
+    ChecklistItem:
+      type: object
+      required: [id, text, completed]
+      properties: { id: { type: string }, text: { type: string }, completed: { type: boolean } }
+    SourceRef:
+      type: object
+      required: [type, id, label]
+      properties: { type: { type: string }, id: { type: string, format: uuid }, label: { type: string } }
+    InterviewReview:
+      type: object
+      required: [id, interviewId, status, noQuestionsRecorded, version]
+      properties:
+        id: { type: string, format: uuid }
+        interviewId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ReviewStatus' }
+        interviewResult: { $ref: '#/components/schemas/InterviewResult', nullable: true }
+        noQuestionsRecorded: { type: boolean }
+        overallFeeling: { type: string, nullable: true }
+        interviewerFocus: { type: string, nullable: true }
+        jobInterest: { type: string, nullable: true }
+        version: { type: integer }
+        lastModifiedAt: { type: string, format: date-time }
+        questions: { type: array, items: { $ref: '#/components/schemas/InterviewQuestion' } }
+    ReviewUpsertRequest:
+      type: object
+      properties:
+        interviewResult: { $ref: '#/components/schemas/InterviewResult' }
+        noQuestionsRecorded: { type: boolean }
+        overallFeeling: { type: string, maxLength: 5000 }
+        interviewerFocus: { type: string, maxLength: 5000 }
+        jobInterest: { type: string, maxLength: 1000 }
+    QuestionCreateRequest:
+      type: object
+      required: [content, answerStatus]
+      properties:
+        content: { type: string, maxLength: 10000 }
+        answerStatus: { $ref: '#/components/schemas/AnswerStatus' }
+        type: { type: string, maxLength: 100 }
+        knowledgePointIds: { type: array, items: { type: string, format: uuid } }
+    QuestionUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/QuestionCreateRequest'
+        - type: object
+          properties:
+            myAnswer: { type: string, maxLength: 20000 }
+            referenceAnswer: { type: string, maxLength: 20000 }
+            difficulty: { type: integer, minimum: 1, maximum: 5 }
+            errorReason: { type: string, maxLength: 5000 }
+            improvementPlan: { type: string, maxLength: 5000 }
+    InterviewQuestion:
+      type: object
+      required: [id, reviewId, content, answerStatus, version]
+      properties:
+        id: { type: string, format: uuid }
+        reviewId: { type: string, format: uuid }
+        content: { type: string }
+        answerStatus: { $ref: '#/components/schemas/AnswerStatus' }
+        type: { type: string, nullable: true }
+        myAnswer: { type: string, nullable: true }
+        referenceAnswer: { type: string, nullable: true }
+        difficulty: { type: integer, nullable: true }
+        errorReason: { type: string, nullable: true }
+        improvementPlan: { type: string, nullable: true }
+        knowledgePoints: { type: array, items: { $ref: '#/components/schemas/KnowledgePoint' } }
+        version: { type: integer }
+    CreateTaskFromQuestionRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [CREATE_NEW, LINK_EXISTING] }
+        existingTaskId: { type: string, format: uuid, nullable: true }
+        title: { type: string, maxLength: 200 }
+        dueAt: { type: string, format: date-time }
+        acceptanceCriteria: { type: string, maxLength: 5000 }
+        verificationMethod: { type: string, maxLength: 1000 }
+    KnowledgePoint:
+      type: object
+      required: [id, name]
+      properties: { id: { type: string, format: uuid }, name: { type: string }, category: { type: string, nullable: true } }
+    KnowledgePointCreateRequest:
+      type: object
+      required: [name]
+      properties: { name: { type: string, minLength: 1, maxLength: 100 }, category: { type: string, maxLength: 100 } }
+    WeakKnowledgePoint:
+      type: object
+      required: [knowledgePoint, weightedWeaknessCount, questionCount, questions]
+      properties:
+        knowledgePoint: { $ref: '#/components/schemas/KnowledgePoint' }
+        weightedWeaknessCount: { type: number, format: float, example: 2.5 }
+        questionCount: { type: integer }
+        questions: { type: array, items: { $ref: '#/components/schemas/InterviewQuestion' } }
+    TaskCreateRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 200 }
+        type: { type: string, maxLength: 100 }
+        knowledgePointIds: { type: array, items: { type: string, format: uuid } }
+        relatedJobIds: { type: array, items: { type: string, format: uuid } }
+        relatedQuestionIds: { type: array, items: { type: string, format: uuid } }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT], default: MEDIUM }
+        estimatedMinutes: { type: integer, minimum: 1 }
+        dueAt: { type: string, format: date-time }
+        learningGoal: { type: string, maxLength: 5000 }
+        acceptanceCriteria: { type: string, maxLength: 5000 }
+        verificationMethod: { type: string, maxLength: 1000 }
+        outputUrl: { type: string, maxLength: 2000 }
+    TaskUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/TaskCreateRequest'
+        - type: object
+          properties:
+            verificationResult: { type: string, maxLength: 5000 }
+    TaskTransitionRequest:
+      type: object
+      required: [targetStatus]
+      properties:
+        targetStatus: { $ref: '#/components/schemas/TaskStatus' }
+        verificationResult: { type: string, maxLength: 5000 }
+        note: { type: string, maxLength: 1000 }
+    LearningTask:
+      type: object
+      required: [id, title, status, version]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT] }
+        dueAt: { type: string, format: date-time, nullable: true }
+        knowledgePoints: { type: array, items: { $ref: '#/components/schemas/KnowledgePoint' } }
+        learningGoal: { type: string, nullable: true }
+        acceptanceCriteria: { type: string, nullable: true }
+        verificationMethod: { type: string, nullable: true }
+        verificationResult: { type: string, nullable: true }
+        outputUrl: { type: string, nullable: true }
+        version: { type: integer }
+    SkillProfile:
+      type: object
+      required: [skillId, skillName, selfLevel, evidenceStatus]
+      properties:
+        skillId: { type: string, format: uuid }
+        skillName: { type: string }
+        selfLevel: { type: integer, minimum: 0, maximum: 5 }
+        evidenceStatus: { $ref: '#/components/schemas/EvidenceStatus' }
+        interviewPerformance: { type: object, additionalProperties: true, nullable: true }
+        version: { type: integer }
+    SelfLevelUpdateRequest:
+      type: object
+      required: [selfLevel]
+      properties:
+        selfLevel: { type: integer, minimum: 0, maximum: 5 }
+        reason: { type: string, maxLength: 1000 }
+    EvidenceReference:
+      type: object
+      required: [id, type, title]
+      properties: { id: { type: string, format: uuid }, type: { type: string }, title: { type: string }, urlOrPath: { type: string, nullable: true } }
+    EvidenceCreateRequest:
+      type: object
+      required: [type, title]
+      properties:
+        type: { type: string, enum: [PROJECT_CODE, GIT_REPOSITORY, ARTICLE, ARCHITECTURE_DIAGRAM, API_DOCUMENT, LOAD_TEST_REPORT, LOG_OR_MONITORING, INTERVIEW_ANSWER, WORK_EXPERIENCE] }
+        title: { type: string, maxLength: 200 }
+        whereUsed: { type: string, maxLength: 2000 }
+        problemSolved: { type: string, maxLength: 2000 }
+        approach: { type: string, maxLength: 3000 }
+        result: { type: string, maxLength: 2000 }
+        urlOrPath: { type: string, maxLength: 2000 }
+        skillIds: { type: array, items: { type: string, format: uuid } }
+    Evidence:
+      allOf:
+        - $ref: '#/components/schemas/EvidenceCreateRequest'
+        - type: object
+          required: [id, version]
+          properties: { id: { type: string, format: uuid }, version: { type: integer } }
+    ProjectCaseSummary:
+      type: object
+      required: [id, title, scenario, approach, problemSolved, version]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        scenario: { type: string }
+        approach: { type: string }
+        problemSolved: { type: string }
+        evidenceRefs: { type: array, items: { $ref: '#/components/schemas/EvidenceReference' } }
+        version: { type: integer }
+    ProjectCaseCreateRequest:
+      type: object
+      required: [title, scenario, approach, problemSolved]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        scenario: { type: string, minLength: 1, maxLength: 3000 }
+        approach: { type: string, minLength: 1, maxLength: 3000 }
+        problemSolved: { type: string, minLength: 1, maxLength: 3000 }
+        result: { type: string, maxLength: 2000 }
+        evidenceIds: { type: array, items: { type: string, format: uuid } }
+    UserSettingsUpdateRequest:
+      type: object
+      required: [timeZone]
+      properties:
+        timeZone: { type: string, example: Asia/Shanghai }
+        defaultReminderOffsetsMinutes: { type: array, items: { type: integer, minimum: 1 }, example: [1440, 120, 30] }
+    UserSettings:
+      allOf:
+        - $ref: '#/components/schemas/UserSettingsUpdateRequest'
+        - type: object
+          required: [version]
+          properties: { version: { type: integer } }
+    ExportCreateRequest:
+      type: object
+      required: [format]
+      properties: { format: { type: string, enum: [JSON] } }
+    DataExport:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED] }
+        downloadUrl: { type: string, format: uri, nullable: true }
+        failureReason: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    TrashItem:
+      type: object
+      required: [id, resourceType, resourceId, deletedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        resourceType: { type: string }
+        resourceId: { type: string, format: uuid }
+        displayName: { type: string }
+        deletedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        impactSummary: { type: array, items: { type: string } }
+    PageJob:
+      type: object
+      required: [items, page, pageSize, total]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/Job' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
+    PageApplication:
+      type: object
+      required: [items, page, pageSize, total]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/Application' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
+    PageTask:
+      type: object
+      required: [items, page, pageSize, total]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/LearningTask' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
