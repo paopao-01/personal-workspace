@@ -4,10 +4,10 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 第二切片（前端）完成（**DONE**，application + dashboard 前端页面 + AT-05~AT-09 前端 API 链路验证）。面试与提醒（AT-10~AT-14）待后续窗口。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。投递状态机 + 下一步行动（AT-05~AT-09）后端 + 前端均完成；面试与提醒（AT-10~AT-14）未开始。
-- 当前任务：M2 第二切片（前端 application + dashboard）已交付。下一窗口做面试与提醒后端（AT-10~AT-14：interview + reminder 模块 + 同事务推进投递 + 提醒调度）或补 Playwright E2E + AT-08 后半（allowDuplicate=true，需 V2 迁移）。
-- 当前负责人窗口：Claude（glm-5.2）。
+- 项目阶段：M2 第三切片（面试与提醒后端）完成（**DONE**，OpenAPI no-show + interview/reminder 后端 + AT-10~AT-14）。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试前端、Playwright E2E 和 AT-08 后半仍待后续窗口。
+- 当前任务：面试与提醒后端切片已交付，下一窗口可做面试前端页面/API 或补 AT-08 `allowDuplicate=true` 的 V2 迁移。
+- 当前负责人窗口：Codex。
 - 最后更新：2026-08-26。
 
 ## 2. 已完成内容
@@ -70,6 +70,34 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-6
+
+- 目标：M2 第三切片 — 补齐 `mark-no-show` OpenAPI 端点，实现面试与提醒后端，覆盖 AT-10~AT-14。
+- 状态：**DONE**。
+- 已完成：
+  - `docs/jobhub/03-openapi.yaml` 新增 `POST /interviews/{interviewId}/no-show`，与状态机和 AT-12 对齐。
+  - 新增 `backend/src/main/java/com/jobhub/interview/`：面试/提醒枚举、实体、MyBatis Mapper、请求响应 DTO、事务服务和 Controller。
+  - 创建首场面试时，在同一事务把投递从 `RESUME_PASSED` 推进到 `INTERVIEWING`，写入状态历史并创建 1 天/2 小时/30 分钟默认提醒。
+  - 改期取消未触发提醒并生成新提醒；取消/缺席/完成清理未触发提醒；取消和缺席保持 `result=PENDING`，拒绝设置 `PASSED/FAILED`。
+  - 过期提醒保持 `PENDING`，可通过站内提醒查询展示，不声明系统推送；投递详情开始返回真实面试列表。
+  - 新增 AT-10~AT-14 集成测试，并扩展测试数据库清理顺序。
+- 未完成：
+  - 面试前端页面/API hooks 尚未实现，dashboard 的 upcoming 面试仍是占位空数组。
+  - 面试准备包、复盘、提醒调度领取/通知实体留待后续切片；AT-08 `allowDuplicate=true` 仍需 V2 迁移。
+- 修改文件：
+  - `docs/jobhub/03-openapi.yaml`
+  - `backend/src/main/java/com/jobhub/interview/`（新增面试与提醒后端模块）
+  - `backend/src/main/java/com/jobhub/application/api/ApplicationController.java`
+  - `backend/src/main/java/com/jobhub/application/api/ApplicationDetailResponse.java`
+  - `backend/src/test/java/com/jobhub/integration/InterviewIntegrationTest.java`
+  - `backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`
+  - `docs/jobhub/IMPLEMENTATION_STATUS.md`
+- 已运行验证：`cd backend && mvn test`。
+- 验证结果：**BUILD SUCCESS**，33 个测试通过，0 failures，0 errors；包含原有 28 个回归测试和新增 AT-10~AT-14 五个测试。未修改 V1 迁移。
+- 已知问题：提醒查询目前提供到期的 `PENDING` 数据，但未实现独立 scheduler/notification 表写入；dashboard/upcoming 面试和面试前端待后续窗口。
+- 下一窗口只做：面试前端 API/详情与列表页面，或单独做 AT-08 后半 V2 迁移；开始前重新核对本节未完成项。
+- 不要重复做：不要修改已执行的 V1 迁移，不要把取消和缺席合并为同一状态，不要在 P0 引入邮件、系统推送或云同步。
 
 ### 窗口 2026-08-26-5
 

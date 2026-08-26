@@ -9,6 +9,8 @@ import com.jobhub.application.application.ApplicationUpdateCommand;
 import com.jobhub.application.domain.Application;
 import com.jobhub.application.domain.ApplicationStatus;
 import com.jobhub.application.domain.StatusLogEntry;
+import com.jobhub.interview.application.InterviewService;
+import com.jobhub.interview.api.InterviewResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -29,9 +31,11 @@ import java.util.List;
 public class ApplicationController {
 
 	private final ApplicationService applicationService;
+	private final InterviewService interviewService;
 
-	public ApplicationController(ApplicationService applicationService) {
+	public ApplicationController(ApplicationService applicationService, InterviewService interviewService) {
 		this.applicationService = applicationService;
+		this.interviewService = interviewService;
 	}
 
 	@PostMapping("/applications")
@@ -57,7 +61,11 @@ public class ApplicationController {
 
 	@GetMapping("/applications/{applicationId}")
 	public ApplicationDetailResponse getDetail(@PathVariable String applicationId) {
-		return ApplicationDetailResponse.from(applicationService.getDetail(applicationId));
+		var detail = applicationService.getDetail(applicationId);
+		List<InterviewResponse> interviews = interviewService.byApplication(applicationId).stream()
+				.map(i -> InterviewResponse.from(i, interviewService.checklist(i.getId())))
+				.toList();
+		return ApplicationDetailResponse.from(detail, interviews);
 	}
 
 	@PutMapping("/applications/{applicationId}")

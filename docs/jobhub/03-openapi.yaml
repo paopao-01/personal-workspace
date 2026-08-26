@@ -308,6 +308,17 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/ReasonRequest' } } }
       responses:
         '200': { description: 已取消, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+  /interviews/{interviewId}/no-show:
+    parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
+    post:
+      tags: [Interviews]
+      summary: 标记面试缺席
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReasonRequest' } } }
+      responses:
+        '200': { description: 已标记缺席, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
   /interviews/{interviewId}/reschedule:
     parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
     post:

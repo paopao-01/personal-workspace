@@ -10,7 +10,7 @@ import java.util.List;
 
 /**
  * 投递详情响应。与 OpenAPI ApplicationDetail（allOf Application + job + statusHistory + interviews）对齐。
- * interviews 本切片恒空（面试模块未实现）。
+ * interviews 由面试模块按 applicationId 聚合查询。
  */
 public record ApplicationDetailResponse(
 		String id,
