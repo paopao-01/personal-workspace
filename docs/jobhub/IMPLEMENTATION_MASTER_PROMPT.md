@@ -12,7 +12,7 @@
 
 1. `AGENTS.md`
 2. `docs/jobhub/IMPLEMENTATION_STATUS.md`
-3. `java-jobhub-prd.md`
+3. `jobhub-prd.md`
 4. `docs/jobhub/02-state-machines.md`
 5. `docs/jobhub/03-openapi.yaml`
 6. `docs/jobhub/04-database-design.md`

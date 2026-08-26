@@ -4,16 +4,16 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M1 第一切片实施中（PARTIAL，后端已编译通过且可启动、Flyway/SQLite 已验证、最小接口可访问；**集成测试已补齐并全绿**，前端尚未开始）。
-- 当前里程碑：M1（工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单）。
-- 当前任务：M1 第一切片 — 后端骨架 + 岗位垂直切片（AT-01~AT-04）。后端集成测试已完成（5 类 18 方法全绿），修复 3 处生产 bug；剩余前端骨架与端到端验证。
+- 项目阶段：M1 第一切片完成（**DONE**，后端集成测试全绿 + 前端骨架 + AT-01 端到端通过）。M2 尚未开始。
+- 当前里程碑：M1（工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单）已完成；下一里程碑 M2（投递状态机、下一步行动、面试与提醒）。
+- 当前任务：M1 第一切片已交付。下一窗口起步 M2（AT-05~AT-09 投递状态机与下一步行动）。
 - 当前负责人窗口：Claude（glm-5.2）。
 - 最后更新：2026-08-26。
 
 ## 2. 已完成内容
 
 ### 规格层（早于本窗口已完成）
-- PRD v1.2：`java-jobhub-prd.md`
+- PRD v1.2：`jobhub-prd.md`
 - 页面规格、状态机、OpenAPI、数据库设计、验收用例、技术实施方案：`docs/jobhub/01-06`
 - 初始 Flyway 迁移：`backend/src/main/resources/db/migration/V1__initial_schema.sql`（29 张表，不可修改）
 - 脱敏演示数据：`fixtures/v0.1-demo-data.json`
@@ -52,23 +52,70 @@
 ## 3. 当前代码事实
 
 - `backend/` 已含完整 Spring Boot 工程结构与 job 模块业务代码（53 个 Java 文件：1 主类 + common 19 + job 33；`IdempotencyRecordMapper` 已移至 `common/idempotency/infrastructure/`）。
-- `frontend/` 尚未生成。
-- **后端已通过 `mvn clean compile`（53 文件 BUILD SUCCESS）；已通过 `mvn spring-boot:run` 启动（Flyway 迁移 V1 成功，Tomcat 监听 127.0.0.1:8080）；`curl GET /api/jobs` 返回 200 + 空分页**。`mvn test` 尚未运行（无测试类）。
+- `frontend/` 已生成完整骨架与岗位三页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6；约 32 个手写源文件 + OpenAPI 生成类型）。`npm run lint`/`typecheck`/`build` 全绿，`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。
+- **后端已通过 `mvn clean test`（5 类 18 方法 BUILD SUCCESS，0 failures/0 errors）；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）**。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
 - `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
-- `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上；逻辑自洽且已随启动验证通过，但**未通过集成测试验证幂等回放与冲突的具体行为**。
+- `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上；已通过集成测试验证幂等回放与冲突行为。
 - `RequirementExtractor.extract(jobId, existing)` 旧重载已废弃并抛 `UnsupportedOperationException`；服务层调用新签名 `extract(jobId, jdRawText, existing)`。
+- AT-01 端到端已通过（创建岗位→提取候选→确认 3 项→差距 INSUFFICIENT_INFO→保存 TO_APPLY，经 node 脚本直连后端验证全流程断言通过）。
 
 ## 4. 里程碑状态
 
 | 里程碑 | 范围 | 状态 | 进入条件 | 完成条件 |
 |---|---|---|---|---|
-| M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `IN_PROGRESS`（第一切片 PARTIAL） | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
+| M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
 | M2 | 投递状态机、下一步行动、面试与提醒 | `NOT_STARTED` | M1 完成 | AT-05 至 AT-14 通过 |
 | M3 | 复盘、问题、知识点、薄弱点、学习任务 | `NOT_STARTED` | M2 完成 | AT-15 至 AT-19 通过 |
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-3
+
+- 目标：M1 slice 1 收尾 — 创建前端工程骨架（Vite + React + TS + TanStack Query + axios）与 `JobListPage`/`JobCreatePage`/`JobDetailPage` 三页面，OpenAPI 类型生成，跑通 AT-01 端到端，提交。
+- 状态：**DONE**（本窗口目标全部达成；M1 slice 1 整体转 **DONE**，M1 里程碑完成，下一窗口起步 M2）。
+- 已完成：
+  - 契约对齐：OpenAPI 补 3 个后端已返回但契约遗漏的字段（`PageJob.totalPages`、`JobRequirement.sortOrder`、`RequirementExtractionResult.newCount`，属细化非破坏性变更）；修正 `java-jobhub-prd.md → jobhub-prd.md` 的 4 处过时引用（AGENTS.md、01-page-spec.md、IMPLEMENTATION_MASTER_PROMPT.md、IMPLEMENTATION_STATUS.md）。
+  - 前端工程：`npm create vite@latest frontend -- --template react-ts` 生成骨架（Vite 8 / React 19.2 / TS 5.6.3 / oxlint）；补依赖 `@tanstack/react-query@5.59`、`axios@1.7`、`react-router-dom@6.26`、`openapi-typescript@7.4`；`vite.config.ts`（`@` 别名 + proxy `/api → 127.0.0.1:8080`）、`tsconfig.app.json`（`strict` + `paths`）、oxlint flat config（`no-explicit-any:error`）。
+  - 类型生成：`openapi-typescript` 从 `03-openapi.yaml` 生成 `src/api/generated/types.ts`（`prepare`/`build` 自动生成，不入库，`.gitignore` 忽略）；枚举（JobStatus/JobDecisionStatus/RequirementType/RequirementConfirmationStatus/GapStatus）全部字面量联合，零手写。
+  - API 层：`client.ts`（axios 实例 + 请求拦截器对写操作自动注入 `Idempotency-Key` + 响应拦截器错误归一化：空 body 400 构造 VALIDATION_ERROR、JSON body 解析为 ApiError、网络错误 NetworkError）；`errors.ts`（ApiError + 判别函数 isVersionConflict/isIllegalTransition/isIdempotencyConflict/isNotFound/isValidationError）；`queryClient.ts`（业务错误不重试，mutations 不重试）。
+  - Hooks：`useJobQueries`（useJobList/useJob/useJobRequirements/useGapList）+ `useJobMutations`（useCreateJob/useUpdateJob/useArchiveJob/useRestoreJob/useExtractRequirements/useUpdateRequirement），`If-Match-Version` 从 query data 回填，`onSuccess` 局部 `setQueryData` + invalidate。
+  - 三页面 + 组件：`JobListPage`（表格 + URL query 筛选 + 分页 + 归档/恢复 + 空状态）、`JobCreatePage`（JobForm 创建模式，成功后进入详情不回列表）、`JobDetailPage`（P03 四区：JobSummarySection/DecisionSection/RequirementConfirmationSection/GapListSection）；通用组件 ui/layout/feedback。
+  - 后端实际行为适配（不改正后端）：archive/restore/PUT 强制 `If-Match-Version`（缺失空 body 400，API 层 version 必填）；`VERSION_CONFLICT` reason 含 currentVersion（前端不解析，直接 invalidate 重读）；错误码 `NOT_FOUND`（非 RESOURCE_NOT_FOUND）；`GapItem.evidence` 恒空按空渲染；merge 端点未实现不接前端。
+- 未完成（留下一窗口）：
+  - M2 起步：投递状态机、下一步行动（AT-05~AT-09）；面试与提醒（AT-10~AT-14）。
+  - Playwright E2E（验收门槛要求 AT-01/09/11/15/18/20 前端 E2E，本窗口用 node 脚本验证 AT-01 API 闭环，未搭 Playwright）。
+  - Vite proxy 5173 未做真实浏览器点击验证（本环境后台进程管理导致 vite 不稳定，改用直连后端 8080 脚本验证；proxy 配置已由 typecheck/build 确认）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`（补 3 字段）、`AGENTS.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/IMPLEMENTATION_MASTER_PROMPT.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`（PRD 引用修正 + 本交接 + 总状态转 DONE）。
+  - 修改：`.gitignore`（追加 `frontend/src/api/generated/`）。
+  - 新增（frontend/）：`package.json`、`package-lock.json`、`vite.config.ts`、`tsconfig.json`、`tsconfig.app.json`、`tsconfig.node.json`、`eslint.config.js`(实际为 `.oxlintrc.json`)、`index.html`、`src/main.tsx`、`src/app/{AppProviders,routes,queryClient}.tsx`、`src/api/{client,idempotency,errors}.ts`、`src/api/jobs/{jobApi,useJobQueries,useJobMutations}.ts`、`src/components/ui/{Badge,Button,Form,Table,Spinner,EmptyState,ErrorState}.tsx`、`src/components/layout/{Sidebar,TopBar,AppLayout}.tsx`、`src/components/feedback/{Toast,toastStore,InlineFieldError,ConflictBanner}.tsx`、`src/features/jobs/{JobListPage,JobCreatePage,JobDetailPage,statusLabels}.tsx`、`src/features/jobs/components/{JobForm,jobFormValues,JobSummarySection,DecisionSection,RequirementConfirmationSection,RequirementRow,GapListSection}.tsx`、`src/styles/globals.css`、`src/api/generated/types.ts`（不入库）。
+- 已运行验证：
+  - `cd frontend && npm install` → 88 包，`prepare` 自动 gen-types 成功。
+  - `npm run typecheck`（`tsc -b --noEmit`）→ 0 error。
+  - `npm run lint`（`oxlint src`）→ 0 error / 0 warning。
+  - `npm run build`（`gen-types && tsc -b && vite build`）→ 150 模块，BUILD SUCCESS，dist/index.html 0.47kB + assets/index 330.95kB（gzipped 105.27kB）。
+  - `cd backend && mvn spring-boot:run` → Tomcat 8080 + Flyway v1 验证通过。
+  - AT-01 端到端（node 脚本直连后端）：GET /jobs 200 → POST /jobs 201(version=0) → POST extract 200(candidates=4,newCount=4) → PUT 无 If-Match-Version 400 空 body → 确认 3 项 200(CONFIRMED,version=1) → GET gap-list 200(3 项全 INSUFFICIENT_INFO) → PUT decision 200(TO_APPLY,version=1) → GET /jobs 列表可见 TO_APPLY。断言 ✅ 全部通过。
+- 验证结果：前端可编译、可 lint、可 build；后端 AT-01 端到端业务闭环验证通过。M1 slice 1 交付完整。
+- 已知问题：
+  1. Vite dev server 在本环境后台进程管理下不稳定（端口被占用切换 5174、nohup 后退出），未做真实浏览器点击验证；下一窗口如需前端交互验证，建议前台启动 `npm run dev` 或用 Playwright。
+  2. 列表页"已确认关键要求数""差距概览"列本窗口简化（GET /jobs 不返回该字段，避免 N+1），详情页有完整差距与要求。
+  3. APPLY 决定只保存 decisionStatus，不创建投递（POST /applications 后端 M2 才实现）。
+  4. merge 端点 OpenAPI 有定义但后端未实现，前端未接。
+  5. AT-03"人工修正记录保留"软失效仍待 V2 迁移（`RequirementMatch` 当前 deleteByJobId 硬删除）；本窗口前端 manualMatchStatus 走 PUT requirement 的 manualMatchStatus 字段，对应 AT-04 路径。
+  6. Playwright E2E（AT-01/09/11/15/18/20）未补，属后续切片。
+- 下一窗口只做：
+  1. 起步 M2：投递状态机（POST /applications + transition）、下一步行动（AT-05~AT-09）。先 OpenAPI（已有契约）+ 后端 application 模块 + 集成测试，再前端 application 页面。
+  2. 投递详情页 P04 + 创建投递表单；dashboard P01 行动识别（AT-09）。
+  3. 补 Playwright E2E 框架（如需前端自动化验收）。
+- 不要重复做：
+  - 不要重写前端骨架或 job 三页面（已 DONE，lint/typecheck/build 全绿）。
+  - 不要重新生成或手改 OpenAPI 类型（`src/api/generated/types.ts` 由 `prepare`/`build` 自动生成，`.gitignore` 已忽略）。
+  - 不要改 `V1__initial_schema.sql`（结构变更新增 V2 迁移）。
+  - 不要提前实现面试/提醒/复盘/任务（M2 投递之后）、AI、外部通知、云同步、附件上传、综合匹配评分。
+  - 不要使用 pnpm（本机不可用，用 npm）。
 
 ### 窗口 2026-08-26-2
 

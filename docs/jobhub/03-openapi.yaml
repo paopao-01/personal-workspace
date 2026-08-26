@@ -788,6 +788,7 @@ components:
         proficiencyText: { type: string, nullable: true }
         confirmationStatus: { $ref: '#/components/schemas/RequirementConfirmationStatus' }
         source: { type: string, enum: [RULE, USER, AI], default: RULE }
+        sortOrder: { type: integer, nullable: true, description: 提取/展示排序序号。 }
         version: { type: integer }
     RequirementUpdateRequest:
       type: object
@@ -815,6 +816,7 @@ components:
         jobId: { type: string, format: uuid }
         extractedAt: { type: string, format: date-time }
         candidates: { type: array, items: { $ref: '#/components/schemas/JobRequirement' } }
+        newCount: { type: integer, description: 本次提取新增候选数（去重后）。 }
     GapItem:
       type: object
       required: [requirement, status, evidence]
@@ -1231,8 +1233,8 @@ components:
         impactSummary: { type: array, items: { type: string } }
     PageJob:
       type: object
-      required: [items, page, pageSize, total]
-      properties: { items: { type: array, items: { $ref: '#/components/schemas/Job' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
+      required: [items, page, pageSize, total, totalPages]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/Job' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }
     PageApplication:
       type: object
       required: [items, page, pageSize, total]

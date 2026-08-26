@@ -41,6 +41,7 @@ frontend/dist/
 frontend/.vite/
 frontend/coverage/
 frontend/.eslintcache
+frontend/src/api/generated/
 
 # Env
 .env

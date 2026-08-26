@@ -4,7 +4,7 @@
 
 1. `docs/jobhub/IMPLEMENTATION_STATUS.md`：当前进度、正在进行的任务和下一步。
 2. `docs/jobhub/IMPLEMENTATION_MASTER_PROMPT.md`：模型启动、窗口边界和交接规则。
-3. `java-jobhub-prd.md`：产品范围、原则与优先级。
+3. `jobhub-prd.md`：产品范围、原则与优先级。
 4. `docs/jobhub/02-state-machines.md`：状态转换唯一依据。
 5. `docs/jobhub/03-openapi.yaml`：前后端接口唯一契约。
 6. `docs/jobhub/04-database-design.md`：表语义、迁移和持久化规则。
