@@ -66,9 +66,9 @@ public class RequirementService {
 		}
 
 		int affected = requirementMapper.updateByIdAndVersion(req, expectedVersion);
-		VersionCheck.requireAffected(affected, expectedVersion);
+		VersionCheck.requireAffected(affected, req.getVersion());
 		int bumped = requirementMapper.bumpVersionByIdAndVersion(requirementId, expectedVersion);
-		VersionCheck.requireAffected(bumped, expectedVersion);
+		VersionCheck.requireAffected(bumped, req.getVersion());
 
 		// AT-04：人工修正匹配状态。当用户提供 manualMatchStatus 时，upsert requirement_match。
 		if (cmd.manualMatchStatus() != null) {

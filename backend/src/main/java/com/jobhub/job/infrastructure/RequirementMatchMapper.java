@@ -30,10 +30,10 @@ public interface RequirementMatchMapper {
 			"#{manualOverrideReason, jdbcType=VARCHAR}, #{calculatedAt}, #{updatedAt}, #{version})")
 	int insert(RequirementMatch match);
 
-	@Update("UPDATE requirement_match SET match_status=#{matchStatus}, " +
-			"manual_override_reason=#{manualOverrideReason, jdbcType=VARCHAR}, updated_at=#{updatedAt} " +
-			"WHERE requirement_id=#{requirementId} AND version=#{expectedVersion}")
-	int updateByRequirementIdAndVersion(RequirementMatch match, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE requirement_match SET match_status=#{match.matchStatus}, " +
+			"manual_override_reason=#{match.manualOverrideReason, jdbcType=VARCHAR}, updated_at=#{match.updatedAt} " +
+			"WHERE requirement_id=#{match.requirementId} AND version=#{expectedVersion}")
+	int updateByRequirementIdAndVersion(@Param("match") RequirementMatch match, @Param("expectedVersion") long expectedVersion);
 
 	@Delete("DELETE FROM requirement_match WHERE requirement_id IN " +
 			"(SELECT id FROM job_requirement WHERE job_id = #{jobId})")

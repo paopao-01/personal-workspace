@@ -62,21 +62,21 @@ public interface JobMapper {
 						@Param("decisionStatus") JobDecisionStatus decisionStatus,
 						@Param("jobStatus") JobStatus jobStatus);
 
-	@Update("UPDATE job_posting SET company_name=#{companyName}, title=#{title}, jd_raw_text=#{jdRawText}, " +
-			"source=#{source, jdbcType=VARCHAR}, source_url=#{sourceUrl, jdbcType=VARCHAR}, " +
-			"location=#{location, jdbcType=VARCHAR}, salary_range=#{salaryRange, jdbcType=VARCHAR}, " +
-			"notes=#{notes, jdbcType=VARCHAR}, updated_at=#{updatedAt} " +
-			"WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
-	int updateBasicInfoByIdAndVersion(Job job, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE job_posting SET company_name=#{job.companyName}, title=#{job.title}, jd_raw_text=#{job.jdRawText}, " +
+			"source=#{job.source, jdbcType=VARCHAR}, source_url=#{job.sourceUrl, jdbcType=VARCHAR}, " +
+			"location=#{job.location, jdbcType=VARCHAR}, salary_range=#{job.salaryRange, jdbcType=VARCHAR}, " +
+			"notes=#{job.notes, jdbcType=VARCHAR}, updated_at=#{job.updatedAt} " +
+			"WHERE id=#{job.id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateBasicInfoByIdAndVersion(@Param("job") Job job, @Param("expectedVersion") long expectedVersion);
 
-	@Update("UPDATE job_posting SET decision_status=#{decisionStatus, jdbcType=VARCHAR}, " +
-			"decision_reason=#{decisionReason, jdbcType=VARCHAR}, updated_at=#{updatedAt} " +
-			"WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
-	int updateDecisionByIdAndVersion(Job job, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE job_posting SET decision_status=#{job.decisionStatus, jdbcType=VARCHAR}, " +
+			"decision_reason=#{job.decisionReason, jdbcType=VARCHAR}, updated_at=#{job.updatedAt} " +
+			"WHERE id=#{job.id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateDecisionByIdAndVersion(@Param("job") Job job, @Param("expectedVersion") long expectedVersion);
 
-	@Update("UPDATE job_posting SET status=#{status}, updated_at=#{updatedAt} " +
-			"WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
-	int updateStatusByIdAndVersion(Job job, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE job_posting SET status=#{job.status}, updated_at=#{job.updatedAt} " +
+			"WHERE id=#{job.id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateStatusByIdAndVersion(@Param("job") Job job, @Param("expectedVersion") long expectedVersion);
 
 	@Update("UPDATE job_posting SET version = version + 1 " +
 			"WHERE id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL")

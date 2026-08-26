@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M1 第一切片实施中（PARTIAL，后端已编译通过且可启动、Flyway/SQLite 已验证、最小接口可访问；集成测试与前端尚未开始）。
+- 项目阶段：M1 第一切片实施中（PARTIAL，后端已编译通过且可启动、Flyway/SQLite 已验证、最小接口可访问；**集成测试已补齐并全绿**，前端尚未开始）。
 - 当前里程碑：M1（工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单）。
-- 当前任务：M1 第一切片 — 后端骨架 + 岗位垂直切片（AT-01~AT-04）。编译与启动已验证，剩余集成测试与前端。
+- 当前任务：M1 第一切片 — 后端骨架 + 岗位垂直切片（AT-01~AT-04）。后端集成测试已完成（5 类 18 方法全绿），修复 3 处生产 bug；剩余前端骨架与端到端验证。
 - 当前负责人窗口：Claude（glm-5.2）。
 - 最后更新：2026-08-26。
 
@@ -70,6 +70,61 @@
 
 ## 5. 当前窗口交接
 
+### 窗口 2026-08-26-2
+
+- 目标：补齐 M1 slice 1 后端集成测试（AT-01~AT-04 + 幂等/版本/非法转换），让 `mvn clean test` 全绿。范围仅限后端测试 + 修复测试暴露的生产 bug，不含前端与端到端。
+- 状态：**DONE**（本窗口目标全部达成；M1 slice 1 整体仍 PARTIAL，前端骨架与端到端验证待下一窗口）
+- 已完成：
+  - 测试基础设施：`backend/src/test/resources/application-test.yml`（测试库 `./target/jobhub-it.db`，日志降噪）、`AbstractIntegrationTest`（`@SpringBootTest(RANDOM_PORT)` + `@ActiveProfiles("test")` + `TestRestTemplate` + `JdbcTemplate` + `DatabaseCleaner`）、`DatabaseCleaner`（`@Component`，每方法按 FK 顺序清表）、`TestFixtures`（JD 样例 + 请求体/头构造）、`JsonProbe`（Jackson JSON 探针，替代 MockMvc jsonPath）
+  - 5 个集成测试类共 18 方法全绿（`mvn clean test` BUILD SUCCESS，0 failures/0 errors）：
+    - `JobCrudIntegrationTest`（7 方法：创建/列表分页过滤/详情404/更新版本自增/archive-restore 状态机/extract 全 PENDING/gap-list 空基线）
+    - `RequirementConfirmationIntegrationTest`（3 方法：AT-02 PENDING 排除/AT-03 JD 修改回退/AT-04 manualMatchStatus + reason + 快照保留）
+    - `IdempotencyIntegrationTest`（3 方法：相同key+相同body 回放/相同key+不同body 409/不同key 独立创建）——验证 Filter+Interceptor 真实链路
+    - `VersionConflictIntegrationTest`（3 方法：AT-22 旧版本409+当前版本/当前版本成功+1/缺失头400）
+    - `IllegalTransitionIntegrationTest`（2 方法：archive 已归档 422/restore 活跃 422，含 currentState/targetState/reason + 无副作用）
+  - 修复 3 处生产代码 bug（测试暴露）：
+    1. `VersionCheck` 版本冲突返回旧版本而非当前版本（AT-22 要求返回当前版本供客户端刷新）：`VersionCheck.requireAffected` 参数语义从 `expectedVersion` 改为 `currentVersion`；`JobService`（updateJob/archive/restore 共 7 处）、`RequirementService`（2 处）调用方改传 `job.getVersion()`/`req.getVersion()`（selectById 读出的真实当前版本）
+    2. MyBatis 注解 SQL 参数绑定缺失 `@Param`：`JobMapper`（updateBasicInfo/updateDecision/updateStatus）、`JobRequirementMapper`（updateByIdAndVersion/updateStatusByIdAndVersion）、`RequirementMatchMapper`（updateByRequirementIdAndVersion）原用裸属性名（`#{companyName}`），多参数时 MyBatis 无法解析。改用 `#{job.companyName}` 等显式 `@Param` 前缀
+    3. `JobService.updateJob` JD 变更判断失效：`job.jdChanged(cmd.jdRawText())` 在 `updateBasicInfo` 覆盖 job 对象后调用，此时 job.jdRawText 已是新值故必返回 false，导致修改 JD 不触发要求回退（AT-03 失败）。改为在覆盖前快照并预计算 `originalJdChanged`
+    4. `JobRequirementMapper` 三个 SELECT 用 `SELECT *`，列名 `requirement_type`/`source_type` 与 Java 属性 `type`/`source` 不映射（MyBatis 驼峰 + 下划线对单字段生效但 `type`↔`requirement_type` 非简单驼峰）。改为显式列别名 `requirement_type AS "type"`、`source_type AS "source"`（否则 selectById 返回 type=null，confirm 时把 NOT NULL 的 requirement_type 清空触发约束失败）
+- 未完成（留下一窗口）：
+  - 前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios）与 `JobListPage`、`JobCreatePage`、`JobDetailPage` 三页面
+  - 端到端 AT-01 手动验证（粘贴 JD → 确认 → 差距 INSUFFICIENT_INFO → 保存 TO_APPLY）
+  - 提交本批测试与修复（用户未要求 commit，未自动提交）
+- 修改文件：
+  - 修改：`backend/src/main/java/com/jobhub/common/version/VersionCheck.java`（参数语义 currentVersion + 文档）
+  - 修改：`backend/src/main/java/com/jobhub/job/application/JobService.java`（7 处 requireAffected 改传 job.getVersion()；updateJob 加 JD 变更预快照）
+  - 修改：`backend/src/main/java/com/jobhub/job/application/RequirementService.java`（2 处 requireAffected 改传 req.getVersion()）
+  - 修改：`backend/src/main/java/com/jobhub/job/infrastructure/JobMapper.java`（3 个 update 加 @Param("job") 前缀）
+  - 修改：`backend/src/main/java/com/jobhub/job/infrastructure/JobRequirementMapper.java`（2 个 update 加 @Param("r") 前缀；3 个 SELECT 加列别名）
+  - 修改：`backend/src/main/java/com/jobhub/job/infrastructure/RequirementMatchMapper.java`（1 个 update 加 @Param("match") 前缀）
+  - 新增：`backend/src/test/resources/application-test.yml`
+  - 新增：`backend/src/test/java/com/jobhub/integration/support/AbstractIntegrationTest.java`、`DatabaseCleaner.java`、`TestFixtures.java`、`JsonProbe.java`
+  - 新增：`backend/src/test/java/com/jobhub/integration/JobCrudIntegrationTest.java`、`RequirementConfirmationIntegrationTest.java`、`IdempotencyIntegrationTest.java`、`VersionConflictIntegrationTest.java`、`IllegalTransitionIntegrationTest.java`
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`（本交接 + 总状态修正）
+- 已运行验证：
+  - `cd backend && mvn clean test` → BUILD SUCCESS
+  - 5 个测试类结果：Idempotency 3/3、IllegalTransition 2/2、JobCrud 7/7、RequirementConfirmation 3/3、VersionConflict 3/3 = 18 方法全过，0 failures/0 errors
+- 验证结果：后端集成测试全绿。当前代码**可编译、可启动、可测试**。
+- 已知问题：
+  1. 前端骨架与端到端验证均未做，slice 1 未端到端验收（AT-01 未手动跑）。
+  2. AT-03"人工修正记录保留"未实现（`RequirementMatch` 注释明确本切片简化为 `deleteByJobId` 硬删除）；本切片 AT-03 测试不断言该项。后续切片需设计 requirement_match 软失效（可能 V2 迁移加 `invalidated_at` 列）后再补断言。
+  3. VersionCheck 并发场景下 `selectById` 读出的版本可能与 update 时刻不同步（极窄窗口），本切片不处理，留待后续切片在 affected=0 时重读实体。
+  4. 未提交本批修改（用户未要求）；`backend/target/jobhub-it.db` 测试库运行时生成，已被 `.gitignore` 的 `backend/target/` 覆盖。
+  5. `JobRequirementMapper` 三个 SELECT 改用显式列别名而非 `SELECT *`，是行为修复（原 `SELECT *` 导致 type/source 不映射）；不视为破坏性变更，仅修 bug。
+- 下一窗口只做：
+  1. 创建前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios），实现 `JobListPage`、`JobCreatePage`、`JobDetailPage`。
+  2. Vite proxy `/api → http://127.0.0.1:8080`；OpenAPI 类型生成（禁止手写枚举）。
+  3. 运行 `npm install` + `npm run lint` + `npm run build`（pnpm 不可用，用 npm）。
+  4. 手动验证 AT-01 端到端。
+  5. commit：`feat(job): M1 slice 1 — frontend skeleton + job pages`，`git push`。
+- 不要重复做：
+  - 不要重写后端集成测试或测试基础设施（已 DONE，18 方法全绿）。
+  - 不要重新修复 VersionCheck / MyBatis @Param / JD 回退 / SELECT 列别名（已修）。
+  - 不要修改 `V1__initial_schema.sql`（AT-03 软失效如需加列，新增 `V2` 迁移）。
+  - 不要提前实现 M2、AI、外部通知、云同步、附件上传、综合匹配评分。
+  - 不要使用 pnpm（本机不可用，改用 npm）。
+
 ### 窗口 2026-08-26-1
 
 - 目标：修复后端编译并启动验证（M1 slice 1 收尾第一步）。范围仅限编译 + 启动 + 最小接口，不含集成测试与前端。
@@ -83,10 +138,11 @@
   - 最小接口验证：`curl GET /api/jobs` → 200 + `{"items":[],"total":0,"page":1,"pageSize":20,"totalPages":0}`
   - 修正状态文档计数不一致（28→29 表、~35→53 文件、JobController 9+1 端点归属、删 pom 第 24 行错误引用、记录 mapper-locations 失效配置）
 - 未完成（留下一窗口）：
-  - 5 个集成测试类（`JobCrud`、`RequirementConfirmation`、`Idempotency`、`VersionConflict`、`IllegalTransition`），覆盖 AT-01~AT-04 + 幂等/版本/非法转换
+  - ~~5 个集成测试类（`JobCrud`、`RequirementConfirmation`、`Idempotency`、`VersionConflict`、`IllegalTransition`），覆盖 AT-01~AT-04 + 幂等/版本/非法转换~~ — **已于窗口 2026-08-26-2 完成（18 方法全绿）**
   - 前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios）与 `JobListPage`、`JobCreatePage`、`JobDetailPage` 三页面
   - 端到端 AT-01 手动验证（粘贴 JD → 确认 → 差距 INSUFFICIENT_INFO → 保存 TO_APPLY）
   - 提交本批修复与剩余 slice 1 成果（用户未要求 commit，未自动提交）
+  - **更正**：本批修复（GlobalExceptionHandler/IdempotencyInterceptor/application.yml/IdempotencyRecordMapper 迁移）实际已提交于 `36f1a4c chore: update idempotency and docs`（工作区 clean）；本条原写"未提交"为过时表述。
 - 修改文件：
   - 修改：`backend/src/main/java/com/jobhub/common/error/GlobalExceptionHandler.java`（删多余 import）
   - 修改：`backend/src/main/java/com/jobhub/common/idempotency/IdempotencyInterceptor.java`（`getStatusCode`→`getStatus`；加 mapper import）
@@ -102,10 +158,10 @@
 - 已知问题：
   1. 集成测试与前端均未做，slice 1 未端到端验收（AT-01 未跑）。
   2. `IdempotencyInterceptor`/`IdempotencyBodyCachingFilter` 已启动验证但未集成测试幂等回放与冲突的具体行为。
-  3. 未提交本批修改（用户未要求）；`backend/data/jobhub.db` 运行时生成，已由 `.gitignore` 忽略。
+  3. 本批修复已提交于 `36f1a4c`（工作区 clean）；`backend/data/jobhub.db` 运行时生成，已由 `.gitignore` 忽略。
   4. `mybatis.mapper-locations` 配置无害失效（注解 SQL 无 XML），保留不改。
 - 下一窗口只做：
-  1. 编写 5 个后端集成测试覆盖 AT-01~AT-04 + 幂等/版本/非法转换（优先 `JobCrudIntegrationTest`、`RequirementConfirmationIntegrationTest`）。
+  1. ~~编写 5 个后端集成测试覆盖 AT-01~AT-04 + 幂等/版本/非法转换~~ — **已完成于窗口 2026-08-26-2**
   2. 创建前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios），实现 `JobListPage`、`JobCreatePage`、`JobDetailPage`。
   3. 运行 `npm install` + `npm run lint` + `npm run build`（pnpm 不可用，用 npm）。
   4. 手动验证 AT-01 端到端。

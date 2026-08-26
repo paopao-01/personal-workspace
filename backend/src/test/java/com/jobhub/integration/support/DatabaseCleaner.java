@@ -1,0 +1,31 @@
+package com.jobhub.integration.support;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * 测试间数据库清理。按 FK 顺序 DELETE 业务表，保留 V1 种子 user_profile/user_setting。
+ * RANDOM_PORT + TestRestTemplate 下服务端在独立线程提交，无法用 @Transactional 回滚，
+ * 故用每方法 DELETE 重置起点。执行于 @BeforeEach。
+ *
+ * 用 @Component 而非 @TestComponent：@TestComponent 会被 TypeExcludeFilter 从主应用上下文排除，
+ * 导致 @SpringBootTest 默认上下文找不到 bean。本类仅存在于 test classpath，生产运行时不会被扫描。
+ */
+@Component
+public class DatabaseCleaner {
+
+	@Autowired
+	private JdbcTemplate jdbc;
+
+	/**
+	 * 清空所有 M1 slice 1 相关业务表。FK 安全顺序：先子后父。
+	 */
+	public void clearAll() {
+		jdbc.execute("DELETE FROM idempotency_record");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+	}
+}

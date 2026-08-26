@@ -24,25 +24,34 @@ public interface JobRequirementMapper {
 			"</script>")
 	int batchInsert(@Param("items") List<JobRequirement> items);
 
-	@Select("SELECT * FROM job_requirement WHERE job_id = #{jobId} AND deleted_at IS NULL ORDER BY sort_order ASC")
+	@Select("SELECT id, job_id, raw_text, normalized_name, requirement_type AS \"type\", " +
+			"proficiency_text, confirmation_status, source_type AS \"source\", sort_order, " +
+			"merged_into_requirement_id, version, created_at, updated_at, deleted_at " +
+			"FROM job_requirement WHERE job_id = #{jobId} AND deleted_at IS NULL ORDER BY sort_order ASC")
 	List<JobRequirement> selectByJobId(@Param("jobId") String jobId);
 
-	@Select("SELECT * FROM job_requirement WHERE job_id = #{jobId} AND confirmation_status = 'CONFIRMED' " +
+	@Select("SELECT id, job_id, raw_text, normalized_name, requirement_type AS \"type\", " +
+			"proficiency_text, confirmation_status, source_type AS \"source\", sort_order, " +
+			"merged_into_requirement_id, version, created_at, updated_at, deleted_at " +
+			"FROM job_requirement WHERE job_id = #{jobId} AND confirmation_status = 'CONFIRMED' " +
 			"AND deleted_at IS NULL ORDER BY sort_order ASC")
 	List<JobRequirement> selectConfirmedByJobId(@Param("jobId") String jobId);
 
-	@Select("SELECT * FROM job_requirement WHERE id = #{id} AND deleted_at IS NULL")
+	@Select("SELECT id, job_id, raw_text, normalized_name, requirement_type AS \"type\", " +
+			"proficiency_text, confirmation_status, source_type AS \"source\", sort_order, " +
+			"merged_into_requirement_id, version, created_at, updated_at, deleted_at " +
+			"FROM job_requirement WHERE id = #{id} AND deleted_at IS NULL")
 	JobRequirement selectById(@Param("id") String id);
 
-	@Update("UPDATE job_requirement SET normalized_name=#{normalizedName, jdbcType=VARCHAR}, " +
-			"requirement_type=#{type}, proficiency_text=#{proficiencyText, jdbcType=VARCHAR}, " +
-			"confirmation_status=#{confirmationStatus}, updated_at=#{updatedAt} " +
-			"WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
-	int updateByIdAndVersion(JobRequirement r, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE job_requirement SET normalized_name=#{r.normalizedName, jdbcType=VARCHAR}, " +
+			"requirement_type=#{r.type}, proficiency_text=#{r.proficiencyText, jdbcType=VARCHAR}, " +
+			"confirmation_status=#{r.confirmationStatus}, updated_at=#{r.updatedAt} " +
+			"WHERE id=#{r.id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateByIdAndVersion(@Param("r") JobRequirement r, @Param("expectedVersion") long expectedVersion);
 
-	@Update("UPDATE job_requirement SET confirmation_status=#{confirmationStatus}, updated_at=#{updatedAt} " +
-			"WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
-	int updateStatusByIdAndVersion(JobRequirement r, @Param("expectedVersion") long expectedVersion);
+	@Update("UPDATE job_requirement SET confirmation_status=#{r.confirmationStatus}, updated_at=#{r.updatedAt} " +
+			"WHERE id=#{r.id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateStatusByIdAndVersion(@Param("r") JobRequirement r, @Param("expectedVersion") long expectedVersion);
 
 	@Update("UPDATE job_requirement SET confirmation_status='PENDING', updated_at=#{now} " +
 			"WHERE job_id=#{jobId} AND deleted_at IS NULL")

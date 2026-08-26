@@ -1,0 +1,17 @@
+# 测试 profile：隔离 SQLite 测试库 + 降噪日志。
+# 路径相对 backend/ 工作目录（mvn 在此运行），target/ 由 Maven 在 test 阶段已创建，
+# SQLite JDBC 自动创建文件。mvn clean test 的 clean 会清掉残留库，保证全新 Flyway 迁移。
+spring:
+  datasource:
+    url: jdbc:sqlite:./target/jobhub-it.db
+    driver-class-name: org.sqlite.JDBC
+
+# Flyway 配置继承主 application.yml（enabled/locations/baseline-on-migrate/baseline-version/execute-in-transaction）。
+# execute-in-transaction=false 必须（V1 含 PRAGMA 非事务语句），勿在此覆盖为 true。
+
+logging:
+  level:
+    com.jobhub: WARN
+    org.flywaydb: INFO
+    org.mybatis.spring: WARN
+    org.springframework.web: WARN
