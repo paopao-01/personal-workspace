@@ -6,6 +6,7 @@ import com.jobhub.dashboard.application.DashboardService.ActionItem;
 import com.jobhub.dashboard.application.DashboardService.DashboardOverview;
 import com.jobhub.dashboard.application.DashboardService.SourceRef;
 import com.jobhub.job.api.JobResponse;
+import com.jobhub.interview.api.InterviewResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,7 +34,7 @@ public class DashboardController {
 	/** 与 OpenAPI DashboardOverview 对齐。 */
 	public record DashboardOverviewResponse(
 			List<ActionItemResponse> actionItems,
-			List<UpcomingInterviewPlaceholder> upcomingInterviews,
+			List<InterviewResponse> upcomingInterviews,
 			List<ApplicationResponse> activeApplications,
 			List<WeakKnowledgePointPlaceholder> weakKnowledgePoints,
 			List<JobResponse> recentJobs
@@ -45,9 +46,11 @@ public class DashboardController {
 					.map(ApplicationResponse::from).toList();
 			List<JobResponse> jobs = o.recentJobs().stream()
 					.map(JobResponse::from).toList();
+			List<InterviewResponse> interviews = o.upcomingInterviews().stream()
+					.map(i -> InterviewResponse.from(i, List.of())).toList();
 			return new DashboardOverviewResponse(
 					actions,
-					List.of(),
+					interviews,
 					apps,
 					List.of(),
 					jobs);
@@ -74,7 +77,6 @@ public class DashboardController {
 		}
 	}
 
-	/** 占位类型：面试/薄弱点模块未实现时返回空数组。 */
-	public record UpcomingInterviewPlaceholder(String placeholder) { }
+	/** 占位类型：薄弱点模块未实现时返回空数组。 */
 	public record WeakKnowledgePointPlaceholder(String placeholder) { }
 }

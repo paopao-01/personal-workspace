@@ -11,13 +11,17 @@ import {
   applicationStatusLabel,
   applicationStatusVariant,
 } from '@/features/applications/applicationStatusLabels'
+import {
+  formatInterviewTime,
+  interviewModeLabel,
+} from '@/features/interviews/interviewLabels'
 
 /**
  * P01 首页工作台。让用户在 10 秒内知道今天应做什么。
  *
  * 后端 actionItems 已按 priority 升序排序（1=逾期, 2=缺失, 3=一般），
  * 同优先级按 dueAt 升序。本切片只有 APPLICATION_ACTION_DUE 类行动项；
- * upcomingInterviews / weakKnowledgePoints 为空数组占位（面试/复盘未实现）。
+ * upcomingInterviews 为未来已安排面试；weakKnowledgePoints 仍为空数组占位。
  */
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -39,6 +43,7 @@ export function DashboardPage() {
   const actionItems = data.actionItems ?? []
   const activeApplications = data.activeApplications ?? []
   const recentJobs = data.recentJobs ?? []
+  const upcomingInterviews = data.upcomingInterviews ?? []
 
   // 全空：首次会话引导
   if (recentJobs.length === 0 && activeApplications.length === 0) {
@@ -86,9 +91,51 @@ export function DashboardPage() {
           applications={activeApplications}
           labelByAppId={labelByAppId}
         />
+        <UpcomingInterviewsSection interviews={upcomingInterviews} />
         <RecentJobsSection overview={data} />
       </div>
     </div>
+  )
+}
+
+function UpcomingInterviewsSection({
+  interviews,
+}: {
+  interviews: DashboardOverview['upcomingInterviews']
+}) {
+  const navigate = useNavigate()
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2 className="card-title">即将面试</h2>
+      </div>
+      <div className="card-body">
+        {interviews.length === 0 ? (
+          <EmptyState icon="📅" text="暂无即将开始的面试" />
+        ) : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {interviews.map((interview) => (
+              <li
+                key={interview.id}
+                className="requirement-row"
+                style={{ justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}
+                onClick={() => navigate(`/interviews/${interview.id}`)}
+              >
+                <div className="requirement-main">
+                  <span className="requirement-raw">{interview.roundName}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {interview.mode ? interviewModeLabel[interview.mode] : '未填写方式'} · {interview.eventTimeZone}
+                  </span>
+                </div>
+                <span className="muted" style={{ fontSize: 12, flexShrink: 0 }}>
+                  {formatInterviewTime(interview.startsAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   )
 }
 

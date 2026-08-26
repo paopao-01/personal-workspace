@@ -65,6 +65,28 @@ class DashboardIntegrationTest extends AbstractIntegrationTest {
 		assertThat(overduePriority).isLessThan(missingPriority);
 	}
 
+	@Test
+	void scheduledFutureInterview_appearsInUpcomingInterviews() {
+		String jobId = createJob();
+		String appId = createApplication(jobId, null, null);
+		transition(appId, "0", "APPLIED", TestFixtures.newKey());
+		transition(appId, "1", "RESUME_PASSED", TestFixtures.newKey());
+		ResponseEntity<String> created = restTemplate.exchange(
+				url("/interviews"), HttpMethod.POST,
+				TestFixtures.httpWithHeaders(
+						"{\"applicationId\":\"" + appId + "\",\"roundName\":\"技术一面\",\"startsAt\":\"2999-09-10T10:00:00Z\",\"eventTimeZone\":\"Asia/Shanghai\"}",
+						"Idempotency-Key", TestFixtures.newKey()), String.class);
+		String interviewId = JsonProbe.str(created.getBody(), "id");
+
+		ResponseEntity<String> overview = restTemplate.exchange(
+				url("/dashboard"), HttpMethod.GET, TestFixtures.httpJson(""), String.class);
+
+		assertThat(overview.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.arraySize(overview.getBody(), "upcomingInterviews")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(overview.getBody(), "upcomingInterviews", 0, "id"))
+				.isEqualTo(interviewId);
+	}
+
 	/** 在 actionItems 数组中找到 sourceRef.id == appId 的项，返回其 title。 */
 	private String findActionItemTitle(String body, String appId) {
 		int size = JsonProbe.arraySize(body, "actionItems");

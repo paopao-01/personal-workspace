@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 第五切片（面试中心与状态操作前端）完成（**DONE**，P05 列表筛选 + P06 专用状态命令）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试前端主要路径可用。月视图、投递状态筛选、dashboard upcoming 聚合、Playwright E2E 和 AT-08 后半仍待后续窗口。
-- 当前任务：面试中心与状态操作已交付；下一窗口建议补 dashboard upcoming 面试聚合及展示，或补 AT-08 `allowDuplicate=true` 的 V2 迁移。
+- 项目阶段：M2 第六切片（工作台即将面试）完成（**DONE**，dashboard 聚合真实未来面试并展示）。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 月视图/投递状态筛选、Playwright E2E 和 AT-08 后半仍待后续窗口。
+- 当前任务：工作台即将面试已交付；下一窗口建议补 AT-08 `allowDuplicate=true` 的 V2 迁移，或做 P05 月视图与投递状态筛选。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-26。
 
@@ -53,7 +53,7 @@
 
 - `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard 模块业务代码（约 74 个 Java 文件：1 主类 + common 19 + job 34 + application 18 + dashboard 2；`JobMapper` 新增 selectByIds）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
-- **后端已通过 `mvn clean test`（9 类 28 方法 BUILD SUCCESS，0 failures/0 errors）：M1 job 18 + M2 application/dashboard 10**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
+- **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
 - `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
 - `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上；已通过集成测试验证幂等回放与冲突行为。
@@ -70,6 +70,27 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-9
+
+- 目标：M2 第六切片 — 让首页工作台显示真实的即将面试，而非 OpenAPI 契约中的空占位数组。
+- 状态：**DONE**。
+- 已完成：
+  - `DashboardService` 注入 `InterviewMapper`，读取当前 UTC 时间之后、`SCHEDULED` 的面试，按开始时间排序并限制为前 5 条；此聚合为只读，不改变面试或提醒状态。
+  - `DashboardController` 将 `upcomingInterviews` 从占位类型替换为 OpenAPI 已定义的 `InterviewResponse[]`；无需新增契约字段或数据库迁移。
+  - `DashboardPage` 新增“即将面试”区块，展示轮次、面试方式、事件时区和本地化开始时间，点击进入面试详情；无数据时显示明确空状态。
+  - `DashboardIntegrationTest` 新增回归：未来 `SCHEDULED` 面试出现在 `upcomingInterviews`，覆盖真实响应类型而非空数组。
+- 未完成：
+  - P05 月视图、投递状态筛选和卡片式时间线；投递状态筛选需先扩展 `Interview` 契约或增加聚合查询响应。
+  - AT-08 `allowDuplicate=true` 所需 V2 迁移、Playwright E2E，以及 M3 的复盘/问题/任务。
+- 修改文件：
+  - 修改：`backend/src/main/java/com/jobhub/dashboard/{application/DashboardService.java,api/DashboardController.java}`、`backend/src/test/java/com/jobhub/integration/DashboardIntegrationTest.java`、`frontend/src/features/dashboard/DashboardPage.tsx`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=DashboardIntegrationTest,InterviewIntegrationTest"` → BUILD SUCCESS，8 tests，0 failures，0 errors。
+  - `cd frontend && npm run lint && npm run typecheck && npm run build` → 全绿，生产构建 174 modules。
+  - 首次沙箱内 Maven 执行因无权写入 `backend/target` 失败；以授权运行同一命令后通过，非代码错误。
+- 下一窗口建议只做：AT-08 后半的 V2 迁移和 `allowDuplicate=true` 行为，或先在 OpenAPI 设计后实现 P05 投递状态筛选/月视图；不要把面试状态更新塞入 dashboard 聚合。
+- 不要重复做：`upcomingInterviews` 已是 `Interview[]` 契约，后端不应再返回占位对象或空数组。未来面试只展示 `SCHEDULED`，到时间后仍等待人工确认，不能自动完成。
 
 ### 窗口 2026-08-26-8
 

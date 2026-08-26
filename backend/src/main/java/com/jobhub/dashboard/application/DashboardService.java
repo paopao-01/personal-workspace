@@ -5,6 +5,9 @@ import com.jobhub.application.infrastructure.ApplicationMapper;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.job.domain.Job;
 import com.jobhub.job.infrastructure.JobMapper;
+import com.jobhub.interview.domain.Interview;
+import com.jobhub.interview.domain.InterviewScheduleStatus;
+import com.jobhub.interview.infrastructure.InterviewMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -23,7 +26,8 @@ import java.util.stream.Collectors;
  *   - actionItems 中 APPLICATION_ACTION_DUE：缺失行动 / 逾期行动 / 一般行动
  *   - activeApplications：进行中的活动投递
  *   - recentJobs：最近更新的岗位（复用 JobMapper.selectPage）
- *   - upcomingInterviews / weakKnowledgePoints：空数组（面试/复盘/任务模块未实现）
+ *   - upcomingInterviews：未来已安排面试（按开始时间，最多 5 条）
+ *   - weakKnowledgePoints：空数组（复盘/任务模块未实现）
  *
  * 行动缺失不阻断状态转换（02-state-machines.md §3），仅作为 dashboard 提示。
  */
@@ -39,14 +43,18 @@ public class DashboardService {
 	private static final int PRIORITY_NORMAL = 3;
 
 	private static final int RECENT_JOBS_LIMIT = 10;
+	private static final int UPCOMING_INTERVIEWS_LIMIT = 5;
 
 	private final ApplicationMapper applicationMapper;
 	private final JobMapper jobMapper;
+	private final InterviewMapper interviewMapper;
 	private final UtcTime utcTime;
 
-	public DashboardService(ApplicationMapper applicationMapper, JobMapper jobMapper, UtcTime utcTime) {
+	public DashboardService(ApplicationMapper applicationMapper, JobMapper jobMapper,
+			InterviewMapper interviewMapper, UtcTime utcTime) {
 		this.applicationMapper = applicationMapper;
 		this.jobMapper = jobMapper;
+		this.interviewMapper = interviewMapper;
 		this.utcTime = utcTime;
 	}
 
@@ -71,8 +79,13 @@ public class DashboardService {
 
 		// recentJobs：复用 JobMapper.selectPage（按 updated_at DESC）
 		List<Job> recentJobs = jobMapper.selectPage(null, null, null, RECENT_JOBS_LIMIT, 0);
+		List<Interview> upcomingInterviews = interviewMapper
+				.selectUpcoming(now, "9999-12-31T23:59:59Z", InterviewScheduleStatus.SCHEDULED)
+				.stream()
+				.limit(UPCOMING_INTERVIEWS_LIMIT)
+				.toList();
 
-		return new DashboardOverview(actionItems, activeApps, recentJobs, List.of(), List.of());
+		return new DashboardOverview(actionItems, activeApps, recentJobs, upcomingInterviews, List.of());
 	}
 
 	private Map<String, Job> batchJobs(List<Application> apps) {
@@ -132,7 +145,7 @@ public class DashboardService {
 			List<ActionItem> actionItems,
 			List<Application> activeApplications,
 			List<Job> recentJobs,
-			List<Object> upcomingInterviews,
+			List<Interview> upcomingInterviews,
 			List<Object> weakKnowledgePoints
 	) { }
 
