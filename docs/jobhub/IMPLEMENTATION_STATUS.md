@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 第一切片完成（**DONE**，投递后端四层 + dashboard 聚合 + AT-05~AT-09 后端集成测试全绿）。前端 application 页面与面试/提醒待后续窗口。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。投递状态机 + 下一步行动（AT-05~AT-09）后端完成；面试与提醒（AT-10~AT-14）未开始。
-- 当前任务：M2 第一切片（投递后端）已交付。下一窗口做前端 application 页面（P04 投递详情 + P01 dashboard 行动识别）或面试/提醒（AT-10~AT-14）后端。
+- 项目阶段：M2 第二切片（前端）完成（**DONE**，application + dashboard 前端页面 + AT-05~AT-09 前端 API 链路验证）。面试与提醒（AT-10~AT-14）待后续窗口。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。投递状态机 + 下一步行动（AT-05~AT-09）后端 + 前端均完成；面试与提醒（AT-10~AT-14）未开始。
+- 当前任务：M2 第二切片（前端 application + dashboard）已交付。下一窗口做面试与提醒后端（AT-10~AT-14：interview + reminder 模块 + 同事务推进投递 + 提醒调度）或补 Playwright E2E + AT-08 后半（allowDuplicate=true，需 V2 迁移）。
 - 当前负责人窗口：Claude（glm-5.2）。
 - 最后更新：2026-08-26。
 
@@ -52,7 +52,7 @@
 ## 3. 当前代码事实
 
 - `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard 模块业务代码（约 74 个 Java 文件：1 主类 + common 19 + job 34 + application 18 + dashboard 2；`JobMapper` 新增 selectByIds）。
-- `frontend/` 已生成完整骨架与岗位三页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6；约 32 个手写源文件 + OpenAPI 生成类型）。`npm run lint`/`typecheck`/`build` 全绿，`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application/dashboard 前端页面待实现。
+- `frontend/` 已生成完整骨架与岗位三页面 + application/dashboard 页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6；约 49 个手写源文件 + OpenAPI 生成类型）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别均已实现。
 - **后端已通过 `mvn clean test`（9 类 28 方法 BUILD SUCCESS，0 failures/0 errors）：M1 job 18 + M2 application/dashboard 10**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
 - `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
@@ -70,6 +70,69 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-5
+
+- 目标：M2 第二切片（前端）— application + dashboard 页面，收尾 AT-05~AT-09 前端部分。后端 7 端点已就绪，前端类型已生成，照抄 jobs 三件套模式。
+- 状态：**DONE**（本窗口目标全部达成；M2 投递状态机 + 下一步行动的前端闭环可见，AT-05~AT-09 前端 API 链路验证通过）。
+- 提交：`feat(application): M2 slice 2 — frontend application + dashboard pages (AT-05..AT-09)`，推送至 `origin/feat/m2-application-backend`（`bash.exe.stackdump` 为误生成文件，未纳入提交；远程 `main` 仍停在 `a227055`，合并/PR 待定）。
+- 已完成：
+  - **API 层**：
+    - `frontend/src/api/applications/`：`applicationApi.ts`（6 端点纯函数，类型从 generated 导入，transition 用稳定 Idempotency-Key `transition:${applicationId}:${targetStatus}` 覆盖自动注入以支持网络重试回放）、`useApplicationQueries.ts`（useApplicationList/Detail/StatusHistory，query key `['applications', ...]`）、`useApplicationMutations.ts`（create/update/transition，onSuccess 局部 setQueryData 合并 + invalidate applications + dashboard，version 从 detail 回填）
+    - `frontend/src/api/dashboard/`：`dashboardApi.ts`（getDashboardOverview）、`useDashboardQueries.ts`（useDashboardOverview，query key `['dashboard']`）
+  - **Feature — applications**：
+    - `applicationStatusLabels.ts`：8 状态文案 + Badge variant + `ALLOWED_TRANSITIONS` 转换矩阵（编码 02-state-machines.md §3）+ transitionTargetLabel；复用 jobs 的 formatDateTime
+    - `components/applicationFormValues.ts`：ApplicationFormValues + appToValues + toCreateRequest + toUpdateRequest（**全字段覆盖写**，可空字段空值传 null）+ isoToLocalDatetime/localDatetimeToIso 双向转换（datetime-local 本地 ↔ ISO UTC）
+    - `components/ApplicationForm.tsx`：create/edit 表单，复用 Field/Input/Textarea + InlineFieldError + 客户端校验
+    - `ApplicationCreatePage.tsx`：从 `?jobId=` 预填，useJob 显示岗位摘要，成功 navigate 详情；错误分支 DUPLICATE_APPLICATION/IDEMPOTENCY_CONFLICT/校验/网络
+    - `ApplicationDetailPage.tsx`：P04 五区 + Spinner/ErrorState 守卫
+    - 五区组件：`ApplicationSummarySection`（区1 摘要 dl）、`ApplicationStatusSection`（区2 状态 Badge + 合法目标转换按钮 + ON_HOLD resume 特殊分支 + OFFER 逃生舱 checkbox + 非法转换 ConflictBanner，key 重建同步版本）、`NextActionSection`（区3 行内编辑，PUT 全字段回填，逾期/缺失提示）、`StatusTimelineSection`（区4 statusHistory 倒序）、`InterviewListSection`（区5 空数组 EmptyState 占位）
+  - **Feature — dashboard**：`DashboardPage.tsx`（行动识别区块：actionItems 按 priority 1逾期/2缺失/3一般 排序 + 来源链接 + 进行中投递 + 最近岗位 + 全空首会话引导）
+  - **路由 & 布局改动**：`routes.tsx`（新增 `/dashboard`、`/applications/new`、`/applications/:applicationId`，默认 `/`→`/dashboard`，`/applications/new` 在 `:applicationId` 前以保静态优先）、`Sidebar.tsx`（置顶"首页工作台"导航项）、`DecisionSection.tsx`（APPLY 提示改为"创建投递记录"NavLink → `/applications/new?jobId=`）
+- 未完成（留下一窗口）：
+  - 面试与提醒（AT-10~AT-14）：interview + reminder 模块后端 + 同事务推进投递 + 改期替换提醒 + 取消/缺席 + 本地提醒调度
+  - AT-08 后半 `allowDuplicate=true` 创建成功：需 V2 迁移重新设计唯一索引后补全
+  - Playwright E2E（AT-01/09/11/15/18/20 前端浏览器自动化验收，当前用直连后端 curl 验证 API 链路）
+  - 真实浏览器点击验证（本环境 Vite dev 后台进程不稳定，未做 UI 交互；前端构建 + API 链路已验证）
+- 修改文件：
+  - 新增（applications API）：`frontend/src/api/applications/{applicationApi,useApplicationQueries,useApplicationMutations}.ts`
+  - 新增（dashboard API）：`frontend/src/api/dashboard/{dashboardApi,useDashboardQueries}.ts`
+  - 新增（applications feature）：`frontend/src/features/applications/applicationStatusLabels.ts`、`components/{applicationFormValues,ApplicationForm,ApplicationSummarySection,ApplicationStatusSection,NextActionSection,StatusTimelineSection,InterviewListSection}.tsx/.ts`、`ApplicationCreatePage.tsx`、`ApplicationDetailPage.tsx`
+  - 新增（dashboard feature）：`frontend/src/features/dashboard/DashboardPage.tsx`
+  - 修改：`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`、`frontend/src/features/jobs/components/DecisionSection.tsx`
+  - 重新生成（不入库）：`frontend/src/api/generated/types.ts`（`npm run gen-types`，确认含 PageApplication.totalPages）
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`（本交接 + 总状态/代码事实更新）
+- 已运行验证：
+  - `cd frontend && npm run gen-types` → 类型重新生成成功
+  - `npm run lint`（oxlint）→ 0 error / 0 warning
+  - `npm run typecheck`（tsc -b --noEmit）→ 0 error
+  - `npm run build`（gen-types + tsc -b + vite build）→ BUILD SUCCESS，166 模块，dist 353.20kB（gzip 109.48kB）
+  - `cd backend && mvn clean test` → BUILD SUCCESS，9 类 28 方法全绿（0 failures/0 errors），后端基线未破坏
+  - `mvn spring-boot:run` → Tomcat 8080 启动，Flyway V1 验证通过
+  - 端到端 API 链路验证（curl 直连后端，UTF-8 文件喂 JSON 避开 Windows GBK 编码问题）：
+    - 创建岗位 201 → 创建投递 201（DRAFT v0）→ AT-08 重复投递 409 ✓
+    - AT-05 DRAFT→APPLIED 转换成功，时间线首条 `DRAFT->APPLIED reason=已投递简历`，PUT 不新增历史 ✓
+    - AT-06 APPLIED→OFFER 非法转换 422 ✓
+    - AT-07 相同 Idempotency-Key 回放返回 APPLIED，历史仍 1 条（不新增）✓
+    - AT-09 dashboard actionItems=1（prio=3 一般行动，dueAt=2026-09-01，title=跟进HR）、activeApplications=1、recentJobs=3 ✓
+- 验证结果：前端可 lint/typecheck/build，后端 28 测试全绿，AT-05~AT-09 前端 API 链路端到端验证通过。M2 第二切片（前端）交付完整。
+- 已知问题：
+  1. 真实浏览器 UI 交互未验证（Vite dev 后台进程在本环境不稳定）；前端类型/构建/错误处理已就绪，API 链路已验证，浏览器点击验证留下一窗口或 Playwright。
+  2. dashboard `activeApplications` 缺岗位标题（Application 只含 jobId）；首版用 `actionItems[].sourceRef.label` 关联 applicationId 获取标题，无法关联的显示"查看详情"。后端可考虑在 dashboard 聚合时附带 job title（但 Application 对象契约不含，需扩展 DTO）。
+  3. transition 稳定 Idempotency-Key `transition:${applicationId}:${targetStatus}`：残余风险是用户改 reason 重试同 target → 409 IDEMPOTENCY_CONFLICT（UI 上转换成功后按钮消失，概率极低，Toast 处理）。
+  4. 后端 DashboardController 的 `upcomingInterviews`/`weakKnowledgePoints` 返回 Placeholder 类型，OpenAPI 定义为 `Interview[]`/`WeakKnowledgePoint[]`；后端实际返回空数组，前端按空数组处理不访问元素属性，运行时无碍，类型层面靠空数组规避。
+  5. OFFER 转换前置真实校验仍依赖面试模块（未实现），前端用逃生舱 checkbox `allowOfferWithoutCompletedInterview`。
+  6. `InterviewListSection` 接收 `Interview[]`（从 generated 的 `components['schemas']['Interview']` 取类型），当前恒空数组占位。
+- 下一窗口只做：
+  1. 面试与提醒后端（AT-10~AT-14）：`backend/src/main/java/com/jobhub/interview/` + `reminder/` 模块四层；创建面试同事务推进投递至 INTERVIEWING + 默认 3 条提醒；改期替换未触发提醒；取消/缺席取消提醒 + 拒绝设结果；本地提醒调度（PENDING→到期展示，不承诺系统推送）。OpenAPI 已有完整面试契约。
+  2. 或补 Playwright E2E 框架 + AT-01/09 前端浏览器自动化验收。
+  3. 或 AT-08 后半（需 V2 迁移重新设计 `uq_application_active_per_job` 唯一索引）。
+- 不要重复做：
+  - 不要重写前端 application/dashboard 页面或 API 三件套（已 DONE，lint/typecheck/build 全绿）。
+  - 不要手写 Application 枚举类型（前端由 openapi-typescript 从 03-openapi.yaml 生成）。
+  - 不要修改 `V1__initial_schema.sql`（AT-08 allowDuplicate 如需放宽唯一索引，新增 V2 迁移）。
+  - 不要提前实现复盘/任务（M2 面试之后）、AI、外部通知、云同步、附件上传、综合匹配评分。
+  - 不要使用 pnpm（本机不可用，用 npm）。
 
 ### 窗口 2026-08-26-4
 

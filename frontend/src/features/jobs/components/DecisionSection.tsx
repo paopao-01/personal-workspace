@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { NavLink } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { Field, Textarea } from '@/components/ui/Form'
 import { ConflictBanner } from '@/components/feedback/ConflictBanner'
@@ -108,7 +109,15 @@ function DecisionSectionInner({ job }: Props) {
 
         {selected === 'APPLY' ? (
           <p className="form-hint" style={{ marginTop: 12 }}>
-            提示：投递记录功能将在 M2 上线后创建，本次仅保存决定。
+            已决定投递？
+            <NavLink
+              to={`/applications/new?jobId=${job.id}`}
+              className="btn btn-link"
+              style={{ display: 'inline', padding: '0 4px' }}
+            >
+              创建投递记录
+            </NavLink>
+            ，记录渠道与下一步行动。
           </p>
         ) : null}
 

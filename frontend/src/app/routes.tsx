@@ -3,16 +3,28 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { JobListPage } from '@/features/jobs/JobListPage'
 import { JobCreatePage } from '@/features/jobs/JobCreatePage'
 import { JobDetailPage } from '@/features/jobs/JobDetailPage'
+import { DashboardPage } from '@/features/dashboard/DashboardPage'
+import { ApplicationCreatePage } from '@/features/applications/ApplicationCreatePage'
+import { ApplicationDetailPage } from '@/features/applications/ApplicationDetailPage'
 
 export function AppRouter() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route path="/" element={<Navigate to="/jobs" replace />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/jobs" element={<JobListPage />} />
         <Route path="/jobs/new" element={<JobCreatePage />} />
         <Route path="/jobs/:jobId" element={<JobDetailPage />} />
-        <Route path="*" element={<Navigate to="/jobs" replace />} />
+        <Route
+          path="/applications/new"
+          element={<ApplicationCreatePage />}
+        />
+        <Route
+          path="/applications/:applicationId"
+          element={<ApplicationDetailPage />}
+        />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
   )

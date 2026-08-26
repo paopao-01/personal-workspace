@@ -7,6 +7,7 @@ interface NavItem {
 }
 
 const items: NavItem[] = [
+  { to: '/dashboard', label: '首页工作台', enabled: true },
   { to: '/jobs', label: '岗位与投递', enabled: true },
   { to: '/interviews', label: '面试中心', enabled: false },
   { to: '/tasks', label: '学习任务', enabled: false },
