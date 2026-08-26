@@ -5,6 +5,35 @@ type Schemas = components['schemas']
 export type Interview = Schemas['Interview']
 export type Reminder = Schemas['Reminder']
 export type InterviewCreateRequest = Schemas['InterviewCreateRequest']
+export type InterviewCompleteRequest = Schemas['InterviewCompleteRequest']
+export type InterviewRescheduleRequest = Schemas['InterviewRescheduleRequest']
+export type InterviewScheduleStatus = Schemas['InterviewScheduleStatus']
+
+export interface InterviewListParams {
+  from?: string
+  to?: string
+  scheduleStatus?: InterviewScheduleStatus
+}
+
+const ifMatchHeader = (version: number) => ({
+  'If-Match-Version': String(version),
+})
+
+const commandHeaders = (
+  interviewId: string,
+  version: number,
+  command: string,
+) => ({
+  ...ifMatchHeader(version),
+  'Idempotency-Key': `interview:${interviewId}:${command}:${version}`,
+})
+
+export async function listInterviews(
+  params: InterviewListParams,
+): Promise<Interview[]> {
+  const res = await apiClient.get<Interview[]>('/interviews', { params })
+  return res.data
+}
 
 export async function getInterview(interviewId: string): Promise<Interview> {
   const res = await apiClient.get<Interview>(`/interviews/${interviewId}`)
@@ -24,5 +53,55 @@ export async function createInterview(
   body: InterviewCreateRequest,
 ): Promise<Interview> {
   const res = await apiClient.post<Interview>('/interviews', body)
+  return res.data
+}
+
+export async function rescheduleInterview(
+  interviewId: string,
+  version: number,
+  body: InterviewRescheduleRequest,
+): Promise<Interview> {
+  const res = await apiClient.post<Interview>(
+    `/interviews/${interviewId}/reschedule`,
+    body,
+    { headers: commandHeaders(interviewId, version, 'reschedule') },
+  )
+  return res.data
+}
+
+export async function completeInterview(
+  interviewId: string,
+  version: number,
+  body: InterviewCompleteRequest,
+): Promise<Interview> {
+  const res = await apiClient.post<Interview>(
+    `/interviews/${interviewId}/complete`,
+    body,
+    { headers: commandHeaders(interviewId, version, 'complete') },
+  )
+  return res.data
+}
+
+export async function cancelInterview(
+  interviewId: string,
+  version: number,
+): Promise<Interview> {
+  const res = await apiClient.post<Interview>(
+    `/interviews/${interviewId}/cancel`,
+    {},
+    { headers: commandHeaders(interviewId, version, 'cancel') },
+  )
+  return res.data
+}
+
+export async function markInterviewNoShow(
+  interviewId: string,
+  version: number,
+): Promise<Interview> {
+  const res = await apiClient.post<Interview>(
+    `/interviews/${interviewId}/no-show`,
+    {},
+    { headers: commandHeaders(interviewId, version, 'no-show') },
+  )
   return res.data
 }

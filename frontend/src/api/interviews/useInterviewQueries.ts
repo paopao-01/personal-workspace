@@ -2,9 +2,18 @@ import { useQuery } from '@tanstack/react-query'
 import {
   getInterview,
   getInterviewReminders,
+  listInterviews,
+  type InterviewListParams,
   type Interview,
   type Reminder,
 } from '@/api/interviews/interviewApi'
+
+export function useInterviewList(params: InterviewListParams) {
+  return useQuery<Interview[]>({
+    queryKey: ['interviews', 'list', params],
+    queryFn: () => listInterviews(params),
+  })
+}
 
 export function useInterview(interviewId: string | undefined) {
   return useQuery<Interview>({

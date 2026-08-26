@@ -35,6 +35,15 @@ export const interviewResultLabel: Record<Interview['result'], string> = {
   FAILED: '未通过',
 }
 
+export const interviewModeLabel: Record<
+  NonNullable<Interview['mode']>,
+  string
+> = {
+  ONLINE: '线上',
+  ONSITE: '现场',
+  PHONE: '电话',
+}
+
 export const reminderTypeLabel: Record<Reminder['reminderType'], string> = {
   ONE_DAY: '提前 1 天',
   TWO_HOURS: '提前 2 小时',

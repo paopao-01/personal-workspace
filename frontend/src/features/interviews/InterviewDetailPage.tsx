@@ -6,6 +6,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { InterviewActionSection } from '@/features/interviews/components/InterviewActionSection'
 import {
   formatInterviewTime,
   interviewResultLabel,
@@ -13,6 +14,7 @@ import {
   interviewScheduleVariant,
   reminderStatusLabel,
   reminderTypeLabel,
+  interviewModeLabel,
 } from '@/features/interviews/interviewLabels'
 
 export function InterviewDetailPage() {
@@ -64,6 +66,11 @@ export function InterviewDetailPage() {
         </div>
       ) : null}
 
+      <InterviewActionSection
+        key={`${interview.id}:${interview.version}`}
+        interview={interview}
+      />
+
       <div className="section-grid">
         <section className="card detail-summary">
           <div className="card-header">
@@ -80,7 +87,7 @@ export function InterviewDetailPage() {
               <dt>事件时区</dt>
               <dd>{interview.eventTimeZone}</dd>
               <dt>方式</dt>
-              <dd>{interview.mode ?? '—'}</dd>
+              <dd>{interview.mode ? interviewModeLabel[interview.mode] : '—'}</dd>
               <dt>日程状态</dt>
               <dd>
                 <Badge variant={interviewScheduleVariant[interview.scheduleStatus]}>

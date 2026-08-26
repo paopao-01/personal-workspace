@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 第四切片（面试前端最小闭环）完成（**DONE**，投递详情创建面试 + 面试详情查看准备项与提醒）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；本窗口补齐 P04→P06 前端最小路径。面试中心 P05、面试状态操作 UI、Playwright E2E 和 AT-08 后半仍待后续窗口。
-- 当前任务：面试前端最小闭环已交付；下一窗口建议做面试中心列表和现有命令端点的操作界面，或补 AT-08 `allowDuplicate=true` 的 V2 迁移。
+- 项目阶段：M2 第五切片（面试中心与状态操作前端）完成（**DONE**，P05 列表筛选 + P06 专用状态命令）。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试前端主要路径可用。月视图、投递状态筛选、dashboard upcoming 聚合、Playwright E2E 和 AT-08 后半仍待后续窗口。
+- 当前任务：面试中心与状态操作已交付；下一窗口建议补 dashboard upcoming 面试聚合及展示，或补 AT-08 `allowDuplicate=true` 的 V2 迁移。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-26。
 
@@ -52,7 +52,7 @@
 ## 3. 当前代码事实
 
 - `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard 模块业务代码（约 74 个 Java 文件：1 主类 + common 19 + job 34 + application 18 + dashboard 2；`JobMapper` 新增 selectByIds）。
-- `frontend/` 已生成完整骨架与岗位、投递、工作台和面试最小页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04 创建面试→P06 面试详情与提醒查询均已实现。
+- `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn clean test`（9 类 28 方法 BUILD SUCCESS，0 failures/0 errors）：M1 job 18 + M2 application/dashboard 10**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
 - `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
@@ -70,6 +70,29 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-8
+
+- 目标：M2 第五切片（前端）— 实现 P05 面试中心列表与 P06 的改期、完成、取消、缺席操作。
+- 状态：**DONE**。
+- 已完成：
+  - `frontend/src/api/interviews/` 增加面试列表、改期、完成、取消和缺席 API 与 mutation hooks；四个命令均显式携带 `If-Match-Version`，并以面试 ID、命令和版本生成稳定 `Idempotency-Key`。成功后刷新面试列表/详情/提醒、关联投递与工作台缓存。
+  - 新增 `/interviews` 面试中心并启用侧栏入口：默认按本地日历未来 7 天查询，可按日期范围、日程状态和面试方式筛选，点击行进入详情。
+  - 面试详情在 `SCHEDULED` 时显示专用操作：改期（重新计算提醒）、标记完成（可选结果）、取消和标记未出席；非 `SCHEDULED` 状态不显示这些操作。取消和缺席均有确认提示，不暴露会被后端忽略的原因输入。
+  - 改期后操作组件以新版本重建，避免再次打开时显示旧时间；面试方式统一显示中文文案。
+- 未完成：
+  - P05 月视图、投递状态筛选和卡片式时间线；当前后端 `Interview` 不携带投递状态，不能在不扩展契约的前提下实现该筛选。
+  - dashboard 的 `upcomingInterviews` 真正聚合和前端展示、Playwright E2E、AT-08 `allowDuplicate=true` 所需 V2 迁移。
+- 修改文件：
+  - 修改：`frontend/src/api/interviews/{interviewApi,useInterviewQueries,useInterviewMutations}.ts`、`frontend/src/features/interviews/{InterviewDetailPage,interviewLabels}.tsx/.ts`、`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 新增：`frontend/src/features/interviews/InterviewListPage.tsx`、`frontend/src/features/interviews/components/InterviewActionSection.tsx`。
+- 已运行验证：
+  - `cd frontend && npm run lint` → 0 error / 0 warning。
+  - `cd frontend && npm run typecheck` → 0 error。
+  - `cd frontend && npm run build`（含 OpenAPI 类型重新生成）→ BUILD SUCCESS，174 modules。
+  - 本地冒烟：`GET /api/interviews` 返回 1 条脱敏测试面试（`SCHEDULED`、版本 0）；`GET http://127.0.0.1:5173/interviews` 返回 200。浏览器自动化插件在本窗口不可调用，未新增 Playwright 依赖；沿用窗口 7 的浏览器页面验收结果。
+- 下一窗口建议只做：扩展 dashboard upcoming 面试聚合与首页展示，或单独实现 AT-08 后半的 V2 迁移；开始前重新核对 OpenAPI 和本节未完成项。
+- 不要重复做：不得用 `PUT /interviews/{id}` 改写 `scheduleStatus`；改期、完成、取消和缺席必须继续走现有专用命令端点。不要在 P0 中加入邮件、系统推送、云同步或修改 V1 迁移。
 
 ### 窗口 2026-08-26-7
 

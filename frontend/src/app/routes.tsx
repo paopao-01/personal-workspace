@@ -7,6 +7,7 @@ import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { ApplicationCreatePage } from '@/features/applications/ApplicationCreatePage'
 import { ApplicationDetailPage } from '@/features/applications/ApplicationDetailPage'
 import { InterviewDetailPage } from '@/features/interviews/InterviewDetailPage'
+import { InterviewListPage } from '@/features/interviews/InterviewListPage'
 
 export function AppRouter() {
   return (
@@ -25,6 +26,7 @@ export function AppRouter() {
           path="/applications/:applicationId"
           element={<ApplicationDetailPage />}
         />
+        <Route path="/interviews" element={<InterviewListPage />} />
         <Route path="/interviews/:interviewId" element={<InterviewDetailPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
