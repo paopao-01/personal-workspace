@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   创建投递 → 201 DRAFT v0
  *   GET detail → job 非空、statusHistory 含初始项、interviews 为空
  *   AT-08 前半：同岗位已有 INTERVIEWING 投递，不带 allowDuplicate 创建 → 409 DUPLICATE_APPLICATION
- *   AT-08 后半：allowDuplicate=true 本切片搁置（V1 唯一索引限制），返回 409 提示未支持
+ *   AT-08 后半：allowDuplicate=true 创建成功，并写入用户确认二次投递的审计记录
  */
 class ApplicationCrudIntegrationTest extends AbstractIntegrationTest {
 
@@ -71,19 +71,33 @@ class ApplicationCrudIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void createSecondApplication_withAllowDuplicate_returns409_notSupported() {
+	void createSecondApplication_withAllowDuplicate_returns201_andWritesAuditLog() {
 		String jobId = createJob();
 		createInterviewingApplication(jobId);  // 旧投递 INTERVIEWING
 
-		// allowDuplicate=true：V1 唯一索引限制，本切片搁置，仍返回 409
+		// allowDuplicate=true：用户显式确认创建第二条活动投递
 		ResponseEntity<String> resp = restTemplate.exchange(url("/applications"), HttpMethod.POST,
 				TestFixtures.httpWithHeaders(
 						TestFixtures.createApplicationBody(jobId, "2026-08-25", "拉勾", null, null, true),
 						"Idempotency-Key", TestFixtures.newKey()),
 				String.class);
 
-		assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-		assertThat(JsonProbe.str(resp.getBody(), "code")).isEqualTo("DUPLICATE_APPLICATION");
+		assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		String secondaryApplicationId = JsonProbe.str(resp.getBody(), "id");
+		assertThat(JsonProbe.str(resp.getBody(), "status")).isEqualTo("DRAFT");
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM application_record WHERE job_id = ? AND deleted_at IS NULL", Integer.class, jobId))
+				.isEqualTo(2);
+		assertThat(jdbc.queryForObject(
+				"SELECT duplicate_confirmed_at FROM application_record WHERE id = ?", String.class, secondaryApplicationId))
+				.isNotBlank();
+		assertThat(jdbc.queryForObject(
+				"SELECT COUNT(*) FROM audit_log WHERE resource_type = 'APPLICATION' AND resource_id = ? " +
+						"AND action = 'SECONDARY_APPLICATION_CONFIRMED'", Integer.class, secondaryApplicationId))
+				.isEqualTo(1);
+		assertThat(jdbc.queryForObject(
+				"SELECT reason FROM audit_log WHERE resource_id = ?", String.class, secondaryApplicationId))
+				.contains("allowDuplicate=true");
 	}
 
 	private String createJob() {

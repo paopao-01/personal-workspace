@@ -5,6 +5,8 @@ import com.jobhub.application.domain.ApplicationStatus;
 import com.jobhub.application.domain.StatusLogEntry;
 import com.jobhub.application.infrastructure.ApplicationMapper;
 import com.jobhub.application.infrastructure.StatusLogMapper;
+import com.jobhub.common.audit.AuditLogEntry;
+import com.jobhub.common.audit.infrastructure.AuditLogMapper;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
@@ -26,14 +28,17 @@ public class ApplicationService {
 
 	private final ApplicationMapper applicationMapper;
 	private final StatusLogMapper statusLogMapper;
+	private final AuditLogMapper auditLogMapper;
 	private final JobMapper jobMapper;
 	private final IdGenerator idGenerator;
 	private final UtcTime utcTime;
 
 	public ApplicationService(ApplicationMapper applicationMapper, StatusLogMapper statusLogMapper,
-							 JobMapper jobMapper, IdGenerator idGenerator, UtcTime utcTime) {
+							 AuditLogMapper auditLogMapper,
+								 JobMapper jobMapper, IdGenerator idGenerator, UtcTime utcTime) {
 		this.applicationMapper = applicationMapper;
 		this.statusLogMapper = statusLogMapper;
+		this.auditLogMapper = auditLogMapper;
 		this.jobMapper = jobMapper;
 		this.idGenerator = idGenerator;
 		this.utcTime = utcTime;
@@ -47,20 +52,24 @@ public class ApplicationService {
 
 		// 二次投递检测（应用层先查，唯一索引兜底）
 		Application existing = applicationMapper.selectActiveByJobId(cmd.jobId());
-		if (existing != null) {
-			// AT-08 前半：缺 allowDuplicate → 409 DUPLICATE_APPLICATION
-			// AT-08 后半"携带 allowDuplicate=true 创建成功"因 V1 唯一索引限制无法实现，本切片搁置
+		boolean secondaryApplication = existing != null;
+		if (secondaryApplication && !cmd.allowDuplicate()) {
 			throw new DuplicateApplicationException(
 					"Active application already exists for job " + cmd.jobId()
-							+ "; secondary application creation is not supported in this slice");
+							+ "; set allowDuplicate=true to confirm a secondary application");
 		}
 
 		String id = idGenerator.newId();
 		String now = utcTime.now();
 		Application app = Application.create(id, cmd.jobId(), cmd.appliedAt(), cmd.channel(),
 				cmd.resumeVersion(), cmd.expectedSalary(), cmd.contact(),
-				cmd.nextAction(), cmd.nextActionDueAt(), cmd.notes(), now);
+				cmd.nextAction(), cmd.nextActionDueAt(), cmd.notes(),
+				secondaryApplication ? now : null, now);
 		applicationMapper.insert(app);
+		if (secondaryApplication) {
+			auditLogMapper.insert(AuditLogEntry.secondaryApplicationConfirmation(
+					idGenerator.newId(), id, now));
+		}
 		return applicationMapper.selectById(id);
 	}
 

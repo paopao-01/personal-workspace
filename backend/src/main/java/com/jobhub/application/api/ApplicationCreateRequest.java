@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 
 /**
  * 创建投递请求。jobId/appliedAt/channel 必填（01-page-spec：创建投递时必填岗位与投递日期）。
- * allowDuplicate=true 的二次投递创建因 V1 唯一索引限制本切片不支持，仅做 409 拒绝。
+ * allowDuplicate=true 用于显式确认创建同岗位的第二条活动投递。
  */
 public class ApplicationCreateRequest {
 

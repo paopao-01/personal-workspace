@@ -36,7 +36,7 @@
 
 ### 3.2 投递与面试
 
-- 同一岗位默认只能有一条未删除且活动的投递。SQLite 的部分唯一索引保证此规则；创建二次投递前，服务层须将用户确认写入 `notes/audit_log`。
+- 同一岗位默认只能有一条未删除且活动的投递。服务层在发现活动投递时，只有收到 `allowDuplicate=true` 才允许二次创建；V2 的部分唯一索引保证至多一条未确认的活动投递。二次创建将 `duplicate_confirmed_at` 设为 UTC 时间，并在同一事务写入 `audit_log`。
 - `application_status_log` 是不可覆盖的状态历史；禁止物理更新历史行。
 - 创建第一场面试时，若投递为 `RESUME_PASSED`，需在同一事务中转为 `INTERVIEWING` 并写状态历史。
 - `interview_schedule` 取消或缺席时，结果必须为 `PENDING`；服务层负责取消尚未展示的提醒。
@@ -67,7 +67,7 @@
 1. 应用启动前备份本地数据库文件。
 2. Flyway 执行 `V1__initial_schema.sql`；失败则不启动业务服务。
 3. 在事务中插入单用户默认 `user_profile` 和 `user_setting`，使用 `INSERT OR IGNORE` 保证幂等。
-4. 初始化标准技能、别名与知识点词典。词典须单独迁移，如 `V2__seed_taxonomy.sql`，不得与用户数据混写。
+4. 初始化标准技能、别名与知识点词典。词典须单独迁移，如 `V3__seed_taxonomy.sql`，不得与用户数据混写。
 5. 未来任何表结构或枚举变更均新增版本迁移，禁止修改已经在用户设备执行过的迁移文件。
 
 ## 6. 备份、导出与恢复

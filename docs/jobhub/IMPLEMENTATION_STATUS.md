@@ -5,8 +5,8 @@
 ## 1. 当前总状态
 
 - 项目阶段：M2 第六切片（工作台即将面试）完成（**DONE**，dashboard 聚合真实未来面试并展示）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 月视图/投递状态筛选、Playwright E2E 和 AT-08 后半仍待后续窗口。
-- 当前任务：工作台即将面试已交付；下一窗口建议补 AT-08 `allowDuplicate=true` 的 V2 迁移，或做 P05 月视图与投递状态筛选。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 月视图/投递状态筛选与 Playwright E2E 仍待后续窗口。
+- 当前任务：AT-08 `allowDuplicate=true` 的 V2 迁移与审计闭环已交付；下一窗口建议做 P05 月视图与投递状态筛选，或补核心 Playwright E2E。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-26。
 
@@ -70,6 +70,30 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-10
+
+- 目标：补齐 AT-08 后半 -- 用户以 `allowDuplicate=true` 显式确认后，可创建同岗位的第二条活动投递，并留下可追溯审计记录。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `V2__allow_confirmed_duplicate_applications.sql`，为 `application_record` 增加内部字段 `duplicate_confirmed_at`；不修改已执行的 V1。
+  - V2 删除旧的 `uq_application_active_per_job`，新增“未确认活动投递至多一条”的部分唯一索引与活动投递查询索引。默认规则继续由服务层强制，已确认二次投递可被安全持久化。
+  - `ApplicationService.create` 在已有活动投递且未提供 `allowDuplicate=true` 时继续返回 `409 DUPLICATE_APPLICATION`；显式确认时创建新 `DRAFT` 投递，写入 `duplicate_confirmed_at`，并在同一事务追加 `audit_log`（`SECONDARY_APPLICATION_CONFIRMED`）。
+  - 新增只追加的 `common/audit` mapper；活动投递检测查询增加 `LIMIT 1`，适配已确认重复投递存在时的读取语义。
+  - 更新 AT-08 集成测试：断言二次创建返回 `201`、两条活动投递存在、确认时间已写入且审计记录存在；测试清理器新增 `audit_log` 清理。
+  - 补充 OpenAPI 中 `allowDuplicate` 的行为说明，并同步更新数据库设计。
+- 未完成：
+  - P05 月视图、投递状态筛选和卡片式时间线；投递状态筛选需先扩展 `Interview` 契约或增加聚合查询响应。
+  - Playwright E2E（至少 AT-01、AT-09、AT-11）以及 M3 的复盘/问题/任务。
+- 修改文件：
+  - 新增：`backend/src/main/resources/db/migration/V2__allow_confirmed_duplicate_applications.sql`、`backend/src/main/java/com/jobhub/common/audit/{AuditLogEntry.java,infrastructure/AuditLogMapper.java}`。
+  - 修改：`backend/src/main/java/com/jobhub/application/{api/ApplicationCreateRequest.java,application/ApplicationCreateCommand.java,application/ApplicationService.java,application/DuplicateApplicationException.java,domain/Application.java,infrastructure/ApplicationMapper.java}`、`backend/src/test/java/com/jobhub/integration/{ApplicationCrudIntegrationTest.java,support/DatabaseCleaner.java}`、`docs/jobhub/{03-openapi.yaml,04-database-design.md,IMPLEMENTATION_STATUS.md}`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ApplicationCrudIntegrationTest,ApplicationIdempotencyIntegrationTest,ApplicationTransitionIntegrationTest"` -> BUILD SUCCESS，8 tests，0 failures，0 errors；Flyway 从 V1 升级 V2 成功。
+  - `cd backend && mvn test` -> BUILD SUCCESS，34 tests，0 failures，0 errors。
+  - `cd backend && mvn test "-Dtest=ApplicationCrudIntegrationTest"` -> BUILD SUCCESS，4 tests，0 failures，0 errors；覆盖审计原因断言。
+- 下一窗口建议只做：先在 OpenAPI 中设计面试列表所需的投递状态筛选响应，再完成 P05 月视图/时间线；或单独补 Playwright E2E。不要在前端或普通 `PUT` 中绕过投递、面试状态机。
+- 不要重复做：`allowDuplicate=true` 已可创建第二条活动投递并写审计；不得修改 V1，也不要移除 V2 对未确认活动投递的数据库兜底。
 
 ### 窗口 2026-08-26-9
 

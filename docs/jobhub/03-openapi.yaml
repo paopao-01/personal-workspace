@@ -851,7 +851,10 @@ components:
         contact: { type: string, maxLength: 200 }
         nextAction: { type: string, maxLength: 500 }
         nextActionDueAt: { type: string, format: date-time }
-        allowDuplicate: { type: boolean, default: false }
+        allowDuplicate:
+          type: boolean
+          default: false
+          description: 明确确认创建同岗位的第二条活动投递；未确认时重复创建返回 DUPLICATE_APPLICATION。
         notes: { type: string, maxLength: 5000 }
     ApplicationUpdateRequest:
       type: object

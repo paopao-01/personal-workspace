@@ -25,7 +25,7 @@ import java.util.Set;
  */
 public class Application {
 
-	/** 活动状态集合，与 V1 唯一索引 uq_application_active_per_job 的 WHERE 子句一致。 */
+	/** 活动状态集合，与 V2 活动投递索引的 WHERE 子句一致。 */
 	public static final Set<ApplicationStatus> ACTIVE_STATUSES = Set.of(
 			ApplicationStatus.DRAFT, ApplicationStatus.APPLIED,
 			ApplicationStatus.RESUME_PASSED, ApplicationStatus.INTERVIEWING,
@@ -72,6 +72,7 @@ public class Application {
 	private String nextActionDueAt;
 	private String rejectionReason;
 	private String notes;
+	private String duplicateConfirmedAt;
 	private long version;
 	private String createdAt;
 	private String updatedAt;
@@ -82,7 +83,7 @@ public class Application {
 	public static Application create(String id, String jobId, String appliedAt, String channel,
 									 String resumeVersion, String expectedSalary, String contact,
 									 String nextAction, String nextActionDueAt, String notes,
-									 String now) {
+									 String duplicateConfirmedAt, String now) {
 		Application a = new Application();
 		a.id = id;
 		a.jobId = jobId;
@@ -95,6 +96,7 @@ public class Application {
 		a.nextAction = nextAction;
 		a.nextActionDueAt = nextActionDueAt;
 		a.notes = notes;
+		a.duplicateConfirmedAt = duplicateConfirmedAt;
 		a.version = 0;
 		a.createdAt = now;
 		a.updatedAt = now;
@@ -210,6 +212,7 @@ public class Application {
 	public String getNextActionDueAt() { return nextActionDueAt; }
 	public String getRejectionReason() { return rejectionReason; }
 	public String getNotes() { return notes; }
+	public String getDuplicateConfirmedAt() { return duplicateConfirmedAt; }
 	public long getVersion() { return version; }
 	public String getCreatedAt() { return createdAt; }
 	public String getUpdatedAt() { return updatedAt; }

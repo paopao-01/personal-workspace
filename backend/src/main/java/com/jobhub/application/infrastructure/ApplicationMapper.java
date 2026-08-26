@@ -25,13 +25,14 @@ public interface ApplicationMapper {
 
 	@Insert("INSERT INTO application_record (id, job_id, applied_at, channel, status, previous_active_status, " +
 			"resume_version, expected_salary, contact, next_action, next_action_due_at, rejection_reason, " +
-			"notes, created_at, updated_at, version) VALUES (" +
+			"notes, duplicate_confirmed_at, created_at, updated_at, version) VALUES (" +
 			"#{id}, #{jobId}, #{appliedAt}, #{channel}, #{status}, " +
 			"#{previousActiveStatus, jdbcType=VARCHAR}, " +
 			"#{resumeVersion, jdbcType=VARCHAR}, #{expectedSalary, jdbcType=VARCHAR}, " +
 			"#{contact, jdbcType=VARCHAR}, #{nextAction, jdbcType=VARCHAR}, " +
 			"#{nextActionDueAt, jdbcType=VARCHAR}, #{rejectionReason, jdbcType=VARCHAR}, " +
-			"#{notes, jdbcType=VARCHAR}, #{createdAt}, #{updatedAt}, #{version})")
+			"#{notes, jdbcType=VARCHAR}, #{duplicateConfirmedAt, jdbcType=VARCHAR}, " +
+			"#{createdAt}, #{updatedAt}, #{version})")
 	int insert(Application app);
 
 	@Select("SELECT * FROM application_record WHERE id = #{id} AND deleted_at IS NULL")
@@ -39,7 +40,8 @@ public interface ApplicationMapper {
 
 	/** 查同岗位的活动投递（应用层二次投递检测；唯一索引是兜底）。 */
 	@Select("SELECT * FROM application_record WHERE job_id = #{jobId} " +
-			"AND deleted_at IS NULL AND status IN ('DRAFT','APPLIED','RESUME_PASSED','INTERVIEWING','ON_HOLD')")
+			"AND deleted_at IS NULL AND status IN ('DRAFT','APPLIED','RESUME_PASSED','INTERVIEWING','ON_HOLD') " +
+			"ORDER BY created_at DESC LIMIT 1")
 	Application selectActiveByJobId(@Param("jobId") String jobId);
 
 	@Select("<script>" +

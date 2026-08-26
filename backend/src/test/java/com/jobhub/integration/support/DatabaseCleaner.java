@@ -24,6 +24,7 @@ public class DatabaseCleaner {
 	 */
 	public void clearAll() {
 		jdbc.execute("DELETE FROM idempotency_record");
+		jdbc.execute("DELETE FROM audit_log");
 		jdbc.execute("DELETE FROM application_status_log");
 		jdbc.execute("DELETE FROM interview_reminder");
 		jdbc.execute("DELETE FROM interview_checklist_item");
