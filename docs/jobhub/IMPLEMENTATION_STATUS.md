@@ -4,18 +4,18 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M1 第一切片实施中（PARTIAL，后端代码完成但未编译验证，前端与测试尚未开始）。
+- 项目阶段：M1 第一切片实施中（PARTIAL，后端已编译通过且可启动、Flyway/SQLite 已验证、最小接口可访问；集成测试与前端尚未开始）。
 - 当前里程碑：M1（工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单）。
-- 当前任务：M1 第一切片 — 后端骨架 + 岗位垂直切片（AT-01~AT-04）。
+- 当前任务：M1 第一切片 — 后端骨架 + 岗位垂直切片（AT-01~AT-04）。编译与启动已验证，剩余集成测试与前端。
 - 当前负责人窗口：Claude（glm-5.2）。
-- 最后更新：2026-08-25。
+- 最后更新：2026-08-26。
 
 ## 2. 已完成内容
 
 ### 规格层（早于本窗口已完成）
 - PRD v1.2：`java-jobhub-prd.md`
 - 页面规格、状态机、OpenAPI、数据库设计、验收用例、技术实施方案：`docs/jobhub/01-06`
-- 初始 Flyway 迁移：`backend/src/main/resources/db/migration/V1__initial_schema.sql`（28 张表，不可修改）
+- 初始 Flyway 迁移：`backend/src/main/resources/db/migration/V1__initial_schema.sql`（29 张表，不可修改）
 - 脱敏演示数据：`fixtures/v0.1-demo-data.json`
 - 实现约束：`AGENTS.md`
 - 实现总控提示词：`docs/jobhub/IMPLEMENTATION_MASTER_PROMPT.md`
@@ -28,14 +28,14 @@
 - `backend/data/.gitkeep`（保留目录，db 文件不入库）
 
 **后端工程骨架（未运行 `mvn compile` 验证）**
-- `backend/pom.xml`：Spring Boot 3.3.5、Java 21、MyBatis Spring Boot Starter 3.0.4、Flyway、SQLite JDBC 3.46.1.3、spring-boot-starter-validation、spring-boot-starter-test。注：用户后续手动移除了 `flyway-database-sqlite` 依赖（见 pom 第 24 行 properties 注释），改为使用 `flyway-core` + `sqlite-jdbc` 自动识别。**下一窗口需要验证 Flyway 是否能正确识别 SQLite 方言**，必要时恢复 `flyway-database-sqlite` 依赖。
-- `backend/src/main/resources/application.yml`：监听 `127.0.0.1:8080`，SQLite 路径 `${JOBHUB_DB_PATH:./backend/data/jobhub.db}`，Flyway `baseline-on-migrate=true`，MyBatis 驼峰映射
+- `backend/pom.xml`：Spring Boot 3.3.5、Java 21、MyBatis Spring Boot Starter 3.0.4、Flyway、SQLite JDBC 3.46.1.3、spring-boot-starter-validation、spring-boot-starter-test。使用 `flyway-core` + `sqlite-jdbc`（未引入 `flyway-database-sqlite`）。**已验证 Flyway 10.x（由 Spring Boot 3.3.5 BOM 管理）能识别 SQLite 3.46 方言，无需额外依赖。**
+- `backend/src/main/resources/application.yml`：监听 `127.0.0.1:8080`，SQLite 路径 `${JOBHUB_DB_PATH:./data/jobhub.db}`（相对 `backend/` 工作目录），Flyway `baseline-on-migrate=true`、`execute-in-transaction=false`（V1 含 `PRAGMA foreign_keys=ON` 非事务语句，必须关闭事务执行否则报 mixed 错误），MyBatis 驼峰映射
 - `backend/src/main/java/com/jobhub/JobHubApplication.java`：`@SpringBootApplication` + `@MapperScan("com.jobhub.**.infrastructure")`
 - **未安装 Maven Wrapper**（用户机器有全局 mvn 3.9.9，决定不使用 wrapper；后续如需 wrapper 再补）
 
 **common 模块基础设施**
 - `common/error/`：`ErrorCode`、`ErrorResponse`、`FieldError`、`BusinessRuleException`、`IllegalStateTransitionException`、`VersionConflictException`、`IdempotencyConflictException`、`ResourceNotFoundException`、`GlobalExceptionHandler`
-- `common/idempotency/`：`IdempotencyRecord`、`IdempotencyRecordMapper`、`IdempotencyInterceptor`（preHandle 查重放 / postHandle 写入）、`CachedBodyHttpServletRequest`、`IdempotencyBodyCachingFilter`（包装请求体与响应体）、`IdempotencyWebConfig`
+- `common/idempotency/`：`IdempotencyRecord`、`IdempotencyInterceptor`（preHandle 查重放 / postHandle 写入）、`CachedBodyHttpServletRequest`、`IdempotencyBodyCachingFilter`（包装请求体与响应体）、`IdempotencyWebConfig`；`IdempotencyRecordMapper` 已移至 `common/idempotency/infrastructure/`（适配 `@MapperScan("com.jobhub.**.infrastructure")`，原位置无法被扫描）
 - `common/version/`：`VersionCheck`（乐观锁辅助）
 - `common/time/`：`TimeConfig`（`Clock.systemUTC()`）、`UtcTime`（ISO-8601 UTC 字符串）
 - `common/id/`：`IdGenerator`（UUID）
@@ -44,19 +44,19 @@
 - `job/domain/`：6 个枚举（`JobStatus`、`JobDecisionStatus`、`RequirementType`、`ConfirmationStatus`、`RequirementSource`、`GapStatus`）+ 3 个实体（`Job`、`JobRequirement`、`RequirementMatch`）
 - `job/infrastructure/`：3 个 MyBatis Mapper（`JobMapper`、`JobRequirementMapper`、`RequirementMatchMapper`，全部使用注解 SQL，无 XML）
 - `job/application/`：`JobService`（CRUD + archive/restore + JD 修改触发要求重置）、`RequirementService`（提取 + 确认 + 人工修正 match_status）、`RequirementExtractor`（关键词词典规则提取，非 AI）、`GapListService`（仅基于 CONFIRMED 要求；无 user_skill 时默认 INSUFFICIENT_INFO）、`JobCreateCommand`、`JobUpdateCommand`、`JobListQuery`、`JobListResult`、`RequirementUpdateCommand`、`ExtractionResult`、`GapItem`
-- `job/api/`：`JobController`（10 个端点：`POST/GET/GET/{id}/PUT/{id}/archive/restore/requirements/extract/requirements/gap-list`）、`JobRequirementController`（`PUT /api/job-requirements/{id}`）、`JobCreateRequest`、`JobUpdateRequest`、`JobResponse`、`PageJobResponse`、`JobRequirementResponse`、`RequirementUpdateRequest`、`GapItemResponse`、`RequirementExtractionResultResponse`
+- `job/api/`：`JobController`（9 个端点：`POST/GET/GET/{id}/PUT/{id}/archive/restore/requirements/extract/gap-list`）、`JobRequirementController`（`PUT /api/job-requirements/{id}`，第 10 个端点）、`JobCreateRequest`、`JobUpdateRequest`、`JobResponse`、`PageJobResponse`、`JobRequirementResponse`、`RequirementUpdateRequest`、`GapItemResponse`、`RequirementExtractionResultResponse`
 
 **OpenAPI 小幅扩展**
 - `docs/jobhub/03-openapi.yaml` 的 `RequirementUpdateRequest` 新增可选字段 `manualMatchStatus: GapStatus`，用于支持 AT-04 人工修正匹配状态。`reason` 字段作为修正原因。**下一窗口应同步检查此扩展是否需要补充到 04-database-design.md 或 05-acceptance-test-cases.md 的描述**（AT-04 文字描述已隐含此机制，契约层面新增字段属于细化，不视为破坏性变更）。
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job 模块业务代码（约 35 个 Java 文件）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job 模块业务代码（53 个 Java 文件：1 主类 + common 19 + job 33；`IdempotencyRecordMapper` 已移至 `common/idempotency/infrastructure/`）。
 - `frontend/` 尚未生成。
-- **后端尚未运行 `mvn clean compile` 或 `mvn test`**（用户在窗口中途中断，未执行编译验证）。
-- 尚未创建真实数据库文件；禁止把 SQLite 数据库文件提交到仓库。
-- 后端未实现 `application.yml` 中 SQLite 路径自动创建父目录的逻辑（`backend/data/` 目录已通过 `.gitkeep` 存在，运行时 SQLite JDBC 会自动创建 db 文件）。
-- `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上，存在重复包装请求体的可能（拦截器读 `CachedBodyHttpServletRequest`，过滤器负责包装）；逻辑自洽但**未通过集成测试验证**。
+- **后端已通过 `mvn clean compile`（53 文件 BUILD SUCCESS）；已通过 `mvn spring-boot:run` 启动（Flyway 迁移 V1 成功，Tomcat 监听 127.0.0.1:8080）；`curl GET /api/jobs` 返回 200 + 空分页**。`mvn test` 尚未运行（无测试类）。
+- 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
+- `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
+- `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上；逻辑自洽且已随启动验证通过，但**未通过集成测试验证幂等回放与冲突的具体行为**。
 - `RequirementExtractor.extract(jobId, existing)` 旧重载已废弃并抛 `UnsupportedOperationException`；服务层调用新签名 `extract(jobId, jdRawText, existing)`。
 
 ## 4. 里程碑状态
@@ -69,6 +69,53 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-1
+
+- 目标：修复后端编译并启动验证（M1 slice 1 收尾第一步）。范围仅限编译 + 启动 + 最小接口，不含集成测试与前端。
+- 状态：**DONE**（本窗口目标全部达成；M1 slice 1 整体仍 PARTIAL，集成测试与前端待下一窗口）
+- 已完成：
+  - `mvn clean compile` 通过：修复 2 处编译错误（`GlobalExceptionHandler` 误用 `org.springframework.validation.FieldError` 遮蔽项目 `FieldError`，删多余 import；`IdempotencyInterceptor` 误用 `ContentCachingResponseWrapper.getStatusCode()` 改 `getStatus()`）
+  - 启动失败修复：`IdempotencyRecordMapper` 原在 `common.idempotency` 不被 `@MapperScan("com.jobhub.**.infrastructure")` 覆盖（显式 `@MapperScan` 禁用了 `@Mapper` 自动扫描），移至 `common.idempotency.infrastructure/`
+  - Flyway/SQLite 验证：无需 `flyway-database-sqlite`；V1 含 `PRAGMA foreign_keys=ON` 非事务语句，设 `execute-in-transaction=false` 后迁移成功（29 张表）
+  - 修正 DB 路径：`${JOBHUB_DB_PATH:./backend/data/jobhub.db}` → `./data/jobhub.db`（相对 `backend/` 工作目录）
+  - 启动成功：`mvn spring-boot:run`，Tomcat 监听 127.0.0.1:8080
+  - 最小接口验证：`curl GET /api/jobs` → 200 + `{"items":[],"total":0,"page":1,"pageSize":20,"totalPages":0}`
+  - 修正状态文档计数不一致（28→29 表、~35→53 文件、JobController 9+1 端点归属、删 pom 第 24 行错误引用、记录 mapper-locations 失效配置）
+- 未完成（留下一窗口）：
+  - 5 个集成测试类（`JobCrud`、`RequirementConfirmation`、`Idempotency`、`VersionConflict`、`IllegalTransition`），覆盖 AT-01~AT-04 + 幂等/版本/非法转换
+  - 前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios）与 `JobListPage`、`JobCreatePage`、`JobDetailPage` 三页面
+  - 端到端 AT-01 手动验证（粘贴 JD → 确认 → 差距 INSUFFICIENT_INFO → 保存 TO_APPLY）
+  - 提交本批修复与剩余 slice 1 成果（用户未要求 commit，未自动提交）
+- 修改文件：
+  - 修改：`backend/src/main/java/com/jobhub/common/error/GlobalExceptionHandler.java`（删多余 import）
+  - 修改：`backend/src/main/java/com/jobhub/common/idempotency/IdempotencyInterceptor.java`（`getStatusCode`→`getStatus`；加 mapper import）
+  - 修改：`backend/src/main/resources/application.yml`（DB 路径、`execute-in-transaction=false`）
+  - 新增：`backend/src/main/java/com/jobhub/common/idempotency/infrastructure/IdempotencyRecordMapper.java`
+  - 删除：`backend/src/main/java/com/jobhub/common/idempotency/IdempotencyRecordMapper.java`（迁移至 infrastructure 子包）
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`（本交接 + 计数修正）
+- 已运行验证：
+  - `cd backend && mvn clean compile` → BUILD SUCCESS（53 文件，9.0s）
+  - `cd backend && mvn spring-boot:run` → Started JobHubApplication in 5.353s；Flyway `Successfully applied 1 migration ... now at version v1`；`Tomcat started on port 8080`
+  - `curl -i http://127.0.0.1:8080/api/jobs` → 200 + 空分页
+- 验证结果：编译、迁移、启动、最小接口均通过。当前代码**可编译、可启动**。
+- 已知问题：
+  1. 集成测试与前端均未做，slice 1 未端到端验收（AT-01 未跑）。
+  2. `IdempotencyInterceptor`/`IdempotencyBodyCachingFilter` 已启动验证但未集成测试幂等回放与冲突的具体行为。
+  3. 未提交本批修改（用户未要求）；`backend/data/jobhub.db` 运行时生成，已由 `.gitignore` 忽略。
+  4. `mybatis.mapper-locations` 配置无害失效（注解 SQL 无 XML），保留不改。
+- 下一窗口只做：
+  1. 编写 5 个后端集成测试覆盖 AT-01~AT-04 + 幂等/版本/非法转换（优先 `JobCrudIntegrationTest`、`RequirementConfirmationIntegrationTest`）。
+  2. 创建前端工程骨架（`frontend/` + Vite + React + TS + TanStack Query + axios），实现 `JobListPage`、`JobCreatePage`、`JobDetailPage`。
+  3. 运行 `npm install` + `npm run lint` + `npm run build`（pnpm 不可用，用 npm）。
+  4. 手动验证 AT-01 端到端。
+  5. commit：`feat(job): M1 slice 1 — job CRUD, requirement confirmation, gap list (AT-01..AT-04)` 含本批修复，`git push`。
+- 不要重复做：
+  - 不要重复修复编译/启动问题（已 DONE）；不要重新加 `flyway-database-sqlite`（已验证无需）。
+  - 不要修改 `V1__initial_schema.sql`（含 PRAGMA，靠 `execute-in-transaction=false` 解决，不改迁移）。
+  - 不要重新设计 PRD、页面规格、状态机或 OpenAPI。
+  - 不要提前实现 M2、AI、外部通知、云同步、附件上传、综合匹配评分。
+  - 不要使用 pnpm（本机不可用，改用 npm）。
 
 ### 窗口 2026-08-25-1
 

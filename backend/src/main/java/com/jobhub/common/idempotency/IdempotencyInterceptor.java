@@ -1,6 +1,7 @@
 package com.jobhub.common.idempotency;
 
 import com.jobhub.common.id.IdGenerator;
+import com.jobhub.common.idempotency.infrastructure.IdempotencyRecordMapper;
 import com.jobhub.common.time.UtcTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -98,7 +99,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 		if (response instanceof ContentCachingResponseWrapper wrapper) {
 			byte[] respBody = wrapper.getContentAsByteArray();
 			responseBodyJson = new String(respBody == null ? new byte[0] : respBody, StandardCharsets.UTF_8);
-			status = wrapper.getStatusCode();
+			status = wrapper.getStatus();
 		} else {
 			responseBodyJson = "";
 			status = response.getStatus();

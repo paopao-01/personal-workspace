@@ -1,5 +1,6 @@
-package com.jobhub.common.idempotency;
+package com.jobhub.common.idempotency.infrastructure;
 
+import com.jobhub.common.idempotency.IdempotencyRecord;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
