@@ -75,7 +75,7 @@
 
 - 目标：M2 第二切片（前端）— application + dashboard 页面，收尾 AT-05~AT-09 前端部分。后端 7 端点已就绪，前端类型已生成，照抄 jobs 三件套模式。
 - 状态：**DONE**（本窗口目标全部达成；M2 投递状态机 + 下一步行动的前端闭环可见，AT-05~AT-09 前端 API 链路验证通过）。
-- 提交：`feat(application): M2 slice 2 — frontend application + dashboard pages (AT-05..AT-09)`，推送至 `origin/feat/m2-application-backend`（`bash.exe.stackdump` 为误生成文件，未纳入提交；远程 `main` 仍停在 `a227055`，合并/PR 待定）。
+- 提交：`feat(application): M2 slice 2 — frontend application + dashboard pages (AT-05..AT-09)`，推送至 `origin/feat/m2-application-backend`；随后 fast-forward 合并至 `main` 并推送，`main` 已包含全部内容（`bash.exe.stackdump` 为 Git Bash 崩溃转储、无用途，已删除并加入 `.gitignore` 的 `*.stackdump`）。
 - 已完成：
   - **API 层**：
     - `frontend/src/api/applications/`：`applicationApi.ts`（6 端点纯函数，类型从 generated 导入，transition 用稳定 Idempotency-Key `transition:${applicationId}:${targetStatus}` 覆盖自动注入以支持网络重试回放）、`useApplicationQueries.ts`（useApplicationList/Detail/StatusHistory，query key `['applications', ...]`）、`useApplicationMutations.ts`（create/update/transition，onSuccess 局部 setQueryData 合并 + invalidate applications + dashboard，version 从 detail 回填）
