@@ -3,6 +3,7 @@ import type { components } from '@/api/generated/types'
 
 type Schemas = components['schemas']
 export type Interview = Schemas['Interview']
+export type InterviewListItem = Schemas['InterviewListItem']
 export type Reminder = Schemas['Reminder']
 export type InterviewCreateRequest = Schemas['InterviewCreateRequest']
 export type InterviewCompleteRequest = Schemas['InterviewCompleteRequest']
@@ -13,6 +14,8 @@ export interface InterviewListParams {
   from?: string
   to?: string
   scheduleStatus?: InterviewScheduleStatus
+  applicationStatus?: Schemas['ApplicationStatus']
+  mode?: NonNullable<Interview['mode']>
 }
 
 const ifMatchHeader = (version: number) => ({
@@ -30,8 +33,8 @@ const commandHeaders = (
 
 export async function listInterviews(
   params: InterviewListParams,
-): Promise<Interview[]> {
-  const res = await apiClient.get<Interview[]>('/interviews', { params })
+): Promise<InterviewListItem[]> {
+  const res = await apiClient.get<InterviewListItem[]>('/interviews', { params })
   return res.data
 }
 

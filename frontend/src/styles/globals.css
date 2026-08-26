@@ -524,6 +524,133 @@ button {
   min-width: 140px;
 }
 
+/* ===== 面试中心时间线 ===== */
+.interview-timeline {
+  overflow: hidden;
+}
+
+.interview-timeline-list {
+  padding: 8px 20px 20px;
+}
+
+.interview-timeline-day {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.interview-timeline-group:not(:first-child) .interview-timeline-day {
+  margin-top: 20px;
+}
+
+.interview-timeline-item {
+  display: grid;
+  grid-template-columns: 20px minmax(144px, 0.34fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 92px;
+}
+
+.interview-timeline-rail {
+  display: flex;
+  justify-content: center;
+  position: relative;
+}
+
+.interview-timeline-rail::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: -12px;
+  width: 1px;
+  background: var(--border);
+}
+
+.interview-timeline-group:last-child .interview-timeline-item:last-child .interview-timeline-rail::after {
+  display: none;
+}
+
+.interview-timeline-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--primary-soft);
+  z-index: 1;
+}
+
+.interview-timeline-time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.interview-timeline-time span {
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.interview-timeline-main {
+  min-width: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.interview-timeline-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.interview-timeline-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.interview-timeline-heading p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.interview-timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.interview-confirmation {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .interview-timeline-list {
+    padding: 8px 14px 14px;
+  }
+
+  .interview-timeline-item {
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .interview-timeline-time {
+    grid-column: 2;
+  }
+
+  .interview-timeline-main {
+    grid-column: 2;
+  }
+}
+
 /* ===== 分页 ===== */
 .pagination {
   display: flex;

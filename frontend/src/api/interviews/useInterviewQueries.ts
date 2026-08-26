@@ -5,11 +5,12 @@ import {
   listInterviews,
   type InterviewListParams,
   type Interview,
+  type InterviewListItem,
   type Reminder,
 } from '@/api/interviews/interviewApi'
 
 export function useInterviewList(params: InterviewListParams) {
-  return useQuery<Interview[]>({
+  return useQuery<InterviewListItem[]>({
     queryKey: ['interviews', 'list', params],
     queryFn: () => listInterviews(params),
   })

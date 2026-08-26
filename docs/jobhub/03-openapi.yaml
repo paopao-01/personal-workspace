@@ -239,8 +239,14 @@ paths:
         - name: scheduleStatus
           in: query
           schema: { $ref: '#/components/schemas/InterviewScheduleStatus' }
+        - name: applicationStatus
+          in: query
+          schema: { $ref: '#/components/schemas/ApplicationStatus' }
+        - name: mode
+          in: query
+          schema: { type: string, enum: [ONLINE, ONSITE, PHONE] }
       responses:
-        '200': { description: 面试列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Interview' } } } } }
+        '200': { description: 面试列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InterviewListItem' } } } } }
     post:
       tags: [Interviews]
       summary: 创建面试日程
@@ -972,6 +978,22 @@ components:
             application: { $ref: '#/components/schemas/Application' }
             reviewStatus: { $ref: '#/components/schemas/ReviewStatus' }
             reminders: { type: array, items: { $ref: '#/components/schemas/Reminder' } }
+    InterviewListItem:
+      allOf:
+        - $ref: '#/components/schemas/Interview'
+        - type: object
+          required: [application]
+          properties:
+            application: { $ref: '#/components/schemas/InterviewApplicationSummary' }
+    InterviewApplicationSummary:
+      type: object
+      required: [id, jobId, status, companyName, jobTitle]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ApplicationStatus' }
+        companyName: { type: string }
+        jobTitle: { type: string }
     Reminder:
       type: object
       required: [id, interviewId, reminderType, scheduledAt, status, version]
