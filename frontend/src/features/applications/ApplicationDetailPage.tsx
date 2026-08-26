@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApplicationDetail } from '@/api/applications/useApplicationQueries'
 import { Spinner } from '@/components/ui/Spinner'
@@ -8,6 +9,7 @@ import { ApplicationStatusSection } from '@/features/applications/components/App
 import { NextActionSection } from '@/features/applications/components/NextActionSection'
 import { StatusTimelineSection } from '@/features/applications/components/StatusTimelineSection'
 import { InterviewListSection } from '@/features/applications/components/InterviewListSection'
+import { InterviewCreateSection } from '@/features/interviews/components/InterviewCreateSection'
 
 /**
  * P04 投递详情页。五区：摘要 / 当前状态 / 下一步行动 / 时间线 / 面试列表。
@@ -15,6 +17,7 @@ import { InterviewListSection } from '@/features/applications/components/Intervi
 export function ApplicationDetailPage() {
   const { applicationId } = useParams<{ applicationId: string }>()
   const navigate = useNavigate()
+  const [creatingInterview, setCreatingInterview] = useState(false)
   const { data: detail, isLoading, error, refetch } = useApplicationDetail(applicationId)
 
   if (isLoading) {
@@ -54,7 +57,19 @@ export function ApplicationDetailPage() {
         <ApplicationStatusSection detail={detail} />
         <NextActionSection detail={detail} />
         <StatusTimelineSection statusHistory={detail.statusHistory ?? []} />
-        <InterviewListSection interviews={detail.interviews ?? []} />
+        {creatingInterview ? (
+          <InterviewCreateSection
+            applicationId={detail.id}
+            onCancel={() => setCreatingInterview(false)}
+          />
+        ) : null}
+        <InterviewListSection
+          interviews={detail.interviews ?? []}
+          canCreate={
+            detail.status === 'RESUME_PASSED' || detail.status === 'INTERVIEWING'
+          }
+          onCreate={() => setCreatingInterview(true)}
+        />
       </div>
     </div>
   )

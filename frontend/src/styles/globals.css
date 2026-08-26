@@ -137,6 +137,20 @@ button {
   overflow-x: auto;
 }
 
+@media (max-width: 720px) {
+  .app-sidebar {
+    display: none;
+  }
+
+  .app-topbar {
+    padding: 0 16px;
+  }
+
+  .app-content {
+    padding: 16px;
+  }
+}
+
 .nav-brand {
   font-size: 16px;
   font-weight: 700;

@@ -6,6 +6,7 @@ import { JobDetailPage } from '@/features/jobs/JobDetailPage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { ApplicationCreatePage } from '@/features/applications/ApplicationCreatePage'
 import { ApplicationDetailPage } from '@/features/applications/ApplicationDetailPage'
+import { InterviewDetailPage } from '@/features/interviews/InterviewDetailPage'
 
 export function AppRouter() {
   return (
@@ -24,6 +25,7 @@ export function AppRouter() {
           path="/applications/:applicationId"
           element={<ApplicationDetailPage />}
         />
+        <Route path="/interviews/:interviewId" element={<InterviewDetailPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
