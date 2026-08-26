@@ -93,6 +93,40 @@ public final class TestFixtures {
 		return writeJson(body);
 	}
 
+	/** 构造创建投递请求体。jobId/appliedAt/channel 必填，其余可选。 */
+	public static String createApplicationBody(String jobId, String appliedAt, String channel,
+											  String nextAction, String nextActionDueAt,
+											  Boolean allowDuplicate) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("jobId", jobId);
+		body.put("appliedAt", appliedAt);
+		body.put("channel", channel);
+		if (nextAction != null) body.put("nextAction", nextAction);
+		if (nextActionDueAt != null) body.put("nextActionDueAt", nextActionDueAt);
+		if (allowDuplicate != null) body.put("allowDuplicate", allowDuplicate);
+		return writeJson(body);
+	}
+
+	/** 构造投递状态转换请求体。targetStatus 必填，reason/allowOffer 可选。 */
+	public static String transitionBody(String targetStatus, String reason, Boolean allowOfferWithoutInterview) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("targetStatus", targetStatus);
+		if (reason != null) body.put("reason", reason);
+		if (allowOfferWithoutInterview != null) {
+			body.put("allowOfferWithoutCompletedInterview", allowOfferWithoutInterview);
+		}
+		return writeJson(body);
+	}
+
+	/** 构造更新投递请求体（全字段覆盖写，null 字段省略以简化）。 */
+	public static String updateApplicationBody(String channel, String nextAction, String nextActionDueAt) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		if (channel != null) body.put("channel", channel);
+		if (nextAction != null) body.put("nextAction", nextAction);
+		if (nextActionDueAt != null) body.put("nextActionDueAt", nextActionDueAt);
+		return writeJson(body);
+	}
+
 	/**
 	 * 构造带 JSON content-type 的请求实体，附加任意头（key,value 成对）。
 	 * 例：httpWithHeaders(body, "Idempotency-Key", k1, "If-Match-Version", "0")

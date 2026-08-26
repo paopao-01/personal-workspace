@@ -19,10 +19,14 @@ public class DatabaseCleaner {
 	private JdbcTemplate jdbc;
 
 	/**
-	 * 清空所有 M1 slice 1 相关业务表。FK 安全顺序：先子后父。
+	 * 清空所有业务表。FK 安全顺序：先子后父。保留 V1 种子 user_profile/user_setting。
+	 * 新增 application/status_log/interview_schedule：M2 投递切片相关，即便本切片不写面试也清表防残留。
 	 */
 	public void clearAll() {
 		jdbc.execute("DELETE FROM idempotency_record");
+		jdbc.execute("DELETE FROM application_status_log");
+		jdbc.execute("DELETE FROM interview_schedule");
+		jdbc.execute("DELETE FROM application_record");
 		jdbc.execute("DELETE FROM requirement_match");
 		jdbc.execute("DELETE FROM requirement_skill");
 		jdbc.execute("DELETE FROM job_requirement");

@@ -81,4 +81,11 @@ public interface JobMapper {
 	@Update("UPDATE job_posting SET version = version + 1 " +
 			"WHERE id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL")
 	int bumpVersionByIdAndVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
+
+	/** 按 id 批量查询未删除岗位（dashboard 聚合避免 N+1）。空列表返回空结果。 */
+	@Select("<script>" +
+			"SELECT * FROM job_posting WHERE deleted_at IS NULL AND id IN " +
+			"<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>" +
+			"</script>")
+	List<Job> selectByIds(@Param("ids") List<String> ids);
 }

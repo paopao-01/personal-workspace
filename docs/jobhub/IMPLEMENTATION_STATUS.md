@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M1 第一切片完成（**DONE**，后端集成测试全绿 + 前端骨架 + AT-01 端到端通过）。M2 尚未开始。
-- 当前里程碑：M1（工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单）已完成；下一里程碑 M2（投递状态机、下一步行动、面试与提醒）。
-- 当前任务：M1 第一切片已交付。下一窗口起步 M2（AT-05~AT-09 投递状态机与下一步行动）。
+- 项目阶段：M2 第一切片完成（**DONE**，投递后端四层 + dashboard 聚合 + AT-05~AT-09 后端集成测试全绿）。前端 application 页面与面试/提醒待后续窗口。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。投递状态机 + 下一步行动（AT-05~AT-09）后端完成；面试与提醒（AT-10~AT-14）未开始。
+- 当前任务：M2 第一切片（投递后端）已交付。下一窗口做前端 application 页面（P04 投递详情 + P01 dashboard 行动识别）或面试/提醒（AT-10~AT-14）后端。
 - 当前负责人窗口：Claude（glm-5.2）。
 - 最后更新：2026-08-26。
 
@@ -51,9 +51,9 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job 模块业务代码（53 个 Java 文件：1 主类 + common 19 + job 33；`IdempotencyRecordMapper` 已移至 `common/idempotency/infrastructure/`）。
-- `frontend/` 已生成完整骨架与岗位三页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6；约 32 个手写源文件 + OpenAPI 生成类型）。`npm run lint`/`typecheck`/`build` 全绿，`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。
-- **后端已通过 `mvn clean test`（5 类 18 方法 BUILD SUCCESS，0 failures/0 errors）；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）**。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard 模块业务代码（约 74 个 Java 文件：1 主类 + common 19 + job 34 + application 18 + dashboard 2；`JobMapper` 新增 selectByIds）。
+- `frontend/` 已生成完整骨架与岗位三页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6；约 32 个手写源文件 + OpenAPI 生成类型）。`npm run lint`/`typecheck`/`build` 全绿，`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application/dashboard 前端页面待实现。
+- **后端已通过 `mvn clean test`（9 类 28 方法 BUILD SUCCESS，0 failures/0 errors）：M1 job 18 + M2 application/dashboard 10**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
 - `application.yml` 配置了 `mybatis.mapper-locations: classpath:mapper/*.xml`，但项目 mapper 全部使用注解 SQL 无 XML 文件，该配置无害失效（保留，无需修改）。
 - `IdempotencyInterceptor` 与 `IdempotencyBodyCachingFilter` 都注册在 `/api/**` 路径上；已通过集成测试验证幂等回放与冲突行为。
@@ -65,11 +65,62 @@
 | 里程碑 | 范围 | 状态 | 进入条件 | 完成条件 |
 |---|---|---|---|---|
 | M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
-| M2 | 投递状态机、下一步行动、面试与提醒 | `NOT_STARTED` | M1 完成 | AT-05 至 AT-14 通过 |
+| M2 | 投递状态机、下一步行动、面试与提醒 | `IN_PROGRESS` | M1 完成 | AT-05 至 AT-14 通过 |
 | M3 | 复盘、问题、知识点、薄弱点、学习任务 | `NOT_STARTED` | M2 完成 | AT-15 至 AT-19 通过 |
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-26-4
+
+- 目标：M2 第一切片（后端）— 投递聚合 `application` 模块四层 + dashboard 聚合端点 + AT-05~AT-09 后端集成测试。前端 application 页面与面试/提醒留后续窗口。
+- 状态：**DONE**（本窗口目标全部达成；M2 整体转 **IN_PROGRESS**，AT-05~AT-09 后端可验证部分全绿）。
+- 已完成：
+  - **application 模块四层**（`backend/src/main/java/com/jobhub/application/`）：
+    - `domain/`：`ApplicationStatus`（8 状态枚举）、`Application`（聚合根，含 `transition` 状态机：矩阵编码 `EnumMap<状态,Set<允许目标>>` + ON_HOLD 往返 `previousActiveStatus` 保存/恢复 + OFFER 前置 `allowOfferWithoutCompletedInterview` 逃生舱 + DRAFT→APPLIED 校验 appliedAt/channel + `updateMeta` 全字段覆盖）、`StatusLogEntry`（不可覆盖历史实体）
+    - `infrastructure/`：`ApplicationMapper`（insert/selectById/selectActiveByJobId/selectPage/selectPageCount/updateMetaByIdAndVersion/updateStatusAndPreviousByIdAndVersion/bumpVersionByIdAndVersion/selectActiveForDashboard，注解 SQL + 乐观锁三步走）、`StatusLogMapper`（insert/selectByApplication，仅 INSERT/SELECT 禁改历史）
+    - `application/`：`ApplicationService`（create 含 409 查重、get/getDetail 聚合 job+statusHistory、list、update 全字段覆盖、transition 写 status_log+版本递增、listStatusHistory）、5 个 command/query/result record、`DuplicateApplicationException`
+    - `api/`：`ApplicationController`（6 端点：POST/GET 列表/GET 详情/PUT/POST transition/GET status-history，If-Match-Version 缺失返回 400）、3 个 Request（JavaBean+校验）、4 个 Response（record+from）
+  - **dashboard 聚合**（`backend/src/main/java/com/jobhub/dashboard/`）：`DashboardService`（actionItems 生成 APPLICATION_ACTION_DUE：缺失/逾期/一般 + priority 排序逾期优先；activeApplications；recentJobs 复用 JobMapper.selectPage；upcomingInterviews/weakKnowledgePoints 空数组）、`DashboardController`（GET /api/dashboard → DashboardOverviewResponse）、`Application.nextActionOverdue/nextActionMissing` 辅助方法、`JobMapper.selectByIds` 批量查询（避免 N+1）
+  - **OpenAPI 细化**：`PageApplication` 补 `totalPages` 字段（与 PageJob 一致，非破坏性）
+  - **测试**：扩展 `DatabaseCleaner`（加 application_status_log/interview_schedule/application_record 清理）、`TestFixtures`（createApplicationBody/transitionBody/updateApplicationBody）；新增 4 测试类共 10 方法
+- 未完成（留下一窗口）：
+  - 前端 application 页面：P04 投递详情页（5 区：摘要/当前状态/下一步行动/时间线/面试列表）+ 创建投递表单；P01 dashboard 行动识别区块（今天应做什么 + 进行中投递）
+  - AT-08 后半 `allowDuplicate=true` "创建成功"：V1 部分唯一索引 `uq_application_active_per_job` 限制同岗位最多一条活动投递，本切片搁置，待后续窗口用 V2 迁移重新设计唯一索引后补全；当前 allowDuplicate=true 仍返回 409
+  - 面试与提醒（AT-10~AT-14）：创建面试同事务推进投递、改期替换提醒、取消/缺席、本地提醒调度
+  - Playwright E2E（AT-01/09/11/15/18/20 前端验收）
+- 修改文件：
+  - 新增（application/）：`domain/{ApplicationStatus,Application,StatusLogEntry}.java`、`infrastructure/{ApplicationMapper,StatusLogMapper}.java`、`application/{ApplicationCreateCommand,ApplicationUpdateCommand,ApplicationTransitionCommand,ApplicationListQuery,ApplicationListResult,DuplicateApplicationException,ApplicationService}.java`、`api/{ApplicationCreateRequest,ApplicationUpdateRequest,ApplicationTransitionRequest,ApplicationResponse,ApplicationDetailResponse,StatusLogResponse,PageApplicationResponse,ApplicationController}.java`
+  - 新增（dashboard/）：`package-info.java`、`application/DashboardService.java`、`api/DashboardController.java`
+  - 修改：`backend/src/main/java/com/jobhub/job/infrastructure/JobMapper.java`（加 selectByIds）
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/{DatabaseCleaner,TestFixtures}.java`
+  - 新增：`backend/src/test/java/com/jobhub/integration/{ApplicationTransitionIntegrationTest,ApplicationIdempotencyIntegrationTest,ApplicationCrudIntegrationTest,DashboardIntegrationTest}.java`
+  - 修改：`docs/jobhub/03-openapi.yaml`（PageApplication 补 totalPages）、`docs/jobhub/IMPLEMENTATION_STATUS.md`（本交接 + 总状态/里程碑状态更新）
+- 已运行验证：
+  - `cd backend && mvn clean compile` → BUILD SUCCESS（无编译错误）
+  - `cd backend && mvn clean test` → BUILD SUCCESS，0 failures/0 errors
+  - 测试统计：原 18 + 新增 10 = 28 方法全绿（ApplicationCrud 4、ApplicationIdempotency 2、ApplicationTransition 2、Dashboard 2，加原 Idempotency 3/IllegalTransition 2/JobCrud 7/RequirementConfirmation 3/VersionConflict 3）
+  - 覆盖 AT：AT-05（转换写历史 + PUT 不改历史）、AT-06（非法转换 422 + 零副作用）、AT-07（幂等回放/冲突）、AT-08 前半（409 DUPLICATE_APPLICATION）、AT-09（缺失/逾期行动 + 优先排序）
+- 验证结果：后端可编译、可测试，AT-05~AT-09 后端可验证部分全绿。M2 第一切片（后端）交付完整。
+- 已知问题：
+  1. AT-08 后半 `allowDuplicate=true` 创建成功未实现（V1 唯一索引限制），本切片搁置；当前 allowDuplicate=true 返回 409 DUPLICATE_APPLICATION，message 提示"secondary application creation is not supported in this slice"。需 V2 迁移重新设计唯一索引后补全（可能改为允许同岗位多条活动投递，或改为先终止旧投递再创建——需与 PRD"每岗位一条活动投递"规则权衡）。
+  2. OFFER 转换前置"至少一场 COMPLETED 面试"本切片无法真正校验（面试模块未实现），仅支持 `allowOfferWithoutCompletedInterview=true` 逃生舱；待面试模块实现后在 ApplicationService.transition 补查询 interview_schedule 的 COMPLETED 计数。
+  3. ApplicationDetail.interviews 恒空数组（面试模块未实现）；ApplicationDetailResponse.from 预留 interviews 参数重载供后续填充。
+  4. dashboard 的 upcomingInterviews / weakKnowledgePoints 返回空数组占位（面试/复盘/任务模块未实现）；recentJobs 复用 JobMapper.selectPage 按 updated_at DESC 取 10 条。
+  5. 后端冒烟启动（mvn spring-boot:run + curl /api/dashboard）未在本环境执行（后台启动权限受限）；行为已由 DashboardIntegrationTest 端到端验证（真实 RANDOM_PORT Tomcat + 真实 Flyway + 真实 HTTP）。
+  6. transition 的 Idempotency-Key 已写入 application_status_log.idempotency_key 列（审计追溯），但未做专门断言（AT-07 未要求）。
+  7. PUT 投递采用全字段覆盖写（与 job updateBasicInfo 一致），nextAction/nextActionDueAt/rejectionReason 传 null 即清空；前端实现 PUT 时需回填所有字段（前端已在 job 模块如此做）。
+- 下一窗口只做：
+  1. 前端 application 模块：`frontend/src/api/applications/`（applicationApi + useApplicationQueries + useApplicationMutations，复用现有 client/Idempotency/错误归一化）、`frontend/src/features/applications/`（ApplicationListPage + ApplicationCreatePage + ApplicationDetailPage 五区 + 创建表单）；OpenAPI 重新生成类型（PageApplication.totalPages 已补）。
+  2. 前端 dashboard：`frontend/src/features/dashboard/DashboardPage`（今天应做什么 + 进行中投递，调 GET /api/dashboard）。
+  3. 手动验证 AT-09 前端（dashboard 行动识别）+ AT-05/06/07/08 前端交互。
+  4. 或先做面试/提醒后端（AT-10~AT-14）：interview 模块 + reminder 模块 + 同事务推进投递 + 提醒调度。二选一，建议先补前端 application 页面让 M2 投递闭环可见。
+- 不要重复做：
+  - 不要重写 application 后端四层或 dashboard 聚合（已 DONE，10 测试全绿）。
+  - 不要手写 Application 枚举类型（前端由 openapi-typescript 从 03-openapi.yaml 生成）。
+  - 不要修改 `V1__initial_schema.sql`（AT-08 allowDuplicate 如需放宽唯一索引，新增 V2 迁移）。
+  - 不要提前实现面试/提醒/复盘/任务（M2 投递之后）、AI、外部通知、云同步、附件上传、综合匹配评分。
+  - 不要使用 pnpm（本机不可用，用 npm）。
 
 ### 窗口 2026-08-26-3
 
