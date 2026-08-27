@@ -6,7 +6,7 @@
 
 - 项目阶段：M2 收尾打磨中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；E2E 回归仍待补齐）。
 - 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 投递状态筛选代码与后端测试已存在，月视图/列表视图切换已完成，Playwright E2E 仍待后续窗口。
-- 当前任务：Playwright E2E 基础设施已建立，AT-01 首次价值端到端已覆盖；下一窗口建议继续覆盖 AT-09 或 AT-11。
+- 当前任务：Playwright E2E 已覆盖 AT-01 与 AT-09；下一窗口建议继续覆盖 AT-11 面试改期替换提醒。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-27。
 
@@ -71,6 +71,42 @@
 
 ## 5. 当前窗口交接
 
+### 窗口 2026-08-27-4
+
+- 目标：在 `dev` 分支补齐 AT-09 dashboard 缺失/逾期行动 Playwright E2E；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `frontend/e2e/at-09-dashboard-actions.spec.ts`：通过 API 仅创建岗位作为前置数据，通过真实 UI 创建两条活动投递、执行状态转换，并在 `/dashboard` 断言缺失行动提示、逾期天数和逾期项排序优先。
+  - `frontend/playwright.config.ts` 固定 `workers: 1`，避免多个 E2E 文件并发共享同一个临时 SQLite 后端导致 AT-01/AT-09 相互干扰。
+  - 保留 E2E 独立端口 `15173/18080` 和临时库策略；未新增接口、未新增迁移。
+- 未完成：
+  - Playwright 尚未覆盖 AT-11、AT-15、AT-18、AT-20。
+  - M3 复盘/问题/知识点/学习任务与 M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 新增：`frontend/e2e/at-09-dashboard-actions.spec.ts`。
+  - 修改：`frontend/playwright.config.ts`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，174 modules。
+  - `cd backend && mvn test "-Dtest=DashboardIntegrationTest"` -> BUILD SUCCESS，3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，35 tests，0 failures，0 errors。
+  - `cd frontend && npm run e2e` -> 通过，AT-01 与 AT-09 共 2 tests passed。
+- 验证结果：
+  - AT-09 已有后端集成测试和新增 Playwright 浏览器级回归；M2 dashboard 缺失/逾期行动发布门槛已补齐。
+  - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试结果。
+  - 首次未提权运行 E2E/Maven 时，沙箱拒绝删除或写入 `backend/target` 临时文件；提权后验证通过。
+- 已知问题：
+  - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
+  - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
+- 下一窗口只做：
+  - 继续补 Playwright E2E，优先 AT-11 面试改期替换提醒：创建未来 SCHEDULED 面试及默认提醒，执行真实 UI/API 改期，断言旧 PENDING 提醒 CANCELED、新时间 3 条 PENDING 提醒存在，且 SENT 历史提醒保留。
+- 不要重复做：
+  - 不要重建 Playwright 基础设施、不要改回并发 E2E worker；当前 E2E 使用 15173/18080 独立端口、临时库和单 worker。
+  - 不要重做 AT-01 或 AT-09 的 E2E 覆盖，除非实际回归失败。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+
 ### 窗口 2026-08-27-3
 
 - 目标：在 `dev` 分支建立最小 Playwright E2E 基础设施，并优先覆盖 AT-01 首次价值端到端；验证无问题后合并回 `main` 并推送。
@@ -103,7 +139,9 @@
   - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
   - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
 - 下一窗口只做：
-  - 继续补 Playwright E2E，优先 AT-09 dashboard 缺失/逾期行动，或 AT-11 面试改期替换提醒。
+  - 在 `dev` 分支继续补 Playwright E2E，只覆盖 AT-09 dashboard 缺失/逾期行动：通过真实 UI 创建两条活动投递（APPLIED 无 nextAction；INTERVIEWING 有已逾期 nextActionDueAt），打开 `/dashboard` 断言补充行动提示、逾期天数和逾期项排序优先。
+  - 如真实 UI 缺少造数所需入口，优先通过既有 UI/API 最小辅助完成测试数据，不扩展业务范围；仅修正 AT-09 可观察行为或测试稳定性问题。
+  - 验证无问题后，将 `dev` 合并到 `main`，并推送 `dev` 与 `main` 到远程仓库。
 - 不要重复做：
   - 不要重建 Playwright 基础设施或改回 5173 E2E 端口；E2E 已使用 15173/18080 独立端口和临时库。
   - 不要重做 P05 月视图、投递状态筛选、dashboard upcomingInterviews、AT-08 `allowDuplicate=true` 或面试状态命令 UI。
