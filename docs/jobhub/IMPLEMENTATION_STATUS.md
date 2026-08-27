@@ -4,11 +4,11 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 第六切片（工作台即将面试）完成（**DONE**，dashboard 聚合真实未来面试并展示）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 月视图/投递状态筛选与 Playwright E2E 仍待后续窗口。
-- 当前任务：AT-08 `allowDuplicate=true` 的 V2 迁移与审计闭环已交付；下一窗口建议做 P05 月视图与投递状态筛选，或补核心 Playwright E2E。
+- 项目阶段：M2 收尾打磨中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；E2E 回归仍待补齐）。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 投递状态筛选代码与后端测试已存在，月视图/列表视图切换已完成，Playwright E2E 仍待后续窗口。
+- 当前任务：P05 月视图与时间线切换已交付；下一窗口建议只做 Playwright E2E 基础设施和优先覆盖 AT-01/AT-09/AT-11。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-26。
+- 最后更新：2026-08-27。
 
 ## 2. 已完成内容
 
@@ -70,6 +70,72 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-27-2
+
+- 目标：在 `dev` 分支实现 P05 面试中心月视图与时间线/月视图切换，验证无问题后合并回 `main`。
+- 状态：**DONE**。
+- 已完成：
+  - 确认当前分支为 `dev`，未新建后端接口或数据库迁移。
+  - `/interviews` 增加 `view=month` 月视图；默认仍为未来 7 天时间线。
+  - 月视图按所选月份查询整月数据，提供上个月/下个月切换，并继续复用日期范围、日程状态、投递状态和面试方式筛选。
+  - 抽出面试摘要展示，时间线与月视图共享公司、岗位、轮次、方式、日程状态、投递状态、准备事项数量、结果和“等待确认是否完成”提示。
+  - 补充月历网格、视图切换和窄屏横向滚动样式，保持状态标签文字可见且不只依赖颜色。
+- 未完成：
+  - Playwright E2E 仍未建立或覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
+  - M3 复盘/问题/知识点/学习任务与 M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - `frontend/src/features/interviews/InterviewListPage.tsx`
+  - `frontend/src/styles/globals.css`
+  - `docs/jobhub/IMPLEMENTATION_STATUS.md`
+- 已运行验证：
+  - `cd frontend && npm run lint` -> 通过，0 warning。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，174 modules。
+  - `cd frontend && npm run dev -- --host 127.0.0.1` -> Vite dev server 已启动，URL `http://127.0.0.1:5173/`。
+- 验证结果：
+  - 前端静态检查与生产构建全绿；本切片只改前端视图，无后端行为变化，未运行后端测试。
+- 已知问题：
+  - 浏览器自动化/Playwright E2E 尚未补齐，当前只完成静态与构建验证。
+  - 若后端未同时运行，访问 `/interviews` 会走现有错误态；启动后端后由 Vite proxy 访问 `/api`。
+- 下一窗口只做：
+  - 建立最小 Playwright E2E 基础设施，并优先覆盖 AT-01、AT-09、AT-11 中至少一个端到端场景。
+- 不要重复做：
+  - 不要重做 P05 月视图、投递状态筛选、dashboard upcomingInterviews、AT-08 `allowDuplicate=true` 或面试状态命令 UI。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+
+### 窗口 2026-08-27-1
+
+- 目标：按 `AGENTS.md` 恢复上下文，总结未完成任务，并确定下一窗口任务。
+- 状态：**DONE**。
+- 已完成：
+  - 按顺序阅读并核对 `IMPLEMENTATION_STATUS.md`、`IMPLEMENTATION_MASTER_PROMPT.md`、PRD、状态机、OpenAPI、数据库设计、页面规格、验收用例和技术实施方案。
+  - 扫描当前后端/前端代码结构、集成测试和前端脚本，确认 M1 已完成，M2 主路径已完成，M3/M4 尚未开始。
+  - 发现交接记录中的一处过时描述：P05 “投递状态筛选”并非完全未做；当前 OpenAPI、后端 `InterviewMapper.selectListItems`、`InterviewController.list`、前端 `InterviewListPage` 已支持 `applicationStatus`，且 `InterviewIntegrationTest.interviewList_filtersByApplicationStatus_andReturnsApplicationSummary` 覆盖该筛选。
+- 未完成：
+  - P05 月视图和列表/月视图切换仍未实现。
+  - Playwright E2E 仍未建立或覆盖发布门槛要求的 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
+  - M3 复盘、问题、知识点、薄弱点、学习任务与验证未实现。
+  - M4 面试准备包、项目案例、证据、JSON 导出、最近删除未实现；OpenAPI 中已有准备包等契约但后端/前端尚未落地。
+- 修改文件：
+  - `docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - 未运行后端或前端测试；本窗口只做上下文核对与交接更新。
+  - 已执行代码/测试结构扫描：`git status --short`、`rg --files backend/src/main/java/com/jobhub`、`rg --files frontend/src`、`rg --files backend/src/test frontend | rg "(IntegrationTest|\\.spec\\.|playwright|e2e)"`，以及针对 P05 筛选实现的 `Select-String` 检查。
+- 验证结果：
+  - 工作区未显示待提交业务代码变更；`git status --short` 仅出现用户级 git ignore 权限警告。
+  - 后端存在 11 个集成测试类；未发现前端 Playwright/E2E 文件。
+- 已知问题：
+  - 当前文档仍有部分历史窗口记录保留旧说法，读取时以最新总状态和本窗口核对结果为准。
+  - P05 投递状态筛选已有代码与测试，但上一次交接未及时更新，后续窗口不要重复扩展该契约，除非实际验收发现缺陷。
+- 下一窗口只做：
+  - 实现 P05 面试中心月视图与列表/月视图切换；复用现有 `/api/interviews`、`InterviewListItem.application.status` 和 `applicationStatus` 筛选，不新增数据库迁移。
+  - 同步补前端静态验证；如范围允许，增加最小 Playwright 基础设施并优先覆盖 AT-11 或面试中心筛选/月视图冒烟。
+- 不要重复做：
+  - 不要重做 AT-08 `allowDuplicate=true`、dashboard upcomingInterviews、面试状态命令 UI 或 P05 投递状态筛选。
+  - 不要通过普通 `PUT /interviews/{id}` 或 `PUT /applications/{id}` 改写业务状态。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-26-10
 

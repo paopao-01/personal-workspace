@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useInterviewList } from '@/api/interviews/useInterviewQueries'
 import type { ApplicationStatus } from '@/api/applications/applicationApi'
-import type { Interview, InterviewScheduleStatus } from '@/api/interviews/interviewApi'
+import type {
+  Interview,
+  InterviewListItem,
+  InterviewScheduleStatus,
+} from '@/api/interviews/interviewApi'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -33,6 +37,10 @@ const defaultFrom = localDateValue(today)
 const nextWeek = new Date(today)
 nextWeek.setDate(today.getDate() + 6)
 const defaultTo = localDateValue(nextWeek)
+
+type ViewMode = 'timeline' | 'month'
+
+const emptyInterviews: InterviewListItem[] = []
 
 const scheduleOptions: { value: '' | InterviewScheduleStatus; label: string }[] = [
   { value: '', label: '全部日程状态' },
@@ -78,11 +86,94 @@ function timelineDayKey(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('sv-SE')
 }
 
+function monthStart(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return defaultFrom
+  return localDateValue(new Date(date.getFullYear(), date.getMonth(), 1))
+}
+
+function monthEnd(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return defaultTo
+  return localDateValue(new Date(date.getFullYear(), date.getMonth() + 1, 0))
+}
+
+function addMonths(value: string, offset: number): string {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return defaultFrom
+  return localDateValue(new Date(date.getFullYear(), date.getMonth() + offset, 1))
+}
+
+function monthLabel(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' })
+}
+
+function buildMonthCells(anchor: string): { key: string; label: string; isCurrentMonth: boolean }[] {
+  const firstDay = new Date(`${monthStart(anchor)}T00:00:00`)
+  const offset = (firstDay.getDay() + 6) % 7
+  const gridStart = new Date(firstDay)
+  gridStart.setDate(firstDay.getDate() - offset)
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(gridStart)
+    day.setDate(gridStart.getDate() + index)
+    return {
+      key: localDateValue(day),
+      label: String(day.getDate()),
+      isCurrentMonth: day.getMonth() === firstDay.getMonth(),
+    }
+  })
+}
+
+function groupInterviewsByDay(interviews: InterviewListItem[]): Map<string, InterviewListItem[]> {
+  const byDay = new Map<string, InterviewListItem[]>()
+  for (const interview of interviews) {
+    const key = timelineDayKey(interview.startsAt)
+    const current = byDay.get(key)
+    if (current) current.push(interview)
+    else byDay.set(key, [interview])
+  }
+  return byDay
+}
+
+function InterviewSummary({
+  interview,
+  pageOpenedAt,
+}: {
+  interview: InterviewListItem
+  pageOpenedAt: number
+}) {
+  const needsConfirmation =
+    interview.scheduleStatus === 'SCHEDULED' &&
+    new Date(interview.startsAt).getTime() < pageOpenedAt
+
+  return (
+    <div className="interview-summary">
+      <div className="interview-summary-title">
+        <h3>{interview.application.companyName}</h3>
+        <p>{interview.application.jobTitle} · {interview.roundName}</p>
+      </div>
+      <div className="interview-timeline-meta">
+        <span>{interview.mode ? interviewModeLabel[interview.mode] : '未填写方式'}</span>
+        <Badge variant={interviewScheduleVariant[interview.scheduleStatus]}>{interviewScheduleLabel[interview.scheduleStatus]}</Badge>
+        <Badge variant={applicationStatusVariant[interview.application.status]}>{applicationStatusLabel[interview.application.status]}</Badge>
+        <span>准备事项 {(interview.preparationChecklist ?? []).length}</span>
+        {interview.result !== 'PENDING' ? <span>结果：{interviewResultLabel[interview.result]}</span> : null}
+        {needsConfirmation ? <span className="interview-confirmation">等待确认是否完成</span> : null}
+      </div>
+    </div>
+  )
+}
+
 export function InterviewListPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const from = searchParams.get('from') ?? defaultFrom
   const to = searchParams.get('to') ?? defaultTo
+  const view = searchParams.get('view') === 'month' ? 'month' : 'timeline'
   const scheduleStatus = (searchParams.get('scheduleStatus') ?? '') as
     | ''
     | InterviewScheduleStatus
@@ -91,9 +182,11 @@ export function InterviewListPage() {
     | ApplicationStatus
   const mode = (searchParams.get('mode') ?? '') as '' | NonNullable<Interview['mode']>
   const [pageOpenedAt] = useState(() => Date.now())
+  const queryFrom = view === 'month' ? monthStart(from) : from
+  const queryTo = view === 'month' ? monthEnd(from) : to
   const { data, isLoading, error, refetch } = useInterviewList({
-    from: startOfDate(from),
-    to: endOfDate(to),
+    from: startOfDate(queryFrom),
+    to: endOfDate(queryTo),
     scheduleStatus: scheduleStatus || undefined,
     applicationStatus: applicationStatus || undefined,
     mode: mode || undefined,
@@ -106,7 +199,31 @@ export function InterviewListPage() {
     setSearchParams(next, { replace: false })
   }
 
-  const interviews = data ?? []
+  const updateView = (nextView: ViewMode) => {
+    const next = new URLSearchParams(searchParams)
+    if (nextView === 'timeline') {
+      next.delete('view')
+      if (!next.get('from')) next.set('from', defaultFrom)
+      if (!next.get('to')) next.set('to', defaultTo)
+    } else {
+      next.set('view', 'month')
+      next.set('from', monthStart(from))
+      next.set('to', monthEnd(from))
+    }
+    setSearchParams(next, { replace: false })
+  }
+
+  const updateMonth = (anchor: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('view', 'month')
+    next.set('from', monthStart(anchor))
+    next.set('to', monthEnd(anchor))
+    setSearchParams(next, { replace: false })
+  }
+
+  const interviews = data ?? emptyInterviews
+  const interviewsByDay = useMemo(() => groupInterviewsByDay(interviews), [interviews])
+  const monthCells = useMemo(() => buildMonthCells(from), [from])
 
   return (
     <div>
@@ -114,6 +231,24 @@ export function InterviewListPage() {
         <div>
           <h1 className="page-title">面试中心</h1>
           <p className="page-subtitle">默认展示未来 7 天的面试安排</p>
+        </div>
+        <div className="view-toggle" aria-label="面试视图">
+          <button
+            type="button"
+            className={view === 'timeline' ? 'active' : ''}
+            aria-pressed={view === 'timeline'}
+            onClick={() => updateView('timeline')}
+          >
+            时间线
+          </button>
+          <button
+            type="button"
+            className={view === 'month' ? 'active' : ''}
+            aria-pressed={view === 'month'}
+            onClick={() => updateView('month')}
+          >
+            月视图
+          </button>
         </div>
       </div>
 
@@ -144,17 +279,24 @@ export function InterviewListPage() {
         </Field>
       </div>
 
+      {view === 'month' ? (
+        <div className="month-nav">
+          <Button variant="ghost" size="sm" onClick={() => updateMonth(addMonths(from, -1))}>上个月</Button>
+          <strong>{monthLabel(from)}</strong>
+          <Button variant="ghost" size="sm" onClick={() => updateMonth(addMonths(from, 1))}>下个月</Button>
+        </div>
+      ) : null}
+
       <div className="card interview-timeline">
         {isLoading ? <Spinner label="加载面试列表…" /> : null}
         {!isLoading && error ? <ErrorState error={error} onRetry={() => refetch()} /> : null}
         {!isLoading && !error && interviews.length === 0 ? (
           <EmptyState text="此范围内没有面试安排。" />
         ) : null}
-        {!isLoading && !error && interviews.length > 0 ? (
+        {!isLoading && !error && interviews.length > 0 && view === 'timeline' ? (
           <div className="interview-timeline-list">
             {interviews.map((interview, index) => {
               const startsNewDay = index === 0 || timelineDayKey(interview.startsAt) !== timelineDayKey(interviews[index - 1].startsAt)
-              const needsConfirmation = interview.scheduleStatus === 'SCHEDULED' && new Date(interview.startsAt).getTime() < pageOpenedAt
               return (
                 <div key={interview.id} className="interview-timeline-group">
                   {startsNewDay ? <h2 className="interview-timeline-day">{localDayLabel(interview.startsAt)}</h2> : null}
@@ -168,25 +310,51 @@ export function InterviewListPage() {
                     </div>
                     <div className="interview-timeline-main">
                       <div className="interview-timeline-heading">
-                        <div>
-                          <h3>{interview.application.companyName}</h3>
-                          <p>{interview.application.jobTitle} · {interview.roundName}</p>
-                        </div>
+                        <InterviewSummary interview={interview} pageOpenedAt={pageOpenedAt} />
                         <Button variant="ghost" size="sm" onClick={() => navigate(`/interviews/${interview.id}`)}>查看详情</Button>
-                      </div>
-                      <div className="interview-timeline-meta">
-                        <span>{interview.mode ? interviewModeLabel[interview.mode] : '未填写方式'}</span>
-                        <Badge variant={interviewScheduleVariant[interview.scheduleStatus]}>{interviewScheduleLabel[interview.scheduleStatus]}</Badge>
-                        <Badge variant={applicationStatusVariant[interview.application.status]}>{applicationStatusLabel[interview.application.status]}</Badge>
-                        <span>准备事项 {(interview.preparationChecklist ?? []).length}</span>
-                        {interview.result !== 'PENDING' ? <span>结果：{interviewResultLabel[interview.result]}</span> : null}
-                        {needsConfirmation ? <span className="interview-confirmation">等待确认是否完成</span> : null}
                       </div>
                     </div>
                   </article>
                 </div>
               )
             })}
+          </div>
+        ) : null}
+        {!isLoading && !error && interviews.length > 0 && view === 'month' ? (
+          <div className="interview-month">
+            <div className="interview-month-weekdays" aria-hidden="true">
+              {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map((day) => <span key={day}>{day}</span>)}
+            </div>
+            <div className="interview-month-grid">
+              {monthCells.map((day) => {
+                const dayInterviews = interviewsByDay.get(day.key) ?? []
+                return (
+                  <section
+                    key={day.key}
+                    className={`interview-month-cell ${day.isCurrentMonth ? '' : 'muted'}`.trim()}
+                    aria-label={`${day.key}，${dayInterviews.length} 场面试`}
+                  >
+                    <div className="interview-month-date">
+                      <span>{day.label}</span>
+                      {dayInterviews.length > 0 ? <strong>{dayInterviews.length} 场</strong> : null}
+                    </div>
+                    <div className="interview-month-items">
+                      {dayInterviews.map((interview) => (
+                        <button
+                          key={interview.id}
+                          type="button"
+                          className="interview-month-item"
+                          onClick={() => navigate(`/interviews/${interview.id}`)}
+                        >
+                          <span>{formatInterviewTime(interview.startsAt)}</span>
+                          <InterviewSummary interview={interview} pageOpenedAt={pageOpenedAt} />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
           </div>
         ) : null}
       </div>
