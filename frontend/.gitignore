@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+.npm-cache
+playwright-report
+test-results
 
 # Generated OpenAPI types (regenerated via prepare/build, never committed)
 src/api/generated/

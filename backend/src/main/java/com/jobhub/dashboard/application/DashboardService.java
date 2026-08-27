@@ -4,6 +4,7 @@ import com.jobhub.application.domain.Application;
 import com.jobhub.application.infrastructure.ApplicationMapper;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.job.domain.Job;
+import com.jobhub.job.domain.JobDecisionStatus;
 import com.jobhub.job.infrastructure.JobMapper;
 import com.jobhub.interview.domain.Interview;
 import com.jobhub.interview.domain.InterviewScheduleStatus;
@@ -72,13 +73,23 @@ public class DashboardService {
 				actionItems.add(item);
 			}
 		}
+		// recentJobs：复用 JobMapper.selectPage（按 updated_at DESC）
+		List<Job> recentJobs = jobMapper.selectPage(null, null, null, RECENT_JOBS_LIMIT, 0);
+		for (Job job : recentJobs) {
+			if (job.getDecisionStatus() == JobDecisionStatus.TO_APPLY && activeApps.stream()
+					.noneMatch(app -> app.getJobId().equals(job.getId()))) {
+				actionItems.add(new ActionItem(
+						job.getId(), TYPE_APPLICATION_ACTION_DUE,
+						"为该岗位创建投递或安排下一步行动",
+						null, PRIORITY_MISSING,
+						new SourceRef("JOB", job.getId(), job.getTitle())));
+			}
+		}
 		// 逾期(1) > 缺失(2) > 一般(3)；同优先级按 dueAt 升序（null 靠后）
 		actionItems.sort(Comparator
 				.comparingInt(ActionItem::priority)
 				.thenComparing(a -> a.dueAt() == null ? "9" : a.dueAt()));
 
-		// recentJobs：复用 JobMapper.selectPage（按 updated_at DESC）
-		List<Job> recentJobs = jobMapper.selectPage(null, null, null, RECENT_JOBS_LIMIT, 0);
 		List<Interview> upcomingInterviews = interviewMapper
 				.selectUpcoming(now, "9999-12-31T23:59:59Z", InterviewScheduleStatus.SCHEDULED)
 				.stream()

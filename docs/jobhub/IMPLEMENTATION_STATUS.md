@@ -6,7 +6,7 @@
 
 - 项目阶段：M2 收尾打磨中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；E2E 回归仍待补齐）。
 - 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 投递状态筛选代码与后端测试已存在，月视图/列表视图切换已完成，Playwright E2E 仍待后续窗口。
-- 当前任务：P05 月视图与时间线切换已交付；下一窗口建议只做 Playwright E2E 基础设施和优先覆盖 AT-01/AT-09/AT-11。
+- 当前任务：Playwright E2E 基础设施已建立，AT-01 首次价值端到端已覆盖；下一窗口建议继续覆盖 AT-09 或 AT-11。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-27。
 
@@ -70,6 +70,45 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-27-3
+
+- 目标：在 `dev` 分支建立最小 Playwright E2E 基础设施，并优先覆盖 AT-01 首次价值端到端；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `@playwright/test` 开发依赖与 `npm run e2e` 脚本。
+  - 新增 `frontend/playwright.config.ts`：E2E 使用独立前端端口 `15173`，后端端口 `18080`，避免复用普通开发服务；测试时区固定为 `Asia/Shanghai`。
+  - 新增 `frontend/e2e/start-e2e-backend.ps1`：每次 E2E 启动前安全删除 `backend/target/jobhub-e2e.db`、`-wal`、`-shm` 临时库，再启动 Spring Boot；不触碰 `backend/data/jobhub.db`。
+  - 新增 `frontend/e2e/at-01-first-value.spec.ts`：通过真实 UI 完成创建岗位、提取候选要求、确认 3 项要求、查看“信息不足”差距、保存 `TO_APPLY` 决定，并在 dashboard 断言出现“为该岗位创建投递或安排下一步行动”入口。
+  - `DashboardService` 补齐 AT-01 的岗位级行动入口：`TO_APPLY` 且无活动投递的岗位会生成 dashboard action item；前端 dashboard 点击 `sourceRef.type=JOB` 的行动项会回到岗位详情。
+  - `vite.config.ts` 支持 `JOBHUB_API_TARGET`，供 E2E 前端代理到独立后端端口；普通 `npm run dev` 默认仍代理 `127.0.0.1:8080`。
+- 未完成：
+  - Playwright 尚未覆盖 AT-09、AT-11、AT-15、AT-18、AT-20。
+  - M3 复盘/问题/知识点/学习任务与 M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 新增：`frontend/playwright.config.ts`、`frontend/e2e/start-e2e-backend.ps1`、`frontend/e2e/at-01-first-value.spec.ts`。
+  - 修改：`frontend/package.json`、`frontend/package-lock.json`、`frontend/.gitignore`、`frontend/vite.config.ts`、`frontend/src/features/dashboard/DashboardPage.tsx`、`backend/src/main/java/com/jobhub/dashboard/application/DashboardService.java`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，174 modules。
+  - `cd backend && mvn test "-Dtest=DashboardIntegrationTest"` -> BUILD SUCCESS，3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，35 tests，0 failures，0 errors。
+  - `cd frontend && npm run e2e` -> 通过，AT-01 1 test passed。
+  - 首次运行 E2E 前执行 `npx playwright install chromium`，已安装本机 Chromium/headless shell。
+- 验证结果：
+  - 后端全量集成测试、前端静态检查、生产构建和首个 Playwright E2E 场景均通过。
+  - E2E 运行期间 Vite 输出 React Router v7 future flag 警告；不影响当前功能，后续可单独配置 future flags 降噪。
+- 已知问题：
+  - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
+  - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
+- 下一窗口只做：
+  - 继续补 Playwright E2E，优先 AT-09 dashboard 缺失/逾期行动，或 AT-11 面试改期替换提醒。
+- 不要重复做：
+  - 不要重建 Playwright 基础设施或改回 5173 E2E 端口；E2E 已使用 15173/18080 独立端口和临时库。
+  - 不要重做 P05 月视图、投递状态筛选、dashboard upcomingInterviews、AT-08 `allowDuplicate=true` 或面试状态命令 UI。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-27-2
 

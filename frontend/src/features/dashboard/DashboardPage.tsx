@@ -170,7 +170,9 @@ function TodayActionsSection({ items }: { items: ActionItem[] }) {
                 key={item.id}
                 className="requirement-row"
                 style={{ justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}
-                onClick={() => navigate(`/applications/${item.sourceRef.id}`)}
+                onClick={() => navigate(item.sourceRef.type === 'JOB'
+                  ? `/jobs/${item.sourceRef.id}`
+                  : `/applications/${item.sourceRef.id}`)}
               >
                 <div className="requirement-main">
                   <div className="requirement-meta">

@@ -14,7 +14,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: process.env.JOBHUB_API_TARGET ?? 'http://127.0.0.1:8080',
         secure: false,
         // 不设 rewrite：后端 Controller 类注解为 @RequestMapping("/api")，
         // 路径本身已含 /api 前缀，原样转发即可。
