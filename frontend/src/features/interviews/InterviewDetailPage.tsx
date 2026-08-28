@@ -71,6 +71,26 @@ export function InterviewDetailPage() {
         interview={interview}
       />
 
+      {interview.scheduleStatus === 'COMPLETED' ? (
+        <section className="card">
+          <div className="card-header">
+            <h2 className="card-title">复盘</h2>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => navigate(`/interviews/${interview.id}/review`)}
+            >
+              开始/继续复盘
+            </Button>
+          </div>
+          <div className="card-body">
+            <p className="muted" style={{ margin: 0 }}>
+              记录面试结果、问题和回答状态，先保存草稿，后续可继续补充。
+            </p>
+          </div>
+        </section>
+      ) : null}
+
       <div className="section-grid">
         <section className="card detail-summary">
           <div className="card-header">

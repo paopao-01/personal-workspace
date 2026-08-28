@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 收尾完成，准备进入 M3（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）已完成主要验收覆盖；下一窗口进入 M3（复盘、问题、知识点、学习任务）。
-- 当前任务：AT-11 面试改期替换提醒 Playwright E2E 已完成；下一窗口建议实现 AT-15 快速复盘最小录入。
+- 项目阶段：M3 起步中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15）。
+- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15 后端、前端和 E2E 已完成。
+- 当前任务：AT-15 快速复盘最小录入已完成；下一窗口建议实现 AT-16 完成复盘最小条件。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-28。
 
@@ -65,16 +65,67 @@
 | 里程碑 | 范围 | 状态 | 进入条件 | 完成条件 |
 |---|---|---|---|---|
 | M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
-| M2 | 投递状态机、下一步行动、面试与提醒 | `IN_PROGRESS` | M1 完成 | AT-05 至 AT-14 通过 |
-| M3 | 复盘、问题、知识点、薄弱点、学习任务 | `NOT_STARTED` | M2 完成 | AT-15 至 AT-19 通过 |
+| M2 | 投递状态机、下一步行动、面试与提醒 | `DONE` | M1 完成 | AT-05 至 AT-14 通过 |
+| M3 | 复盘、问题、知识点、薄弱点、学习任务 | `IN_PROGRESS` | M2 完成 | AT-15 至 AT-19 通过 |
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
 
+### 窗口 2026-08-28-3
+
+- 目标：在 `dev` 分支实现 AT-15 快速复盘最小录入；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增后端 review 模块最小实现：`GET/PUT /api/interviews/{id}/review` 与 `POST /api/reviews/{id}/questions`。
+  - 复盘草稿仅允许在 `COMPLETED` 面试上保存；首次保存创建 `DRAFT`，已有草稿更新时要求 `If-Match-Version`。
+  - 新增最小问题保存：问题内容 + `answerStatus` 必填；`myAnswer`、`referenceAnswer`、`errorReason` 等完整复盘字段可为空，不阻断保存。
+  - 新增前端 review API hooks、`/interviews/:interviewId/review` 快速复盘页，以及完成面试详情页的“开始/继续复盘”入口。
+  - 新增 `frontend/e2e/at-15-quick-review.spec.ts`，通过 API 构造已完成面试，通过真实 UI 保存最小复盘并刷新验证可继续编辑。
+  - 更新测试清理顺序，覆盖 `interview_review`、`interview_question`、`question_knowledge`。
+- 未完成：
+  - AT-16 完成复盘最小条件尚未实现。
+  - AT-17 薄弱知识点统计、AT-18 问题创建任务、AT-19 任务完成不改能力尚未实现。
+  - M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 新增：`backend/src/main/java/com/jobhub/review/domain/ReviewStatus.java`、`AnswerStatus.java`、`KnowledgePoint.java`、`InterviewQuestion.java`、`InterviewReview.java`。
+  - 新增：`backend/src/main/java/com/jobhub/review/infrastructure/ReviewMapper.java`、`QuestionMapper.java`。
+  - 新增：`backend/src/main/java/com/jobhub/review/application/ReviewService.java`。
+  - 新增：`backend/src/main/java/com/jobhub/review/api/ReviewController.java`、`ReviewUpsertRequest.java`、`QuestionCreateRequest.java`、`KnowledgePointResponse.java`、`InterviewQuestionResponse.java`、`InterviewReviewResponse.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/ReviewIntegrationTest.java`。
+  - 新增：`frontend/src/api/reviews/reviewApi.ts`、`useReviewQueries.ts`、`useReviewMutations.ts`。
+  - 新增：`frontend/src/features/reviews/InterviewReviewPage.tsx`、`reviewLabels.ts`。
+  - 新增：`frontend/e2e/at-15-quick-review.spec.ts`。
+  - 修改：`frontend/src/app/routes.tsx`、`frontend/src/features/interviews/InterviewDetailPage.tsx`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReviewIntegrationTest"` -> BUILD SUCCESS，1 test，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，36 tests，0 failures，0 errors。
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，179 modules。
+  - `cd frontend && npm run e2e` -> 通过，AT-01、AT-09、AT-11、AT-15 共 4 tests passed。
+- 验证结果：
+  - AT-15 已有后端集成测试和 Playwright 浏览器级回归。
+  - OpenAPI 契约已有相关接口和 schema，本窗口未修改 OpenAPI。
+  - V1 已有复盘/问题/知识点表，本窗口未新增数据库迁移。
+  - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试结果。
+  - 首次未提权运行 Maven/E2E 时，沙箱拒绝写入或删除 `backend/target` 临时文件；提权后验证通过。
+- 已知问题：
+  - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
+  - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
+  - `InterviewResponse` 实现仍未返回 OpenAPI `InterviewDetail.reviewStatus` 扩展字段；当前 AT-15 通过独立 review API 查询状态，不影响本切片。
+- 下一窗口只做：
+  - 实现 AT-16 完成复盘最小条件：`POST /api/reviews/{reviewId}/complete`，当 `DRAFT` 复盘没有问题且 `noQuestionsRecorded=false` 时返回 422；有至少一题或明确 `noQuestionsRecorded=true`，且每题都有 `answerStatus` 时转为 `COMPLETED`。
+  - 前端在快速复盘页增加“完成复盘”动作，展示业务规则错误并保持草稿可编辑。
+  - 补 `ReviewIntegrationTest` AT-16 用例；如前端路径完成，再补 AT-16 Playwright 或把 AT-15 E2E 扩展到完成动作的可观察路径。
+- 不要重复做：
+  - 不要重建 review 基础 CRUD、不要重做 AT-15 E2E，除非实际回归失败。
+  - 不要提前实现 AT-17 薄弱知识点统计、AT-18 任务创建、AT-20 准备包、AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+
 ### 窗口 2026-08-28-2
 
 - 目标：在 `dev` 分支补齐 AT-11 面试改期替换提醒 Playwright E2E；验证无问题后合并回 `main` 并推送。
-- 状态：**PARTIAL**（开发、验证、本地 `dev -> main` 合并完成；远程推送待用户明确授权具体 GitHub 地址）。
+- 状态：**DONE**。
 - 已完成：
   - 新增 `frontend/e2e/at-11-interview-reschedule-reminders.spec.ts`：通过 API 创建岗位和投递、真实 UI 安排面试、断言默认 3 条 `PENDING` 提醒，使用 E2E-only 测试辅助将一条旧提醒标为 `SENT`，再通过真实 UI 改期并断言 `startsAt`/`eventTimeZone` 更新、旧 `PENDING` 提醒变为 `CANCELED`、新时间 3 条 `PENDING` 提醒存在、`SENT` 历史提醒保留。
   - 新增 `backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`：仅在 `e2e` profile 启用，用于测试夹具把提醒标为 `SENT`；不进入 OpenAPI，不在默认运行环境暴露。
@@ -99,7 +150,7 @@
 - 验证结果：
   - AT-11 已有后端集成测试和新增 Playwright 浏览器级回归；M2 发布门槛中已实现功能的关键 E2E 覆盖推进到 AT-01/AT-09/AT-11。
   - 本地 `dev` 已提交 AT-11 成果，`main` 已快进合并到同一提交。
-  - `git push origin dev main` 被安全审查拦截，需要用户明确授权推送到 `https://github.com/paopao-01/personal-workspace.git`。
+  - 用户随后明确授权推送到 `https://github.com/paopao-01/personal-workspace.git`，`dev` 与 `main` 已成功推送到远程。
   - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试结果。
   - 首次未提权运行 E2E/Maven 时，沙箱拒绝删除或写入 `backend/target` 临时文件；提权后验证通过。
 - 已知问题：

@@ -8,6 +8,7 @@ import { ApplicationCreatePage } from '@/features/applications/ApplicationCreate
 import { ApplicationDetailPage } from '@/features/applications/ApplicationDetailPage'
 import { InterviewDetailPage } from '@/features/interviews/InterviewDetailPage'
 import { InterviewListPage } from '@/features/interviews/InterviewListPage'
+import { InterviewReviewPage } from '@/features/reviews/InterviewReviewPage'
 
 export function AppRouter() {
   return (
@@ -28,6 +29,7 @@ export function AppRouter() {
         />
         <Route path="/interviews" element={<InterviewListPage />} />
         <Route path="/interviews/:interviewId" element={<InterviewDetailPage />} />
+        <Route path="/interviews/:interviewId/review" element={<InterviewReviewPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
