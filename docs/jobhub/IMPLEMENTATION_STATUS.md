@@ -74,7 +74,7 @@
 ### 窗口 2026-08-28-2
 
 - 目标：在 `dev` 分支补齐 AT-11 面试改期替换提醒 Playwright E2E；验证无问题后合并回 `main` 并推送。
-- 状态：**DONE**。
+- 状态：**PARTIAL**（开发、验证、本地 `dev -> main` 合并完成；远程推送待用户明确授权具体 GitHub 地址）。
 - 已完成：
   - 新增 `frontend/e2e/at-11-interview-reschedule-reminders.spec.ts`：通过 API 创建岗位和投递、真实 UI 安排面试、断言默认 3 条 `PENDING` 提醒，使用 E2E-only 测试辅助将一条旧提醒标为 `SENT`，再通过真实 UI 改期并断言 `startsAt`/`eventTimeZone` 更新、旧 `PENDING` 提醒变为 `CANCELED`、新时间 3 条 `PENDING` 提醒存在、`SENT` 历史提醒保留。
   - 新增 `backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`：仅在 `e2e` profile 启用，用于测试夹具把提醒标为 `SENT`；不进入 OpenAPI，不在默认运行环境暴露。
@@ -98,6 +98,8 @@
   - `cd frontend && npm run e2e` -> 通过，AT-01、AT-09、AT-11 共 3 tests passed。
 - 验证结果：
   - AT-11 已有后端集成测试和新增 Playwright 浏览器级回归；M2 发布门槛中已实现功能的关键 E2E 覆盖推进到 AT-01/AT-09/AT-11。
+  - 本地 `dev` 已提交 AT-11 成果，`main` 已快进合并到同一提交。
+  - `git push origin dev main` 被安全审查拦截，需要用户明确授权推送到 `https://github.com/paopao-01/personal-workspace.git`。
   - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试结果。
   - 首次未提权运行 E2E/Maven 时，沙箱拒绝删除或写入 `backend/target` 临时文件；提权后验证通过。
 - 已知问题：
