@@ -6,9 +6,9 @@
 
 - 项目阶段：M2 收尾打磨中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；E2E 回归仍待补齐）。
 - 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 投递状态筛选代码与后端测试已存在，月视图/列表视图切换已完成，Playwright E2E 仍待后续窗口。
-- 当前任务：Playwright E2E 已覆盖 AT-01 与 AT-09；下一窗口建议继续覆盖 AT-11 面试改期替换提醒。
+- 当前任务：Playwright E2E 已覆盖 AT-01 与 AT-09；下一窗口已确定继续覆盖 AT-11 面试改期替换提醒。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-27。
+- 最后更新：2026-08-28。
 
 ## 2. 已完成内容
 
@@ -70,6 +70,41 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-28-1
+
+- 目标：确定下一窗口任务，并明确后续开发分支流程：在 `dev` 分支开发，验证无问题后合并到 `main`，再推送远程仓库。
+- 状态：**DONE**。
+- 已完成：
+  - 按顺序恢复上下文并核对当前代码/测试现状。
+  - 确认 `dev`、`main`、`origin/dev`、`origin/main` 当前均指向 `4727525 test(frontend): add Playwright AT-09 e2e`。
+  - 明确下一窗口只补 `AT-11 面试改期会替换未触发提醒` 的 Playwright E2E。
+  - 确认后端已有 `InterviewIntegrationTest.AT11_reschedule_cancelsPendingAndPreservesSent` 集成测试；下一窗口应补浏览器级回归，不重复改业务范围。
+- 未完成：
+  - 尚未新增 AT-11 Playwright E2E。
+  - Playwright 尚未覆盖 AT-15、AT-18、AT-20。
+  - M3 复盘/问题/知识点/学习任务与 M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `git status --short --branch` -> 当前在 `dev...origin/dev`，仅有本交接文档修改。
+  - `git branch --all --verbose` -> `dev`、`main`、`origin/dev`、`origin/main` 均在 `4727525`。
+  - 已扫描 `frontend/e2e`、`backend/src/test`、`backend/src/main/java/com/jobhub/interview`、`frontend/src/features/interviews` 中的 reschedule/reminder 相关实现。
+- 验证结果：
+  - 本窗口只做任务确认和交接更新，未运行后端/前端测试。
+  - 分支流程已确认：下一窗口从 `dev` 开始开发；验证通过后提交到 `dev`，合并到 `main`，推送 `dev` 与 `main` 到远程。
+- 已知问题：
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库状态判断。
+  - 本机沙箱对 `.git/index.lock` 写入受限；切换分支/提交/合并/推送可能需要提权执行。
+- 下一窗口只做：
+  - 在 `dev` 分支新增 `frontend/e2e/at-11-interview-reschedule-reminders.spec.ts`，覆盖 AT-11：创建未来 `SCHEDULED` 面试及默认提醒，先将一条旧提醒通过测试辅助置为 `SENT`，执行真实 UI/API 改期，断言面试 `startsAt`/`eventTimeZone` 更新、旧 `PENDING` 提醒为 `CANCELED`、新时间 3 条 `PENDING` 提醒存在、`SENT` 历史提醒保留。
+  - 验证命令优先运行：`cd frontend && npm run lint`、`cd frontend && npm run typecheck`、`cd frontend && npm run build`、`cd backend && mvn test "-Dtest=InterviewIntegrationTest"`、`cd frontend && npm run e2e`。
+  - 验证通过后提交到 `dev`，合并到 `main`，推送 `dev` 与 `main` 到远程仓库。
+- 不要重复做：
+  - 不要重建 Playwright 基础设施、不要改回并发 E2E worker；当前 E2E 使用 15173/18080 独立端口、临时库和单 worker。
+  - 不要重做 AT-01 或 AT-09 的 E2E 覆盖，除非实际回归失败。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-27-4
 
