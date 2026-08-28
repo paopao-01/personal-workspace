@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M2 收尾打磨中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；E2E 回归仍待补齐）。
-- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）进行中。AT-05~AT-14 后端已完成；面试与首页工作台主要路径可用。P05 投递状态筛选代码与后端测试已存在，月视图/列表视图切换已完成，Playwright E2E 仍待后续窗口。
-- 当前任务：Playwright E2E 已覆盖 AT-01 与 AT-09；下一窗口已确定继续覆盖 AT-11 面试改期替换提醒。
+- 项目阶段：M2 收尾完成，准备进入 M3（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11）。
+- 当前里程碑：M2（投递状态机、下一步行动、面试与提醒）已完成主要验收覆盖；下一窗口进入 M3（复盘、问题、知识点、学习任务）。
+- 当前任务：AT-11 面试改期替换提醒 Playwright E2E 已完成；下一窗口建议实现 AT-15 快速复盘最小录入。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-28。
 
@@ -70,6 +70,48 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-28-2
+
+- 目标：在 `dev` 分支补齐 AT-11 面试改期替换提醒 Playwright E2E；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `frontend/e2e/at-11-interview-reschedule-reminders.spec.ts`：通过 API 创建岗位和投递、真实 UI 安排面试、断言默认 3 条 `PENDING` 提醒，使用 E2E-only 测试辅助将一条旧提醒标为 `SENT`，再通过真实 UI 改期并断言 `startsAt`/`eventTimeZone` 更新、旧 `PENDING` 提醒变为 `CANCELED`、新时间 3 条 `PENDING` 提醒存在、`SENT` 历史提醒保留。
+  - 新增 `backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`：仅在 `e2e` profile 启用，用于测试夹具把提醒标为 `SENT`；不进入 OpenAPI，不在默认运行环境暴露。
+  - 修改 `frontend/e2e/start-e2e-backend.ps1`：E2E 后端启动时增加 `--spring.profiles.active=e2e`。
+  - 修正 AT-11 E2E 中按钮选择器歧义和后端 UTC 字符串毫秒格式差异，完整回归已通过。
+- 未完成：
+  - Playwright 尚未覆盖 AT-15、AT-18、AT-20。
+  - M3 复盘/问题/知识点/学习任务尚未实现。
+  - M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 新增：`backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`。
+  - 新增：`frontend/e2e/at-11-interview-reschedule-reminders.spec.ts`。
+  - 修改：`frontend/e2e/start-e2e-backend.ps1`。
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，174 modules。
+  - `cd backend && mvn test "-Dtest=InterviewIntegrationTest"` -> BUILD SUCCESS，6 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，35 tests，0 failures，0 errors。
+  - `cd frontend && npm run e2e` -> 通过，AT-01、AT-09、AT-11 共 3 tests passed。
+- 验证结果：
+  - AT-11 已有后端集成测试和新增 Playwright 浏览器级回归；M2 发布门槛中已实现功能的关键 E2E 覆盖推进到 AT-01/AT-09/AT-11。
+  - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试结果。
+  - 首次未提权运行 E2E/Maven 时，沙箱拒绝删除或写入 `backend/target` 临时文件；提权后验证通过。
+- 已知问题：
+  - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
+  - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
+- 下一窗口只做：
+  - 进入 M3，优先实现 AT-15 快速复盘最小录入：一场 `COMPLETED` 面试且尚无复盘时，支持保存 `interviewResult=FAILED`、至少一道问题和 `answerStatus=UNANSWERED`，复盘状态为 `DRAFT`，且未填写我的回答、参考答案或错误原因不阻断保存。
+  - 范围建议：先核对 OpenAPI 中 `PUT /interviews/{id}/review`、`GET /interviews/{id}/review`、`POST /reviews/{id}/questions` 是否满足 AT-15；如契约无需变化，补后端 review 模块最小实现和集成测试，再补前端 P08 快速复盘入口与页面。
+  - 验证命令优先运行：`cd backend && mvn test "-Dtest=ReviewIntegrationTest"`、`cd backend && mvn test`、`cd frontend && npm run lint`、`cd frontend && npm run typecheck`、`cd frontend && npm run build`；若前端路径完成，再补并运行 AT-15 Playwright E2E。
+- 不要重复做：
+  - 不要重建 Playwright 基础设施、不要改回并发 E2E worker；当前 E2E 使用 15173/18080 独立端口、临时库和单 worker。
+  - 不要重做 AT-01、AT-09 或 AT-11 的 E2E 覆盖，除非实际回归失败。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
+  - 不要提前实现 AT-18 任务创建、AT-20 准备包、AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-28-1
 

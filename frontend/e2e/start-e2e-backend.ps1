@@ -27,4 +27,4 @@ foreach ($dbFile in $dbFiles) {
 }
 
 $env:JOBHUB_DB_PATH = "./target/jobhub-e2e.db"
-mvn -f (Join-Path $backendDir "pom.xml") spring-boot:run "-Dspring-boot.run.arguments=--server.port=18080"
+mvn -f (Join-Path $backendDir "pom.xml") spring-boot:run "-Dspring-boot.run.arguments=--server.port=18080 --spring.profiles.active=e2e"
