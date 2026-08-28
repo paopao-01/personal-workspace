@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  completeReview,
   createReviewQuestion,
   saveReviewDraft,
   type InterviewQuestion,
@@ -37,6 +38,23 @@ export function useCreateReviewQuestion() {
     onSuccess: (_question, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['reviews', 'interview', variables.interviewId],
+      })
+    },
+  })
+}
+
+export function useCompleteReview() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    InterviewReview,
+    Error,
+    { reviewId: string; interviewId: string; version: number }
+  >({
+    mutationFn: ({ reviewId, version }) => completeReview(reviewId, version),
+    onSuccess: (review) => {
+      queryClient.setQueryData(['reviews', 'interview', review.interviewId], review)
+      queryClient.invalidateQueries({
+        queryKey: ['reviews', 'interview', review.interviewId],
       })
     },
   })

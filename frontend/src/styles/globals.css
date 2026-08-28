@@ -900,6 +900,16 @@ button {
   flex-shrink: 0;
 }
 
+.success-banner {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--success-soft);
+  border: 1px solid var(--success);
+  color: var(--success);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
 /* ===== 字段错误 ===== */
 .field-error-text {
   color: var(--danger);

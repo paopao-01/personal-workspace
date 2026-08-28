@@ -36,4 +36,13 @@ public class ReviewController {
 		return ResponseEntity.status(HttpStatus.CREATED).body(InterviewQuestionResponse.from(
 			service.addQuestion(id, request.content(), request.answerStatus(), request.type(), knowledgePointIds)));
 	}
+
+	@PostMapping("/reviews/{id}/complete")
+	public ResponseEntity<InterviewReviewResponse> complete(@PathVariable String id,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		return ResponseEntity.ok(InterviewReviewResponse.from(service.complete(id, version)));
+	}
 }

@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M3 起步中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15）。
-- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15 后端、前端和 E2E 已完成。
-- 当前任务：AT-15 快速复盘最小录入已完成；下一窗口建议实现 AT-16 完成复盘最小条件。
+- 项目阶段：M3 进行中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16）。
+- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15、AT-16 后端、前端和 E2E 路径已完成。
+- 当前任务：AT-16 完成复盘最小条件已完成；下一窗口建议实现 AT-17 薄弱知识点统计。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-28。
 
@@ -70,6 +70,57 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-28-4
+
+- 目标：在 `dev` 分支实现 AT-16 完成复盘最小条件；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增后端专用命令：`POST /api/reviews/{reviewId}/complete`，要求 `If-Match-Version`，通过乐观锁把 `DRAFT` 复盘转为 `COMPLETED`。
+  - 完成规则由后端强制：复盘必须为 `DRAFT`，必须有面试结果；若没有问题且 `noQuestionsRecorded=false`，返回 `422 BUSINESS_RULE_ERROR` 且保持草稿无副作用；有至少一题或明确“未记录到问题”后可完成。
+  - 已有 `COMPLETED` 复盘当前切片不允许继续走保存草稿或新增问题，避免通用编辑绕过专用状态命令；后续若实现 reopen，再按状态机补完整编辑规则。
+  - 前端快速复盘页新增“完成复盘”动作：展示服务端业务规则错误，完成成功后显示“已完成”状态并禁用当前切片尚未支持的编辑入口。
+  - 新增 AT-16 Playwright E2E：先构造无问题草稿并验证完成返回 422，再保存一道含 `answerStatus` 的问题并完成复盘。
+- 未完成：
+  - AT-17 薄弱知识点统计、AT-18 问题创建任务、AT-19 任务完成不改能力尚未实现。
+  - `COMPLETED -> reopen -> DRAFT` 尚未实现；当前完成后编辑路径暂时收口，后续需要按状态机补专用 reopen。
+  - M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 修改：`backend/src/main/java/com/jobhub/review/api/ReviewController.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/application/ReviewService.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/infrastructure/ReviewMapper.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/ReviewIntegrationTest.java`。
+  - 修改：`frontend/src/api/reviews/reviewApi.ts`、`frontend/src/api/reviews/useReviewMutations.ts`。
+  - 修改：`frontend/src/features/reviews/InterviewReviewPage.tsx`、`frontend/src/styles/globals.css`。
+  - 新增：`frontend/e2e/at-16-complete-review.spec.ts`。
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReviewIntegrationTest"` -> BUILD SUCCESS，2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，37 tests，0 failures，0 errors。
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，179 modules。
+  - `cd frontend && npx playwright test e2e/at-16-complete-review.spec.ts --reporter=list` -> 测试条目显示 1 passed；但 Playwright webServer 收尾未返回，手动中断 runner，退出码不可作为成功记录。
+  - `cd frontend && npm run e2e` -> AT-01、AT-09、AT-11、AT-15、AT-16 共 5 个测试条目均显示 `ok`；但 Playwright webServer 收尾未返回，手动中断 runner，退出码不可作为成功记录。
+- 验证结果：
+  - AT-16 后端规则已有集成测试覆盖；非法 complete 无数据副作用。
+  - AT-16 浏览器路径已观察到通过；E2E runner 收尾卡住是测试基础设施/Windows webServer 进程退出问题，不是 AT-16 用例断言失败。
+  - OpenAPI 契约已包含 complete endpoint 和 schema，本窗口未修改 OpenAPI。
+  - V1 已有复盘/问题表，本窗口未新增数据库迁移。
+- 已知问题：
+  - Playwright 在本窗口多次于所有测试条目输出完成后卡在 webServer 收尾阶段；端口 15173/18080 已确认未遗留监听，但命令未自然返回，需要后续单独排查测试基础设施。
+  - E2E 运行期间仍输出 React Router v7 future flag 警告，以及 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响当前测试条目结果。
+  - `git status` 会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；未影响仓库内文件检查。
+  - Playwright E2E 目前只有 Chromium 项目；跨浏览器和移动 viewport 未纳入本切片。
+  - `InterviewResponse` 实现仍未返回 OpenAPI `InterviewDetail.reviewStatus` 扩展字段；当前通过独立 review API 查询状态，不影响 AT-16。
+- 下一窗口只做：
+  - 实现 AT-17 薄弱知识点统计：`GET /api/knowledge-points/weak`，按时间范围统计 `UNANSWERED=1`、`PARTIALLY_ANSWERED=0.5`、`FULLY_ANSWERED=0`，并返回可下钻原始问题。
+  - 如需支持问题回答状态变更来验证 AT-17 后半段，可补最小 `PUT /api/interview-questions/{id}` 的 `answerStatus` 更新路径；不要扩展到任务创建。
+  - 补后端集成测试覆盖统计和回答状态修改后的重新统计；前端若增加页面入口，保持最小可观察路径。
+- 不要重复做：
+  - 不要重建 review 草稿、问题创建或完成复盘基础能力；AT-15、AT-16 已完成。
+  - 不要提前实现 AT-18 问题创建任务、AT-20 准备包、AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-28-3
 

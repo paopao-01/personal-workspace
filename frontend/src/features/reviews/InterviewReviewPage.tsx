@@ -2,7 +2,11 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { isApiError, isNetworkError } from '@/api/errors'
 import { useInterview } from '@/api/interviews/useInterviewQueries'
-import { useCreateReviewQuestion, useSaveReviewDraft } from '@/api/reviews/useReviewMutations'
+import {
+  useCompleteReview,
+  useCreateReviewQuestion,
+  useSaveReviewDraft,
+} from '@/api/reviews/useReviewMutations'
 import { useInterviewReview } from '@/api/reviews/useReviewQueries'
 import type { AnswerStatus } from '@/api/reviews/reviewApi'
 import { pushToast } from '@/components/feedback/toastStore'
@@ -27,6 +31,7 @@ export function InterviewReviewPage() {
   const reviewQuery = useInterviewReview(interviewId)
   const saveDraft = useSaveReviewDraft()
   const createQuestion = useCreateReviewQuestion()
+  const completeReview = useCompleteReview()
   const review = reviewQuery.data
   const [interviewResult, setInterviewResult] = useState<'PENDING' | 'PASSED' | 'FAILED' | ''>('')
   const [questionContent, setQuestionContent] = useState('')
@@ -34,6 +39,7 @@ export function InterviewReviewPage() {
   const [noQuestionsRecorded, setNoQuestionsRecorded] = useState<boolean | null>(null)
   const [overallFeeling, setOverallFeeling] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   if (interviewQuery.isLoading || reviewQuery.isLoading) {
     return <Spinner label="加载复盘…" />
@@ -52,22 +58,26 @@ export function InterviewReviewPage() {
 
   const interview = interviewQuery.data
   const cannotReview = interview.scheduleStatus !== 'COMPLETED'
-  const pending = saveDraft.isPending || createQuestion.isPending
+  const isCompletedReview = review?.status === 'COMPLETED'
+  const pending = saveDraft.isPending || createQuestion.isPending || completeReview.isPending
   const selectedInterviewResult = interviewResult || review?.interviewResult || 'FAILED'
   const selectedNoQuestionsRecorded = noQuestionsRecorded ?? review?.noQuestionsRecorded ?? false
   const selectedOverallFeeling = overallFeeling ?? review?.overallFeeling ?? ''
 
   const reportError = (caught: Error) => {
     if (isApiError(caught) || isNetworkError(caught)) {
+      setActionError(caught.message)
       pushToast(caught.message, 'error')
       return
     }
+    setActionError('保存复盘失败，请稍后重试')
     pushToast('保存复盘失败，请稍后重试', 'error')
   }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
+    setActionError(null)
     const content = questionContent.trim()
     if (!selectedNoQuestionsRecorded && !content) {
       setError('请填写至少一道问题，或勾选未记录到问题')
@@ -93,6 +103,26 @@ export function InterviewReviewPage() {
       }
       await reviewQuery.refetch()
       pushToast('快速复盘已保存')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const complete = async () => {
+    setError(null)
+    setActionError(null)
+    if (!review) {
+      setActionError('请先保存复盘草稿')
+      return
+    }
+    try {
+      await completeReview.mutateAsync({
+        reviewId: review.id,
+        interviewId: interview.id,
+        version: review.version,
+      })
+      await reviewQuery.refetch()
+      pushToast('复盘已完成')
     } catch (caught) {
       reportError(caught as Error)
     }
@@ -135,6 +165,16 @@ export function InterviewReviewPage() {
           <span>只有已完成的面试可以保存复盘。</span>
         </div>
       ) : null}
+      {isCompletedReview ? (
+        <div className="success-banner">
+          <span>复盘已完成，当前切片暂不支持重新打开后编辑。</span>
+        </div>
+      ) : null}
+      {actionError ? (
+        <div className="conflict-banner">
+          <span>{actionError}</span>
+        </div>
+      ) : null}
 
       <section className="card">
         <div className="card-header">
@@ -149,7 +189,7 @@ export function InterviewReviewPage() {
                   onChange={(event) =>
                     setInterviewResult(event.target.value as typeof interviewResult)
                   }
-                  disabled={cannotReview}
+                  disabled={cannotReview || isCompletedReview}
                 >
                   <option value="FAILED">未通过</option>
                   <option value="PASSED">通过</option>
@@ -160,7 +200,7 @@ export function InterviewReviewPage() {
                 <Select
                   value={answerStatus}
                   onChange={(event) => setAnswerStatus(event.target.value as AnswerStatus)}
-                  disabled={cannotReview || selectedNoQuestionsRecorded}
+                  disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
                 >
                   <option value="UNANSWERED">{answerStatusLabel.UNANSWERED}</option>
                   <option value="PARTIALLY_ANSWERED">{answerStatusLabel.PARTIALLY_ANSWERED}</option>
@@ -174,7 +214,7 @@ export function InterviewReviewPage() {
                 onChange={(event) => setQuestionContent(event.target.value)}
                 rows={4}
                 maxLength={10000}
-                disabled={cannotReview || selectedNoQuestionsRecorded}
+                disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
                 aria-invalid={Boolean(error)}
               />
             </Field>
@@ -183,7 +223,7 @@ export function InterviewReviewPage() {
                 type="checkbox"
                 checked={selectedNoQuestionsRecorded}
                 onChange={(event) => setNoQuestionsRecorded(event.target.checked)}
-                disabled={cannotReview}
+                disabled={cannotReview || isCompletedReview}
               />
               未记录到问题
             </label>
@@ -193,11 +233,23 @@ export function InterviewReviewPage() {
                 onChange={(event) => setOverallFeeling(event.target.value)}
                 rows={3}
                 maxLength={5000}
-                disabled={cannotReview}
+                disabled={cannotReview || isCompletedReview}
               />
             </Field>
             <div className="flex-row" style={{ justifyContent: 'flex-end' }}>
-              <Button variant="primary" type="submit" disabled={cannotReview || pending}>
+              <Button
+                variant="default"
+                type="button"
+                disabled={cannotReview || pending || !review || isCompletedReview}
+                onClick={complete}
+              >
+                {completeReview.isPending ? '完成中…' : '完成复盘'}
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={cannotReview || isCompletedReview || pending}
+              >
                 {pending ? '保存中…' : '保存复盘'}
               </Button>
             </div>

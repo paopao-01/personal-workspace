@@ -19,4 +19,7 @@ public interface ReviewMapper {
 
 	@Update("UPDATE interview_review SET updated_at=#{now}, version=version+1 WHERE id=#{id} AND deleted_at IS NULL")
 	int bumpVersion(@Param("id") String id, @Param("now") String now);
+
+	@Update("UPDATE interview_review SET review_status='COMPLETED', updated_at=#{now}, version=version+1 WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int complete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
 }

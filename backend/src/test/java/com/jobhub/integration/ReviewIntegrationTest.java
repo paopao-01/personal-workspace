@@ -44,6 +44,47 @@ class ReviewIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrStr(saved, "questions", 0, "answerStatus")).isEqualTo("UNANSWERED");
 	}
 
+	@Test
+	void AT16_completeReviewRequiresQuestionOrExplicitNoQuestionsRecorded() {
+		String interviewId = completedInterview();
+		String reviewBody = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/review"),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		).getBody();
+		String reviewId = JsonProbe.str(reviewBody, "id");
+		long version = JsonProbe.lng(reviewBody, "version");
+
+		ResponseEntity<String> invalidComplete = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/complete"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(version)),
+			String.class
+		);
+
+		assertThat(invalidComplete.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		assertThat(JsonProbe.str(invalidComplete.getBody(), "code")).isEqualTo("BUSINESS_RULE_ERROR");
+		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody(), "status"))
+			.isEqualTo("DRAFT");
+
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"Redis 缓存一致性如何保证？\",\"answerStatus\":\"UNANSWERED\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		String updatedReview = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+
+		ResponseEntity<String> completed = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/complete"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(updatedReview, "version")),
+			String.class
+		);
+
+		assertThat(completed.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.str(completed.getBody(), "status")).isEqualTo("COMPLETED");
+		assertThat(JsonProbe.arraySize(completed.getBody(), "questions")).isEqualTo(1);
+	}
+
 	private String completedInterview() {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("复盘科技", "Java 后端工程师")), String.class).getBody(), "id");

@@ -43,3 +43,15 @@ export async function createReviewQuestion(
   )
   return res.data
 }
+
+export async function completeReview(
+  reviewId: string,
+  version: number,
+): Promise<InterviewReview> {
+  const res = await apiClient.post<InterviewReview>(
+    `/reviews/${reviewId}/complete`,
+    {},
+    { headers: ifMatchHeader(version) },
+  )
+  return res.data
+}
