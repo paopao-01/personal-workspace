@@ -1138,3 +1138,23 @@ button {
   gap: 8px;
   align-items: flex-start;
 }
+
+/* ===== 项目与证据 ===== */
+.evidence-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.evidence-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}

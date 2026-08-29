@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环和面试准备包聚合已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20）。
-- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20 已完成，AT-21 的“无资料显示待补充/不伪造能力分数”已在准备包后端覆盖，项目/证据 CRUD、最近删除和导出尚未实现。
-- 当前任务：AT-20 面试准备包聚合且可追溯已完成；下一窗口建议实现 P10 最小项目案例与证据引用 CRUD，为准备包提供用户可维护的真实资料来源。
+- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包聚合和 P10 项目案例/证据引用 CRUD 已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20 和 P10 项目/证据 CRUD）。
+- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20 已完成，AT-21 的“无资料显示待补充/不伪造能力分数”已在准备包后端覆盖，项目/证据 CRUD 已完成，最近删除（AT-23）和完整 JSON 导出（AT-24）尚未实现。
+- 当前任务：P10 最小项目案例与证据引用 CRUD 已完成；下一窗口建议实现 AT-23 最近删除（软删除 + `GET /api/trash` + 恢复保留引用关系）或 AT-24 JSON 导出。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -51,7 +51,7 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard 模块业务代码（约 74 个 Java 文件：1 主类 + common 19 + job 34 + application 18 + dashboard 2；`JobMapper` 新增 selectByIds）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence 模块业务代码（`com.jobhub` 主代码约 171 个 Java 文件，其中 evidence 模块 16 个：domain 3、infrastructure 2、application 4、api 7）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
@@ -70,6 +70,56 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `PARTIAL` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-4
+
+- 目标：在 `dev` 分支实现 P10 最小项目案例与证据引用 CRUD 和 `/projects` 页面；验证无问题后合并回 `main`。
+- 状态：**DONE**（推送远程待用户确认）。
+- 已完成：
+  - OpenAPI 细化：`ProjectCaseSummary` 新增可选 `result` 字段（含“不生成虚构指标”描述）。原因：`ProjectCaseCreateRequest` 有可选 `result` 而响应缺失该字段，全字段覆盖 PUT 会在每次编辑时静默清空 `result_text`；属非破坏性细化（先例：`manualMatchStatus`），已重新生成前端类型。
+  - 新增后端 `evidence` 模块四层：`GET/POST /api/projects`、`PUT /api/projects/{projectId}`、`GET/POST /api/evidence`、`PUT /api/evidence/{evidenceId}`，与 OpenAPI 端点一一对应（GET 返回数组、无分页、无 DELETE——删除属后续 AT-23）。
+  - PUT 要求 `If-Match-Version`（缺失返回 400），POST/PUT 由全局幂等拦截器覆盖；更新失败（0 行受影响）返回 `409 VERSION_CONFLICT`；资源不存在返回 404。
+  - 项目更新按全字段覆盖并同步 `project_evidence` 关联；证据更新同步 `skill_evidence`；引用不存在或已软删的 evidence/skill 返回 `422 BUSINESS_RULE_ERROR` 且事务回滚无副作用。
+  - `urlOrPath` 仅作为文本保存，不读取、不扫描、不上传，不写入日志；未实现任何 DELETE，未触碰 `deleted_at` 字段。
+  - 前端新增 `api/projects` 三件套和 `/projects` 页面（项目案例 + 证据引用两个区块，创建/编辑表单、证据多选关联、urlOrPath 隐私提示“应用不会自动读取、扫描或上传被引用的文件”）；侧边栏新增“项目与证据”入口（`/skills` 保持禁用）。
+  - 准备包页项目案例区改为可跳转 `/projects`，无项目案例时空状态提供“打开项目与证据”操作（修复上一窗口已知问题）。
+  - 新增 `frontend/e2e/projects-evidence-crud.spec.ts`：真实 UI 创建证据（含 urlOrPath 文本引用）→ 创建项目并关联证据 → 编辑证据名称后项目关联引用随查询刷新。
+  - 修复 `at-15-quick-review.spec.ts` 中失效断言：已记录问题行的回答状态自窗口 2026-08-29-1 起渲染为行内下拉框，原 `getByText('未答出').last()` 命中隐藏 `<option>`，改为断言 select 的 `UNANSWERED` 值。该回归与本次改动无关，属既有 E2E 失效修复。
+- 未完成：
+  - AT-23 最近删除（软删除入口、`GET /api/trash`、恢复后引用 ID 不变）、AT-24 完整 JSON 导出尚未实现；本模块无删除端点。
+  - 证据 `skillIds` 仅 API 支持，UI 暂不提供技能选择（技能列表接口未实现）；技能可见性无独立 `/skills` 页面。
+  - 准备包项目匹配仍依赖 `requirement_skill -> skill_evidence -> project_evidence` 链路；用户手工创建的项目如未通过该链路关联已确认要求，不会出现在准备包中。
+  - `ProjectCaseSummary.result` 现已回显，但历史窗口 seed 的测试数据仍由 e2e 夹具写入。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`（ProjectCaseSummary.result）、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 新增：`backend/src/main/java/com/jobhub/evidence/domain/{EvidenceType,ProjectCase,Evidence}.java`、`infrastructure/{ProjectMapper,EvidenceMapper}.java`、`application/{ProjectCreateCommand,EvidenceCreateCommand,ProjectService,EvidenceService}.java`、`api/{ProjectCaseCreateRequest,EvidenceCreateRequest,EvidenceReferenceResponse,ProjectCaseSummaryResponse,EvidenceResponse,ProjectController,EvidenceController}.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/ProjectEvidenceIntegrationTest.java`。
+  - 新增：`frontend/src/api/projects/{projectApi,useProjectQueries,useProjectMutations}.ts`、`frontend/src/features/projects/{ProjectsPage.tsx,projectLabels.ts}`。
+  - 修改：`frontend/src/api/generated/types.ts`（gen-types 重新生成）、`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`、`frontend/src/features/interviews/InterviewPreparationPage.tsx`、`frontend/src/styles/globals.css`。
+  - 新增：`frontend/e2e/projects-evidence-crud.spec.ts`；修改：`frontend/e2e/at-15-quick-review.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ProjectEvidenceIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，45 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过（ProjectCaseSummary 含 result）。
+  - `cd frontend && npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过，生产构建成功。
+  - `cd frontend && npx playwright test e2e/projects-evidence-crud.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 8 tests passed（AT-01/09/11/15/16/18/20 + P10），runner 自然返回。
+- 验证结果：
+  - P10 后端与浏览器路径均已覆盖；项目案例与证据引用可由用户在 UI 中维护并进入准备包数据链路。
+  - 本窗口仅细化 OpenAPI 的 `ProjectCaseSummary.result`，其余端点契约未变。
+  - 本窗口未新增数据库迁移；V1 既有 `project`、`evidence`、`project_evidence`、`skill_evidence`、`skill` 表可支撑本切片。
+  - E2E 首次运行需重新安装 Chromium（本机浏览器缓存被清理），`npx playwright install chromium` 后恢复；下载曾一次卡顿，重试成功。
+- 已知问题：
+  - 全量 E2E 共享同一临时库，跨用例数据可见；`projects-evidence-crud.spec.ts` 因此不断言全局空状态，仅用唯一后缀隔离数据。
+  - E2E 仍输出 React Router v7 future flag 警告和 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现 AT-23 最近删除：为 project/evidence（及既有可删实体）补软删除命令与 `GET /api/trash`、`POST /api/trash/{id}/restore`，删除前展示直接/间接影响，恢复后引用 ID 不变；先核对 OpenAPI 既有 trash 契约再实现。
+  - 或实现 AT-24 JSON 导出（`POST /api/data-exports`），排除令牌、密钥、idempotency_record 和未确认 AI 内容。
+- 不要重复做：
+  - 不要重建 evidence 模块 CRUD、`/projects` 页面或 AT-20 准备包聚合。
+  - 不要在本切片上追加 DELETE 端点或绕过 trash 体系直接物理删除；不要提前实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-3
 

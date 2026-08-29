@@ -1219,6 +1219,7 @@ components:
         scenario: { type: string }
         approach: { type: string }
         problemSolved: { type: string }
+        result: { type: string, nullable: true, description: 结果或量化数据，可后补；仅保存用户确认的文本，不生成虚构指标 }
         evidenceRefs: { type: array, items: { $ref: '#/components/schemas/EvidenceReference' } }
         version: { type: integer }
     ProjectCaseCreateRequest:
