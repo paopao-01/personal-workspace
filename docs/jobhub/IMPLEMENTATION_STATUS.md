@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成五个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并。**OpenAPI 声明的全部端点均已实现，契约存量清零。**
+- 项目阶段：P1（V0.2）进行中，已完成六个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告（V3 迁移新增 match_report 表，规则计算 MATCH_RULE_V1，快照 + 指纹过期标记）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口起进入 P1 新功能，候选（按 PRD V0.2 规划）：可解释匹配分数、完整复盘分析、简历定制草稿、数据导入、浏览器通知/邮件提醒（注意 AGENTS.md 约束：邮件/推送属 P1 且需用户明确要求）——开始前与用户确认优先级。
+- 当前任务：下一窗口候选（与用户确认后开工）：完整复盘分析（P08 附加字段 + 跨面试聚合，规模较小）、数据导入与完整恢复（依赖导出格式，自包含）、简历定制草稿（需先建 AI 任务基础设施，规模最大，需用户明确同意接入 AI）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,50 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-12
+
+- 目标：P1 第六切片——可解释岗位匹配报告（PRD 9.1，用户选定方向）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 Flyway 迁移 `V3__create_match_report.sql`（match_report 表：job_id、rule_version、weights_json、report_json 快照、input_fingerprint、generated_at + job/generated 索引；V1/V2 未改动）。
+  - OpenAPI 新增：`POST /jobs/{jobId}/match-reports`（201 生成快照）、`GET /jobs/{jobId}/match-reports/latest`（200 最新报告 + stale）与 `MatchReport`/`MatchStatusSummary`/`MatchScoreBreakdown`/`MatchReportItem` schema。
+  - 计分规则 MATCH_RULE_V1：必须要求与加分要求分别汇总；权重 MUST=3、BONUS=1；满足=1、自报无证据=0.5、未满足=0；**缺少资料/待确认的要求不计入分母**（PRD 9.1“缺少资料不按零分处理”）；输出加权分数片段（numerator/denominator）而非综合百分比。
+  - 投递建议（不自动做决定）：NEED_MORE_INFO（无已确认必须要求或分母为 0）/ LOW_MATCH（有未满足必须项）/ STRONG_MATCH（全部必须要求有证据）/ PARTIAL_MATCH，均附理由列表。
+  - 过期标记：生成时保存输入指纹（SHA-256 over 排序后的 类型|标准名|状态 行）；GET latest 时重算对比，不一致则 stale=true（历史快照不修改）；重新生成即清除。
+  - 前端：`matchReportApi` + hooks（404 视为未生成）；岗位详情页新增“匹配报告”区块——建议徽章与理由、MUST/BONUS 加权分数与汇总、逐项状态/原文/理由列表、过期横幅 + 重新生成按钮。
+  - 集成测试 `MatchReportIntegrationTest` 3 用例：生成（汇总/计分 4.5/9/LOW_MATCH）；输入变化 → stale=true → 重新生成 → stale=false 且汇总更新（2 项有证据）；无确认要求 → NEED_MORE_INFO + 未知岗位 404。
+  - E2E `frontend/e2e/p1-match-report.spec.ts`：API 造两个不同匹配状态的 MUST 候选 → UI 生成报告 → 建议与分数断言 → API 修改输入 → stale 横幅 → 重新生成后消失。
+- 未完成：
+  - 匹配报告历史列表查询（仅 latest 端点）；快照对比视图留待有需求时补契约。
+  - “技能、经验和项目证据分开展示”以需求类型分组近似（EXPERIENCE 类型 → 经验），证据引用明细仍在差距清单展示；如需按证据维度重新分组需补契约。
+  - 证据状态仍为存储维度，未自动推导；interviewPerformance 维度无数据源。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/src/features/jobs/JobDetailPage.tsx`。
+  - 新增：`backend/src/main/resources/db/migration/V3__create_match_report.sql`、`backend/src/main/java/com/jobhub/job/{domain/MatchReport,infrastructure/MatchReportMapper,application/MatchReportContent,application/MatchReportService,api/MatchReportResponse,api/JobMatchReportController}.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/MatchReportIntegrationTest.java`、`frontend/src/api/jobs/{matchReportApi,useMatchReportQueries}.ts`、`frontend/src/features/jobs/components/MatchReportSection.tsx`、`frontend/e2e/p1-match-report.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=MatchReportIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，63 tests，0 failures，0 errors（Flyway V1→V3 迁移通过）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-match-report.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 16 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen/skills/merge/match-report）。
+- 验证结果：
+  - 匹配报告链路（生成快照 → 可解释分数与建议 → 输入变化 stale → 重新生成）有集成测试与浏览器级 E2E 覆盖。
+  - 本窗口 OpenAPI 变更为新增端点与 schema；数据库变更走 V3 迁移，符合迁移纪律。
+- 已知问题：
+  - 计分权重（MUST=3/BONUS=1）与规则版本当前为固定值，权重配置 UI 未提供（快照已保存权重，未来可加配置端点）。
+  - 报告无删除/清理端点；历史快照随生成次数累积（本地单用户量级可接受）。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认后实现下一个 P1 切片（候选：完整复盘分析、数据导入与完整恢复、简历定制草稿——后者需 AI 基础设施与用户明确同意）。
+- 不要重复做：
+  - 不要重建匹配报告计算/持久化/前端区块。
+  - 不要把匹配分数改成综合百分比或伪精确数字（PRD 原则：可解释、不按零分处理）。
+  - 不要让报告生成修改差距/要求/证据数据；stale 判定只读。
+  - 不要提前实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-11
 

@@ -148,6 +148,23 @@ paths:
       responses:
         '200': { description: 合并后的目标要求, content: { application/json: { schema: { $ref: '#/components/schemas/JobRequirement' } } } }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /jobs/{jobId}/match-reports:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    post:
+      tags: [Jobs]
+      summary: 生成岗位匹配报告（可解释规则计算，保存数据快照；缺少资料的要求不计入分母）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '201': { description: 报告已生成, content: { application/json: { schema: { $ref: '#/components/schemas/MatchReport' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /jobs/{jobId}/match-reports/latest:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Jobs]
+      summary: 查询最新匹配报告（输入数据变化后 stale=true，提示可能过期）
+      responses:
+        '200': { description: 最新报告, content: { application/json: { schema: { $ref: '#/components/schemas/MatchReport' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /jobs/{jobId}/gap-list:
     parameters: [ { $ref: '#/components/parameters/JobId' } ]
     get:
@@ -879,6 +896,55 @@ components:
       properties:
         targetRequirementId: { type: string, format: uuid }
         sourceRequirementIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+    MatchReport:
+      type: object
+      required: [id, jobId, ruleVersion, weights, generatedAt, mustSummary, bonusSummary, mustScore, bonusScore, suggestion, requirements, stale]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        ruleVersion: { type: string, example: MATCH_RULE_V1 }
+        weights: { type: object, additionalProperties: { type: integer }, description: 需求类型权重，如 MUST=3、BONUS=1 }
+        generatedAt: { type: string, format: date-time }
+        mustSummary: { $ref: '#/components/schemas/MatchStatusSummary' }
+        bonusSummary: { $ref: '#/components/schemas/MatchStatusSummary' }
+        mustScore: { $ref: '#/components/schemas/MatchScoreBreakdown' }
+        bonusScore: { $ref: '#/components/schemas/MatchScoreBreakdown' }
+        suggestion:
+          type: object
+          required: [type, reasons]
+          properties:
+            type: { type: string, enum: [STRONG_MATCH, PARTIAL_MATCH, LOW_MATCH, NEED_MORE_INFO] }
+            reasons: { type: array, items: { type: string }, description: 投递建议理由，不自动替用户做决定 }
+        requirements:
+          type: array
+          items: { $ref: '#/components/schemas/MatchReportItem' }
+        stale: { type: boolean, description: 生成后岗位要求或用户资料变化时为 true，报告可能过期，建议重新生成 }
+    MatchStatusSummary:
+      type: object
+      required: [total, satisfiedWithEvidence, selfReportedNoEvidence, notMet, insufficientInfo]
+      properties:
+        total: { type: integer }
+        satisfiedWithEvidence: { type: integer }
+        selfReportedNoEvidence: { type: integer }
+        notMet: { type: integer }
+        insufficientInfo: { type: integer }
+    MatchScoreBreakdown:
+      type: object
+      required: [numerator, denominator, weight]
+      properties:
+        numerator: { type: number, description: 加权得分（满足=1，自报无证据=0.5，未满足=0） }
+        denominator: { type: number, description: 加权分母；缺少资料的要求不计入分母（不按零分处理） }
+        weight: { type: integer }
+    MatchReportItem:
+      type: object
+      required: [requirementId, rawText, type, status, reasons]
+      properties:
+        requirementId: { type: string, format: uuid }
+        normalizedName: { type: string, nullable: true }
+        rawText: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [SATISFIED_WITH_EVIDENCE, SELF_REPORTED_NO_EVIDENCE, NOT_MET, INSUFFICIENT_INFO, PENDING_CONFIRMATION] }
+        reasons: { type: array, items: { type: string } }
     RequirementExtractionResult:
       type: object
       required: [jobId, extractedAt, candidates]
