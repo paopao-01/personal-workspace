@@ -172,7 +172,12 @@ export function InterviewPreparationPage() {
                   <p><strong>方案：</strong>{project.approach}</p>
                   <p><strong>解决问题：</strong>{project.problemSolved}</p>
                   {(project.evidenceRefs ?? []).length > 0 ? (
-                    <p className="muted">证据引用：{(project.evidenceRefs ?? []).map((e) => e.title).join('、')}</p>
+                    <p className="muted">
+                      证据引用：
+                      {(project.evidenceRefs ?? [])
+                        .map((e) => (e.trashed ? `${e.title}（来源已删除）` : e.title))
+                        .join('、')}
+                    </p>
                   ) : null}
                 </article>
               ))

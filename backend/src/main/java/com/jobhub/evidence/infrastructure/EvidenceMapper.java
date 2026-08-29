@@ -34,6 +34,14 @@ public interface EvidenceMapper {
 		""")
 	Evidence selectById(@Param("id") String id);
 
+	@Select("""
+		SELECT id, type, title, where_used, problem_solved, approach, result_text, url_or_path,
+		       created_at, updated_at, deleted_at, version
+		FROM evidence
+		WHERE id=#{id}
+		""")
+	Evidence selectByIdIncludeTrashed(@Param("id") String id);
+
 	@Update("""
 		UPDATE evidence
 		SET type=#{evidence.type},
@@ -77,4 +85,28 @@ public interface EvidenceMapper {
 		WHERE id=#{skillId} AND deleted_at IS NULL
 		""")
 	long countActiveSkill(@Param("skillId") String skillId);
+
+	@Select("SELECT COUNT(*) FROM project_evidence WHERE evidence_id=#{evidenceId}")
+	long countProjectRefs(@Param("evidenceId") String evidenceId);
+
+	@Select("SELECT COUNT(*) FROM skill_evidence WHERE evidence_id=#{evidenceId}")
+	long countSkillRefs(@Param("evidenceId") String evidenceId);
+
+	@Update("""
+		UPDATE evidence
+		SET deleted_at=#{now}, updated_at=#{now}, version=version+1
+		WHERE id=#{id}
+		  AND version=#{expectedVersion}
+		  AND deleted_at IS NULL
+		""")
+	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
+
+	@Update("UPDATE evidence SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
+	int restoreById(@Param("id") String id, @Param("now") String now);
+
+	@Delete("DELETE FROM evidence WHERE id=#{id}")
+	int hardDelete(@Param("id") String id);
+
+	@Delete("DELETE FROM project_evidence WHERE evidence_id=#{evidenceId}")
+	int deleteProjectRefs(@Param("evidenceId") String evidenceId);
 }

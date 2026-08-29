@@ -565,6 +565,12 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseCreateRequest' } } }
       responses:
         '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectCaseSummary' } } } }
+    delete:
+      tags: [SkillsAndEvidence]
+      summary: 软删除项目案例（进入最近删除，30 天内可恢复）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
   /evidence:
     get:
       tags: [SkillsAndEvidence]
@@ -591,6 +597,12 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceCreateRequest' } } }
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Evidence' } } } }
+    delete:
+      tags: [SkillsAndEvidence]
+      summary: 软删除证据引用（进入最近删除，30 天内可恢复；被引用证据不能静默永久删除）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
 
   /data-exports:
     post:
@@ -1191,7 +1203,7 @@ components:
     EvidenceReference:
       type: object
       required: [id, type, title]
-      properties: { id: { type: string, format: uuid }, type: { type: string }, title: { type: string }, urlOrPath: { type: string, nullable: true } }
+      properties: { id: { type: string, format: uuid }, type: { type: string }, title: { type: string }, urlOrPath: { type: string, nullable: true }, trashed: { type: boolean, description: 引用来源处于最近删除时为 true，界面应显示“来源已删除” } }
     EvidenceCreateRequest:
       type: object
       required: [type, title]

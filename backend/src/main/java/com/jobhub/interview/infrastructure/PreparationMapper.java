@@ -27,11 +27,10 @@ public interface PreparationMapper {
 	List<ProjectCaseSummary> selectProjectCasesForJob(@Param("jobId") String jobId);
 
 	@Select("""
-		SELECT e.id, e.type, e.title, e.url_or_path
+		SELECT e.id, e.type, e.title, e.url_or_path, e.deleted_at IS NOT NULL AS trashed
 		FROM evidence e
 		JOIN project_evidence pe ON pe.evidence_id = e.id
 		WHERE pe.project_id = #{projectId}
-		  AND e.deleted_at IS NULL
 		ORDER BY e.title
 		""")
 	List<EvidenceReference> selectEvidenceForProject(@Param("projectId") String projectId);

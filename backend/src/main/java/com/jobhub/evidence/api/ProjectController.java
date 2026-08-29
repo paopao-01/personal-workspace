@@ -39,6 +39,16 @@ public class ProjectController {
 		return ResponseEntity.ok(ProjectCaseSummaryResponse.from(service.update(projectId, version, toCommand(request))));
 	}
 
+	@DeleteMapping("/projects/{projectId}")
+	public ResponseEntity<Void> delete(@PathVariable String projectId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		service.delete(projectId, version);
+		return ResponseEntity.noContent().build();
+	}
+
 	private ProjectCreateCommand toCommand(ProjectCaseCreateRequest request) {
 		return new ProjectCreateCommand(request.title(), request.scenario(), request.approach(),
 			request.problemSolved(), request.result(), request.evidenceIds());

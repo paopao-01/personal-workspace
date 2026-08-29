@@ -39,6 +39,16 @@ public class EvidenceController {
 		return ResponseEntity.ok(EvidenceResponse.from(service.update(evidenceId, version, toCommand(request))));
 	}
 
+	@DeleteMapping("/evidence/{evidenceId}")
+	public ResponseEntity<Void> delete(@PathVariable String evidenceId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		service.delete(evidenceId, version);
+		return ResponseEntity.noContent().build();
+	}
+
 	private EvidenceCreateCommand toCommand(EvidenceCreateRequest request) {
 		return new EvidenceCreateCommand(request.type(), request.title(), request.whereUsed(),
 			request.problemSolved(), request.approach(), request.result(), request.urlOrPath(), request.skillIds());

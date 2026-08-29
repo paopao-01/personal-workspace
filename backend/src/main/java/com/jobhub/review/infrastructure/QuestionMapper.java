@@ -109,4 +109,22 @@ public interface QuestionMapper {
 		""")
 	List<InterviewQuestion> selectWeakQuestions(@Param("knowledgePointId") String knowledgePointId,
 			@Param("from") String from, @Param("to") String to, @Param("jobId") String jobId);
+
+	@Update("""
+		UPDATE interview_question
+		SET deleted_at=#{now}, updated_at=#{now}, version=version+1
+		WHERE id=#{id}
+		  AND version=#{expectedVersion}
+		  AND deleted_at IS NULL
+		""")
+	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
+
+	@Update("UPDATE interview_question SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
+	int restoreById(@Param("id") String id, @Param("now") String now);
+
+	@Delete("DELETE FROM interview_question WHERE id=#{id}")
+	int hardDelete(@Param("id") String id);
+
+	@Delete("DELETE FROM task_source WHERE source_type='QUESTION' AND source_id=#{questionId}")
+	int deleteTaskSourceForQuestion(@Param("questionId") String questionId);
 }

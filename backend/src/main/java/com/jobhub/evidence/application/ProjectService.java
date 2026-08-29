@@ -4,6 +4,7 @@ import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.datamanagement.application.TrashService;
 import com.jobhub.evidence.domain.Evidence;
 import com.jobhub.evidence.domain.ProjectCase;
 import com.jobhub.evidence.infrastructure.EvidenceMapper;
@@ -18,12 +19,15 @@ import java.util.Set;
 public class ProjectService {
 	private final ProjectMapper projectMapper;
 	private final EvidenceMapper evidenceMapper;
+	private final TrashService trashService;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
-	public ProjectService(ProjectMapper projectMapper, EvidenceMapper evidenceMapper, IdGenerator ids, UtcTime time) {
+	public ProjectService(ProjectMapper projectMapper, EvidenceMapper evidenceMapper, TrashService trashService,
+			IdGenerator ids, UtcTime time) {
 		this.projectMapper = projectMapper;
 		this.evidenceMapper = evidenceMapper;
+		this.trashService = trashService;
 		this.ids = ids;
 		this.time = time;
 	}
@@ -59,12 +63,23 @@ public class ProjectService {
 		return get(id);
 	}
 
+	@Transactional
+	public void delete(String id, long expectedVersion) {
+		ProjectCase project = requireProject(id);
+		long evidenceRefCount = projectMapper.countEvidenceRefs(id);
+		String now = time.now();
+		VersionCheck.requireAffected(projectMapper.softDelete(id, expectedVersion, now), project.getVersion());
+		trashService.recordDeletion(TrashService.TYPE_PROJECT_CASE, id, project.getTitle(),
+			List.of(evidenceRefCount + " 条证据引用"), now);
+	}
+
 	private void replaceEvidenceRefs(String projectId, List<String> evidenceIds, String now) {
 		projectMapper.deleteEvidenceRefs(projectId);
 		for (String evidenceId : distinct(evidenceIds)) {
-			Evidence evidence = evidenceMapper.selectById(evidenceId);
+			// 校验忽略软删状态：已删证据的关联保留并在恢复后自动还原
+			Evidence evidence = evidenceMapper.selectByIdIncludeTrashed(evidenceId);
 			if (evidence == null) {
-				throw new BusinessRuleException("Evidence " + evidenceId + " does not exist or has been deleted");
+				throw new BusinessRuleException("Evidence " + evidenceId + " does not exist");
 			}
 			projectMapper.insertEvidenceRef(projectId, evidenceId, now);
 		}

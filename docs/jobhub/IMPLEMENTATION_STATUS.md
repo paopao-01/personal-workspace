@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包聚合和 P10 项目案例/证据引用 CRUD 已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20 和 P10 项目/证据 CRUD）。
-- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20 已完成，AT-21 的“无资料显示待补充/不伪造能力分数”已在准备包后端覆盖，项目/证据 CRUD 已完成，最近删除（AT-23）和完整 JSON 导出（AT-24）尚未实现。
-- 当前任务：P10 最小项目案例与证据引用 CRUD 已完成；下一窗口建议实现 AT-23 最近删除（软删除 + `GET /api/trash` + 恢复保留引用关系）或 AT-24 JSON 导出。
+- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包聚合、P10 项目案例/证据引用 CRUD 和 AT-23 最近删除/恢复已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20、AT-23 和 P10 项目/证据 CRUD）。
+- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20/AT-21/AT-23 已完成，AT-22 乐观锁由既有 VersionConflictIntegrationTest 与各模块 PUT 测试覆盖，完整 JSON 导出（AT-24）尚未实现。
+- 当前任务：AT-23 最近删除已完成；下一窗口建议实现 AT-24 JSON 导出（`POST /api/data-exports` + `GET /api/data-exports/{id}`，排除令牌、密钥、idempotency_record 和未确认 AI 内容），完成后 M4 收尾。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -51,7 +51,7 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence 模块业务代码（`com.jobhub` 主代码约 171 个 Java 文件，其中 evidence 模块 16 个：domain 3、infrastructure 2、application 4、api 7）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 176 个 Java 文件，其中 evidence 模块 16 个、datamanagement 5 个：TrashItem/TrashMapper/TrashService/TrashItemResponse/TrashController）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
@@ -70,6 +70,58 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `PARTIAL` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-5
+
+- 目标：在 `dev` 分支实现 AT-23 最近删除（软删除 + trash 恢复保留引用关系）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 扩展：新增 `DELETE /projects/{projectId}` 与 `DELETE /evidence/{evidenceId}`（Idempotency-Key + If-Match-Version，204），`EvidenceReference` 新增可选 `trashed` 布尔字段；既有 `/trash`、`/trash/{id}/restore`、`/trash/{id}/permanent`（`X-Confirm-Permanent-Delete: true` 必需）契约不变，已重新生成前端类型。
+  - 新增后端 `datamanagement` 模块四层：`GET /api/trash`、`POST /api/trash/{trashId}/restore`、`DELETE /api/trash/{trashId}/permanent`。TrashService 统一管理 trash_item 写入（影响摘要 JSON、30 天 `expires_at`）、恢复（资源 `deleted_at` 置空 + `restored_at` 标记）与永久删除（`purged_at` 标记 + 硬删及关联清理）。
+  - 三类实体接入软删除：project（DELETE 校验版本并记录"N 条证据引用"）、evidence（记录"N 个项目案例引用/N 项技能关联"）、interview-question（契约既有端点，实现于 review 模块，记录"N 个知识点关联"）。
+  - AT-23 关键规则：被项目案例或技能引用的证据永久删除返回 `422 BUSINESS_RULE_ERROR`（不能静默永久删除）；项目永久删除清理自身 `project_evidence`；问题永久删除清理 `question_knowledge` 与 `task_source`，学习任务保留；恢复后资源 ID 不变、引用自动还原。
+  - `EvidenceReference.trashed` 贯穿项目 refs 与准备包：删除后引用方显示"来源已删除"；项目编辑表单允许保留已删证据关联（后端校验忽略软删状态），恢复后自动还原。
+  - 前端新增 `api/settings` trash 三件套和 `/settings` 页最近删除区（列表含类型、删除时间、过期天数、影响摘要；恢复按钮；永久删除二次确认），启用侧边栏"设置"入口。
+  - `/projects` 页项目/证据行新增"删除"按钮，原生确认框展示直接和间接影响；项目证据引用与准备包证据引用显示"来源已删除"标记。
+  - 新增 `frontend/e2e/at-23-trash-restore.spec.ts`：真实 UI 删除被引用证据（断言确认框影响文本）→ 项目行显示"来源已删除" → 设置页恢复 → 引用还原且 API 验证证据 ID 不变 → 独立证据永久删除成功 → 被引用证据永久删除被拒绝。
+- 未完成：
+  - AT-24 完整 JSON 导出尚未实现；M4 剩余收尾。
+  - `/settings` 的时区、默认提醒节点、导出等区块尚未实现（页面规格 P11 属后续切片）。
+  - 学习任务页尚未对"来源已删除"的任务来源做显式标记（任务列表当前不渲染问题来源）。
+  - 过期 trash（超 30 天）无自动清理调度，仅保留手动永久删除入口。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`（project/evidence DELETE + EvidenceReference.trashed）、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 新增：`backend/src/main/java/com/jobhub/datamanagement/{domain/TrashItem,infrastructure/TrashMapper,application/TrashService,api/TrashItemResponse,api/TrashController}.java`。
+  - 修改：`backend/src/main/java/com/jobhub/evidence/{domain/Evidence,infrastructure/ProjectMapper,infrastructure/EvidenceMapper,application/ProjectService,application/EvidenceService,api/EvidenceReferenceResponse,api/ProjectController,api/EvidenceController}.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/{infrastructure/QuestionMapper,application/ReviewService,api/ReviewController}.java`。
+  - 修改：`backend/src/main/java/com/jobhub/interview/{application/EvidenceReference,infrastructure/PreparationMapper,api/EvidenceReferenceResponse}.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`（新增 trash_item 清理）。
+  - 新增：`backend/src/test/java/com/jobhub/integration/TrashIntegrationTest.java`。
+  - 新增：`frontend/src/api/settings/{trashApi,useTrashQueries,useTrashMutations}.ts`、`frontend/src/features/settings/{SettingsPage.tsx,settingsLabels.ts}`。
+  - 修改：`frontend/src/api/projects/{projectApi,useProjectMutations}.ts`、`frontend/src/api/generated/types.ts`（重新生成）、`frontend/src/features/projects/ProjectsPage.tsx`、`frontend/src/features/interviews/InterviewPreparationPage.tsx`、`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`。
+  - 新增：`frontend/e2e/at-23-trash-restore.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=TrashIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，48 tests，0 failures，0 errors（两次：接入软删除前后各一次）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/at-23-trash-restore.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 9 tests passed（AT-01/09/11/15/16/18/20/23 + P10），runner 自然返回。
+- 验证结果：
+  - AT-23 后端与浏览器路径均已覆盖：删除展示影响、回收站、恢复保留引用 ID、被引用证据禁止永久删除。
+  - 本窗口 OpenAPI 变更仅为新增 DELETE 端点与 `EvidenceReference.trashed` 可选字段，非破坏性。
+  - 本窗口未新增数据库迁移；V1 既有 `trash_item`（含 `impact_summary_json`/`expires_at`/`restored_at`/`purged_at`）与各资源表 `deleted_at` 列可支撑本切片。
+- 已知问题：
+  - 恢复/永久删除使用 trash 记录 ID（非资源 ID），前端已按此对接。
+  - 全量 E2E 共享临时库，`at-23` 用例使用唯一后缀隔离数据。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现 AT-24 JSON 导出：先核对 OpenAPI `POST /api/data-exports`、`GET /api/data-exports/{exportId}` 与 `DataExport` schema，实现 datamanagement 导出端点，包含岗位、投递、面试、复盘、问题、知识点、任务、技能和证据，排除令牌、密钥、完整日志、idempotency_record 和未确认 AI 输入输出；M4 收尾后对照 05 文档核对 AT-20~AT-24 全部发布门槛。
+- 不要重复做：
+  - 不要重建 datamanagement trash 模块、`/settings` 最近删除区或 evidence 模块 CRUD。
+  - 不要为垃圾箱数据实现自动清理调度、批量恢复或关联修复报告（PRD 归入后续版本）。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-4
 

@@ -4,6 +4,7 @@ import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.datamanagement.application.TrashService;
 import com.jobhub.interview.application.InterviewService;
 import com.jobhub.interview.domain.Interview;
 import com.jobhub.interview.domain.InterviewResult;
@@ -21,14 +22,16 @@ public class ReviewService {
 	private final ReviewMapper reviewMapper;
 	private final QuestionMapper questionMapper;
 	private final InterviewService interviewService;
+	private final TrashService trashService;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
 	public ReviewService(ReviewMapper reviewMapper, QuestionMapper questionMapper, InterviewService interviewService,
-			IdGenerator ids, UtcTime time) {
+			TrashService trashService, IdGenerator ids, UtcTime time) {
 		this.reviewMapper = reviewMapper;
 		this.questionMapper = questionMapper;
 		this.interviewService = interviewService;
+		this.trashService = trashService;
 		this.ids = ids;
 		this.time = time;
 	}
@@ -128,6 +131,16 @@ public class ReviewService {
 		}
 		reviewMapper.bumpVersion(question.getReviewId(), now);
 		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
+	}
+
+	@Transactional
+	public void deleteQuestion(String questionId, long expectedVersion) {
+		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);
+		long knowledgePointCount = questionMapper.selectKnowledgePoints(questionId).size();
+		String now = time.now();
+		VersionCheck.requireAffected(questionMapper.softDelete(questionId, expectedVersion, now), question.getVersion());
+		trashService.recordDeletion(TrashService.TYPE_INTERVIEW_QUESTION, questionId, question.getContent(),
+			List.of(knowledgePointCount + " 个知识点关联"), now);
 	}
 
 	public List<KnowledgePoint> listKnowledgePoints(String query) {

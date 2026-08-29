@@ -59,6 +59,16 @@ public class ReviewController {
 			request.difficulty(), request.errorReason(), request.improvementPlan()));
 	}
 
+	@DeleteMapping("/interview-questions/{id}")
+	public ResponseEntity<Void> deleteQuestion(@PathVariable String id,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		service.deleteQuestion(id, version);
+		return ResponseEntity.noContent().build();
+	}
+
 	@GetMapping("/knowledge-points")
 	public List<KnowledgePointResponse> listKnowledgePoints(@RequestParam(value = "query", required = false) String query) {
 		return service.listKnowledgePoints(query).stream().map(KnowledgePointResponse::from).toList();

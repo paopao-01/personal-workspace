@@ -57,3 +57,11 @@ export async function updateEvidence(
   })
   return res.data
 }
+
+export async function deleteProject(projectId: string, version: number): Promise<void> {
+  await apiClient.delete(`/projects/${projectId}`, { headers: ifMatchHeader(version) })
+}
+
+export async function deleteEvidence(evidenceId: string, version: number): Promise<void> {
+  await apiClient.delete(`/evidence/${evidenceId}`, { headers: ifMatchHeader(version) })
+}

@@ -2,6 +2,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   createEvidence,
   createProject,
+  deleteEvidence,
+  deleteProject,
   updateEvidence,
   updateProject,
   type Evidence,
@@ -54,6 +56,22 @@ export function useUpdateEvidence() {
   >({
     mutationFn: ({ evidenceId, version, body }) =>
       updateEvidence(evidenceId, version, body),
+    onSuccess: () => invalidate(queryClient),
+  })
+}
+
+export function useDeleteProject() {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, { projectId: string; version: number }>({
+    mutationFn: ({ projectId, version }) => deleteProject(projectId, version),
+    onSuccess: () => invalidate(queryClient),
+  })
+}
+
+export function useDeleteEvidence() {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, { evidenceId: string; version: number }>({
+    mutationFn: ({ evidenceId, version }) => deleteEvidence(evidenceId, version),
     onSuccess: () => invalidate(queryClient),
   })
 }
