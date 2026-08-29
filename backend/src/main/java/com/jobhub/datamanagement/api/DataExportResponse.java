@@ -4,6 +4,7 @@ import com.jobhub.datamanagement.domain.DataExport;
 
 public record DataExportResponse(
 	String id,
+	String format,
 	String status,
 	String downloadUrl,
 	String failureReason,
@@ -15,6 +16,7 @@ public record DataExportResponse(
 			: null;
 		return new DataExportResponse(
 			export.getId(),
+			export.getFormat(),
 			export.getStatus(),
 			downloadUrl,
 			export.getFailureReason(),

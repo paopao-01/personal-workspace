@@ -13,10 +13,10 @@ public class DataExport {
 	private String createdAt;
 	private String updatedAt;
 
-	public static DataExport create(String id, String now) {
+	public static DataExport create(String id, String format, String now) {
 		DataExport export = new DataExport();
 		export.id = id;
-		export.format = "JSON";
+		export.format = format;
 		export.status = "QUEUED";
 		export.createdAt = now;
 		export.updatedAt = now;

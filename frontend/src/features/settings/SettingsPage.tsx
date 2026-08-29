@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { isApiError, isNetworkError } from '@/api/errors'
 import { useCreateExport } from '@/api/settings/useExportMutations'
-import type { DataExport } from '@/api/settings/exportApi'
+import type { DataExport, ExportFormat } from '@/api/settings/exportApi'
 import type { UserSettings } from '@/api/settings/settingsApi'
 import { useUpdateSettings } from '@/api/settings/useSettingsMutations'
 import { useSettings } from '@/api/settings/useSettingsQueries'
@@ -37,6 +37,7 @@ export function SettingsPage() {
   const purgeItem = usePurgeTrashItem()
   const createExport = useCreateExport()
   const [lastExport, setLastExport] = useState<DataExport | null>(null)
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('JSON')
   const [error, setError] = useState<string | null>(null)
   const [operatingId, setOperatingId] = useState<string | null>(null)
 
@@ -66,10 +67,10 @@ export function SettingsPage() {
   const runExport = async () => {
     setError(null)
     try {
-      const created = await createExport.mutateAsync()
+      const created = await createExport.mutateAsync(exportFormat)
       setLastExport(created)
       if (created.status === 'SUCCEEDED') {
-        pushToast('导出完成，可点击下载保存 JSON 文件')
+        pushToast(exportFormat === 'CSV' ? 'CSV 导出完成，可下载 ZIP 文件' : '导出完成，可点击下载保存 JSON 文件')
       } else {
         pushToast(created.failureReason ?? '导出失败', 'error')
       }
@@ -144,11 +145,31 @@ export function SettingsPage() {
         <div className="card-body">
           <p className="muted" style={{ marginTop: 0 }}>
             数据范围：岗位与要求、投递、面试、复盘、问题、知识点、学习任务、技能、项目案例与证据的完整
-            JSON 数据及关联 ID。
+            数据及关联 ID。
           </p>
           <p className="muted" style={{ marginTop: 0 }}>
             不包含：访问令牌、密钥、应用运行日志、幂等记录和未确认的 AI 输入输出。
           </p>
+          <div className="flex-row" style={{ justifyContent: 'flex-start', marginBottom: 12 }}>
+            <label className="decision-radio" style={{ marginRight: 16 }}>
+              <input
+                type="radio"
+                name="export-format"
+                checked={exportFormat === 'JSON'}
+                onChange={() => setExportFormat('JSON')}
+              />
+              JSON（完整备份，可用于导入恢复）
+            </label>
+            <label className="decision-radio">
+              <input
+                type="radio"
+                name="export-format"
+                checked={exportFormat === 'CSV'}
+                onChange={() => setExportFormat('CSV')}
+              />
+              CSV（按表拆分打包 ZIP，供分析）
+            </label>
+          </div>
           <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
             <Button
               variant="primary"
@@ -156,7 +177,7 @@ export function SettingsPage() {
               disabled={createExport.isPending}
               onClick={runExport}
             >
-              {createExport.isPending ? '导出中…' : '创建 JSON 导出'}
+              {createExport.isPending ? '导出中…' : exportFormat === 'CSV' ? '创建 CSV 导出' : '创建 JSON 导出'}
             </Button>
           </div>
           {lastExport ? (
@@ -174,9 +195,9 @@ export function SettingsPage() {
                   <a
                     className="btn btn-link"
                     href={lastExport.downloadUrl}
-                    download={`jobhub-export-${lastExport.id}.json`}
+                    download={`jobhub-export-${lastExport.id}${lastExport.format === 'CSV' ? '.zip' : '.json'}`}
                   >
-                    下载导出文件
+                    下载导出文件（{lastExport.format === 'CSV' ? 'ZIP' : 'JSON'}）
                   </a>
                 </p>
               ) : null}

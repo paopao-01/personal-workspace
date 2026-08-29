@@ -689,7 +689,7 @@ paths:
     parameters: [ { $ref: '#/components/parameters/ExportId' } ]
     get:
       tags: [DataManagement]
-      summary: 下载导出的 JSON 文件（不含令牌、密钥、应用日志、幂等记录和未确认 AI 输入输出）
+      summary: 下载导出文件（JSON 包为 application/json；CSV 包为按业务表拆分的 CSV 打包 ZIP，UTF-8 BOM，不含幂等键列）
       responses:
         '200':
           description: 导出文件
@@ -1545,12 +1545,13 @@ components:
     ExportCreateRequest:
       type: object
       required: [format]
-      properties: { format: { type: string, enum: [JSON] } }
+      properties: { format: { type: string, enum: [JSON, CSV] } }
     DataExport:
       type: object
-      required: [id, status, createdAt]
+      required: [id, format, status, createdAt]
       properties:
         id: { type: string, format: uuid }
+        format: { type: string, enum: [JSON, CSV] }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED] }
         downloadUrl: { type: string, format: uri-reference, nullable: true, description: '相对 API 下载路径，如 /api/data-exports/{exportId}/download' }
         failureReason: { type: string, nullable: true }

@@ -4,8 +4,10 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type DataExport = Schemas['DataExport']
 
-export async function createExport(): Promise<DataExport> {
-  const res = await apiClient.post<DataExport>('/data-exports', { format: 'JSON' })
+export type ExportFormat = 'JSON' | 'CSV'
+
+export async function createExport(format: ExportFormat): Promise<DataExport> {
+  const res = await apiClient.post<DataExport>('/data-exports', { format })
   return res.data
 }
 
