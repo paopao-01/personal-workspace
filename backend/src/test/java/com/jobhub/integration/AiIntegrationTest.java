@@ -35,23 +35,8 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 	static void startFakeProvider() throws Exception {
 		fakeProvider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
-			String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String contentJson;
-			if (requestBody.contains("sourceType")) {
-				// 简历草稿模式：从事实清单提示词中回显第一个 sourceId（保证溯源校验通过）
-				String flat = requestBody.replace("\\", "");
-				java.util.regex.Matcher matcher = java.util.regex.Pattern
-					.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-					.matcher(flat.substring(flat.indexOf("sourceId")));
-				String sourceId = matcher.find() ? matcher.group() : "unknown";
-				String arrayJson = CONTENT_JSON.writeValueAsString(java.util.List.of(java.util.Map.of(
-					"sourceType", "PROJECT", "sourceId", sourceId,
-					"sourceTitle", "集成测试项目", "suggestedText", "面向目标岗位重写的项目表达（集成测试）")));
-				contentJson = CONTENT_JSON.writeValueAsString(arrayJson);
-			} else {
-				// JD 提取模式：把候选 JSON 数组序列化为字符串字面量嵌入响应
-				contentJson = CONTENT_JSON.writeValueAsString(CANDIDATES_JSON);
-			}
+			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
+			String contentJson = CONTENT_JSON.writeValueAsString(CANDIDATES_JSON);
 			byte[] body = ("{\"choices\":[{\"message\":{\"content\":" + contentJson + "}}]}")
 					.getBytes(StandardCharsets.UTF_8);
 			exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -68,58 +53,6 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		if (fakeProvider != null) {
 			fakeProvider.stop(0);
 		}
-	}
-
-	@Test
-	void P1_resumeDraftUsesConfirmedFactsAndTypeAwareAccept() throws Exception {
-		String baseUrl = "http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1";
-		createActiveProvider(baseUrl);
-		String jobId = createJob();
-
-		// 确认一条岗位要求（规则提取 → 确认），作为定制目标
-		restTemplate.exchange(url("/jobs/" + jobId + "/requirements/extract"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
-		String requirements = restTemplate.getForEntity(url("/jobs/" + jobId + "/requirements"), String.class).getBody();
-		int requirementCount = JsonProbe.arraySize(requirements, "");
-		assertThat(requirementCount).isGreaterThanOrEqualTo(1);
-		String firstRequirementId = JsonProbe.arrStr(requirements, "", 0, "id");
-		String confirmedRequirement = restTemplate.exchange(url("/job-requirements/" + firstRequirementId),
-			HttpMethod.PUT,
-			TestFixtures.httpWithHeaders("{\"confirmationStatus\":\"CONFIRMED\",\"type\":\"MUST\"}",
-				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version",
-				JsonProbe.arrStr(requirements, "", 0, "version")), String.class).getBody();
-		assertThat(JsonProbe.str(confirmedRequirement, "confirmationStatus")).isEqualTo("CONFIRMED");
-
-		// 创建项目事实
-		String project = restTemplate.exchange(url("/projects"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"title\":\"集成测试项目\",\"scenario\":\"高并发订单系统\",\"approach\":\"Spring Boot + Redis 缓存\",\"problemSolved\":\"订单峰值性能瓶颈\"}",
-				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
-		String projectId = JsonProbe.str(project, "id");
-
-		// 创建简历草稿任务
-		String aiJob = restTemplate.exchange(url("/ai-jobs"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"jobType\":\"RESUME_DRAFT\",\"objectId\":\"" + jobId + "\"}",
-				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
-		String finished = waitForTerminal(JsonProbe.str(aiJob, "id"));
-		System.out.println("[DBG] " + finished);
-
-		assertThat(JsonProbe.str(finished, "status")).isEqualTo("SUCCEEDED");
-		assertThat(JsonProbe.str(finished, "items.0.payload.sourceId")).isEqualTo(projectId);
-		assertThat(JsonProbe.str(finished, "promptVersion")).isEqualTo("RESUME_DRAFT_V1");
-
-		// 采纳（带编辑）：仅确认建议文本，不创建岗位要求，溯源字段锁定
-		String itemId = JsonProbe.str(finished, "items.0.id");
-		String accepted = restTemplate.exchange(url("/ai-job-items/" + itemId + "/accept"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"payload\":{\"sourceType\":\"PROJECT\",\"sourceId\":\"tampered-id\",\"suggestedText\":\"编辑后的定制表达\"}}",
-				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
-		assertThat(JsonProbe.str(accepted, "status")).isEqualTo("ACCEPTED");
-		assertThat(JsonProbe.str(accepted, "editedPayload.suggestedText")).isEqualTo("编辑后的定制表达");
-		assertThat(JsonProbe.str(accepted, "editedPayload.sourceId")).isEqualTo(projectId);
-		assertThat(JsonProbe.str(accepted, "requirementId")).isEqualTo("null");
-
-		// AI 采纳未创建岗位要求（确认要求数量不变）
-		String requirementsAfter = restTemplate.getForEntity(url("/jobs/" + jobId + "/requirements"), String.class).getBody();
-		assertThat(JsonProbe.arraySize(requirementsAfter, "")).isEqualTo(requirementCount);
 	}
 
 	private String createActiveProvider(String baseUrl) {

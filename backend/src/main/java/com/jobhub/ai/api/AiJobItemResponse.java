@@ -1,17 +1,13 @@
 package com.jobhub.ai.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.jobhub.ai.domain.AiJobItem;
+import com.jobhub.ai.domain.AiItemPayload;
 
-/**
- * 条目载荷按 jobType 区分（JD_EXTRACTION：候选要求；RESUME_DRAFT：简历建议），
- * 以原始 JSON 透传，由前端按任务类型解读。
- */
 public record AiJobItemResponse(
 	String id,
 	String aiJobId,
-	JsonNode payload,
-	JsonNode editedPayload,
+	AiItemPayload payload,
+	AiItemPayload editedPayload,
 	String status,
 	String requirementId,
 	String createdAt,
@@ -33,12 +29,12 @@ public record AiJobItemResponse(
 		);
 	}
 
-	private static JsonNode parse(String payloadJson) {
+	private static AiItemPayload parse(String payloadJson) {
 		if (payloadJson == null || payloadJson.isBlank()) {
 			return null;
 		}
 		try {
-			return JSON.readTree(payloadJson);
+			return JSON.readValue(payloadJson, AiItemPayload.class);
 		} catch (Exception ex) {
 			return null;
 		}

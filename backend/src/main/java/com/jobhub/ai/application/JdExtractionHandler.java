@@ -4,10 +4,6 @@ import com.jobhub.ai.domain.AiJob;
 import com.jobhub.ai.domain.AiJobType;
 import com.jobhub.ai.domain.AiItemPayload;
 import com.jobhub.ai.domain.AiProvider;
-import com.jobhub.common.error.BusinessRuleException;
-import com.jobhub.common.version.VersionCheck;
-import com.jobhub.job.domain.Job;
-import com.jobhub.job.infrastructure.JobMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -23,12 +19,6 @@ public class JdExtractionHandler implements AiTaskHandler {
 	public static final String PROMPT_VERSION = "JD_EXTRACTION_V1";
 	private static final Set<String> VALID_TYPES = Set.of("MUST", "BONUS");
 
-	private final JobMapper jobMapper;
-
-	public JdExtractionHandler(JobMapper jobMapper) {
-		this.jobMapper = jobMapper;
-	}
-
 	@Override
 	public AiJobType type() {
 		return AiJobType.JD_EXTRACTION;
@@ -37,16 +27,6 @@ public class JdExtractionHandler implements AiTaskHandler {
 	@Override
 	public String promptVersion() {
 		return PROMPT_VERSION;
-	}
-
-	@Override
-	public String buildInputSnapshot(String objectId) {
-		Job job = jobMapper.selectById(objectId);
-		VersionCheck.requireFound(job, "Job", objectId);
-		if (job.getJdRawText() == null || job.getJdRawText().isBlank()) {
-			throw new BusinessRuleException("岗位缺少 JD 原文，无法执行 AI 提取");
-		}
-		return job.getJdRawText();
 	}
 
 	@Override

@@ -1,6 +1,8 @@
 package com.jobhub.ai.api;
 
+import com.jobhub.ai.domain.AiItemPayload;
+
 /**
- * 采纳请求：payload 可选（开放对象，按任务类型区分结构）；省略表示按原文采纳。
+ * 采纳请求：payload 可选；省略表示按原文采纳，提供时按字段合并覆盖。
  */
-public record AiJobItemAcceptRequest(com.fasterxml.jackson.databind.JsonNode payload) { }
+public record AiJobItemAcceptRequest(AiItemPayload payload) { }

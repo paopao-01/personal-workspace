@@ -3,6 +3,7 @@ package com.jobhub.ai.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobhub.ai.domain.AiJob;
 import com.jobhub.ai.domain.AiJobItem;
+import com.jobhub.ai.domain.AiItemPayload;
 import com.jobhub.ai.domain.AiProvider;
 import com.jobhub.ai.domain.ProviderType;
 import com.jobhub.ai.infrastructure.AiJobItemMapper;
@@ -68,7 +69,7 @@ public class AiJobExecutor {
 				.findFirst()
 				.orElseThrow(() -> new IllegalStateException("无任务处理器：" + job.getJobType()));
 			AiProvider provider = requireProvider(job.getProviderId());
-			List<?> payloads = handler.execute(job, provider,
+			List<AiItemPayload> payloads = handler.execute(job, provider,
 				clientFactory.clientFor(provider.getProviderType()));
 
 			StringBuilder outputBuilder = new StringBuilder("[");

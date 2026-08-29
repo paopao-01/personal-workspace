@@ -49,7 +49,8 @@ public class AiJobController {
 	@PostMapping("/ai-job-items/{itemId}/accept")
 	public AiJobItemResponse accept(@PathVariable String itemId,
 			@RequestBody(required = false) @Valid AiJobItemAcceptRequest request) {
-		return AiJobItemResponse.from(service.acceptItem(itemId, request == null ? null : request.payload()));
+		AiItemPayload edited = request == null ? null : request.payload();
+		return AiJobItemResponse.from(service.acceptItem(itemId, edited));
 	}
 
 	@PostMapping("/ai-job-items/{itemId}/reject")
