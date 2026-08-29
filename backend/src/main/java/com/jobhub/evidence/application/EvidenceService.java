@@ -4,6 +4,7 @@ import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.datamanagement.application.TrashService;
 import com.jobhub.evidence.domain.Evidence;
 import com.jobhub.evidence.infrastructure.EvidenceMapper;
 import org.springframework.stereotype.Service;
@@ -15,11 +16,13 @@ import java.util.Set;
 @Service
 public class EvidenceService {
 	private final EvidenceMapper evidenceMapper;
+	private final TrashService trashService;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
-	public EvidenceService(EvidenceMapper evidenceMapper, IdGenerator ids, UtcTime time) {
+	public EvidenceService(EvidenceMapper evidenceMapper, TrashService trashService, IdGenerator ids, UtcTime time) {
 		this.evidenceMapper = evidenceMapper;
+		this.trashService = trashService;
 		this.ids = ids;
 		this.time = time;
 	}
@@ -50,6 +53,17 @@ public class EvidenceService {
 		VersionCheck.requireAffected(evidenceMapper.bumpVersion(id, expectedVersion), evidence.getVersion());
 		replaceSkillRefs(id, cmd.skillIds(), time.now());
 		return get(id);
+	}
+
+	@Transactional
+	public void delete(String id, long expectedVersion) {
+		Evidence evidence = requireEvidence(id);
+		long projectRefCount = evidenceMapper.countProjectRefs(id);
+		long skillRefCount = evidenceMapper.countSkillRefs(id);
+		String now = time.now();
+		VersionCheck.requireAffected(evidenceMapper.softDelete(id, expectedVersion, now), evidence.getVersion());
+		trashService.recordDeletion(TrashService.TYPE_EVIDENCE, id, evidence.getTitle(),
+			List.of(projectRefCount + " 个项目案例引用", skillRefCount + " 项技能关联"), now);
 	}
 
 	private void replaceSkillRefs(String evidenceId, List<String> skillIds, String now) {

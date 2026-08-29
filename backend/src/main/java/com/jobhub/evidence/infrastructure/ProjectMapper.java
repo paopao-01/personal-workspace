@@ -51,14 +51,35 @@ public interface ProjectMapper {
 	int bumpVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
 
 	@Select("""
-		SELECT e.id, e.type, e.title, e.url_or_path
+		SELECT e.id, e.type, e.title, e.url_or_path, e.deleted_at
 		FROM evidence e
 		JOIN project_evidence pe ON pe.evidence_id = e.id
 		WHERE pe.project_id = #{projectId}
-		  AND e.deleted_at IS NULL
 		ORDER BY e.title
 		""")
 	List<Evidence> selectEvidenceRefs(@Param("projectId") String projectId);
+
+	@Select("""
+		SELECT COUNT(*)
+		FROM project_evidence
+		WHERE project_id=#{projectId}
+		""")
+	long countEvidenceRefs(@Param("projectId") String projectId);
+
+	@Update("""
+		UPDATE project
+		SET deleted_at=#{now}, updated_at=#{now}, version=version+1
+		WHERE id=#{id}
+		  AND version=#{expectedVersion}
+		  AND deleted_at IS NULL
+		""")
+	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
+
+	@Update("UPDATE project SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
+	int restoreById(@Param("id") String id, @Param("now") String now);
+
+	@Delete("DELETE FROM project WHERE id=#{id}")
+	int hardDelete(@Param("id") String id);
 
 	@Delete("DELETE FROM project_evidence WHERE project_id=#{projectId}")
 	int deleteEvidenceRefs(@Param("projectId") String projectId);

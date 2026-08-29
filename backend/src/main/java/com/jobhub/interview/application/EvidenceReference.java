@@ -5,6 +5,7 @@ public class EvidenceReference {
 	private String type;
 	private String title;
 	private String urlOrPath;
+	private boolean trashed;
 
 	public String getId() { return id; }
 	public void setId(String id) { this.id = id; }
@@ -14,4 +15,6 @@ public class EvidenceReference {
 	public void setTitle(String title) { this.title = title; }
 	public String getUrlOrPath() { return urlOrPath; }
 	public void setUrlOrPath(String urlOrPath) { this.urlOrPath = urlOrPath; }
+	public boolean isTrashed() { return trashed; }
+	public void setTrashed(boolean trashed) { this.trashed = trashed; }
 }

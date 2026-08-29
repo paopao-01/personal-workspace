@@ -3,6 +3,8 @@ import { isApiError, isNetworkError } from '@/api/errors'
 import {
   useCreateEvidence,
   useCreateProject,
+  useDeleteEvidence,
+  useDeleteProject,
   useUpdateEvidence,
   useUpdateProject,
 } from '@/api/projects/useProjectMutations'
@@ -50,6 +52,8 @@ export function ProjectsPage() {
   const updateProject = useUpdateProject()
   const createEvidence = useCreateEvidence()
   const updateEvidence = useUpdateEvidence()
+  const deleteProjectMutation = useDeleteProject()
+  const deleteEvidenceMutation = useDeleteEvidence()
 
   if (projectsQuery.isLoading || evidenceQuery.isLoading) {
     return <Spinner label="加载项目与证据…" />
@@ -64,7 +68,12 @@ export function ProjectsPage() {
   const projects = projectsQuery.data ?? []
   const evidence = evidenceQuery.data ?? []
   const pending =
-    createProject.isPending || updateProject.isPending || createEvidence.isPending || updateEvidence.isPending
+    createProject.isPending ||
+    updateProject.isPending ||
+    createEvidence.isPending ||
+    updateEvidence.isPending ||
+    deleteProjectMutation.isPending ||
+    deleteEvidenceMutation.isPending
 
   const reportError = (caught: Error) => {
     const message =
@@ -186,6 +195,51 @@ export function ProjectsPage() {
     setEvidenceApproach(item.approach ?? '')
     setEvidenceResult(item.result ?? '')
     setEvidenceUrlOrPath(item.urlOrPath ?? '')
+  }
+
+  const removeProject = async (project: ProjectCaseSummary) => {
+    const refCount = (project.evidenceRefs ?? []).length
+    if (
+      !window.confirm(
+        `删除项目案例「${project.title}」？直接影响：${refCount} 条证据引用将随项目进入最近删除（证据本身保留），30 天内可在设置页恢复，恢复后引用 ID 不变。`,
+      )
+    ) {
+      return
+    }
+    setError(null)
+    try {
+      await deleteProjectMutation.mutateAsync({ projectId: project.id, version: project.version })
+      if (editingProject?.id === project.id) {
+        resetProjectForm()
+      }
+      pushToast('项目案例已进入最近删除，可在设置页恢复')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const removeEvidence = async (item: Evidence) => {
+    const refProjects = projects.filter((project) =>
+      (project.evidenceRefs ?? []).some((ref) => ref.id === item.id && !ref.trashed),
+    ).length
+    const skillHint = '关联技能的引用同步失效'
+    if (
+      !window.confirm(
+        `删除证据「${item.title}」？直接影响：${refProjects} 个项目案例的引用将显示“来源已删除”；间接影响：${skillHint}。证据进入最近删除，30 天内可在设置页恢复，恢复后引用 ID 不变。`,
+      )
+    ) {
+      return
+    }
+    setError(null)
+    try {
+      await deleteEvidenceMutation.mutateAsync({ evidenceId: item.id, version: item.version })
+      if (editingEvidence?.id === item.id) {
+        resetEvidenceForm()
+      }
+      pushToast('证据已进入最近删除，可在设置页恢复')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
   }
 
   return (
@@ -337,7 +391,9 @@ export function ProjectsPage() {
                     {(project.evidenceRefs ?? []).length > 0 ? (
                       <p className="muted" style={{ margin: 0 }}>
                         证据引用：
-                        {(project.evidenceRefs ?? []).map((ref) => ref.title).join('、')}
+                        {(project.evidenceRefs ?? [])
+                          .map((ref) => (ref.trashed ? `${ref.title}（来源已删除）` : ref.title))
+                          .join('、')}
                       </p>
                     ) : null}
                   </div>
@@ -349,6 +405,15 @@ export function ProjectsPage() {
                       onClick={() => startEditProject(project)}
                     >
                       编辑
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      type="button"
+                      disabled={pending}
+                      onClick={() => removeProject(project)}
+                    >
+                      删除
                     </Button>
                   </div>
                 </div>
@@ -488,6 +553,15 @@ export function ProjectsPage() {
                       onClick={() => startEditEvidence(item)}
                     >
                       编辑
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      type="button"
+                      disabled={pending}
+                      onClick={() => removeEvidence(item)}
+                    >
+                      删除
                     </Button>
                   </div>
                 </div>

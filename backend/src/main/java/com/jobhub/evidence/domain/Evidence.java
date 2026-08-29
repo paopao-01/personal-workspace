@@ -61,6 +61,7 @@ public class Evidence {
 	public String getCreatedAt() { return createdAt; }
 	public String getUpdatedAt() { return updatedAt; }
 	public String getDeletedAt() { return deletedAt; }
+	public boolean isTrashed() { return deletedAt != null && !deletedAt.isBlank(); }
 	public long getVersion() { return version; }
 	public List<String> getSkillIds() { return skillIds == null ? List.of() : skillIds; }
 	public void setSkillIds(List<String> skillIds) {
