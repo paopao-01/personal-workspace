@@ -3,6 +3,7 @@ import {
   completeReview,
   createKnowledgePoint,
   createReviewQuestion,
+  reopenReview,
   saveReviewDraft,
   updateReviewQuestion,
   type InterviewQuestion,
@@ -84,6 +85,23 @@ export function useCompleteReview() {
     { reviewId: string; interviewId: string; version: number }
   >({
     mutationFn: ({ reviewId, version }) => completeReview(reviewId, version),
+    onSuccess: (review) => {
+      queryClient.setQueryData(['reviews', 'interview', review.interviewId], review)
+      queryClient.invalidateQueries({
+        queryKey: ['reviews', 'interview', review.interviewId],
+      })
+    },
+  })
+}
+
+export function useReopenReview() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    InterviewReview,
+    Error,
+    { reviewId: string; version: number }
+  >({
+    mutationFn: ({ reviewId, version }) => reopenReview(reviewId, version),
     onSuccess: (review) => {
       queryClient.setQueryData(['reviews', 'interview', review.interviewId], review)
       queryClient.invalidateQueries({

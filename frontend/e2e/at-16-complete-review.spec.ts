@@ -140,6 +140,6 @@ test('AT-16 complete review requires a question or explicit no-questions marker'
   )
   await page.getByRole('button', { name: '完成复盘' }).click()
   expect((await completeResponse).ok()).toBe(true)
-  await expect(page.getByText('复盘已完成')).toBeVisible()
+  await expect(page.getByText('复盘已完成').first()).toBeVisible()
   await expect(page.locator('dd').filter({ hasText: /^已完成$/ }).last()).toBeVisible()
 })

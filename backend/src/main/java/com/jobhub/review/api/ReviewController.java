@@ -46,6 +46,15 @@ public class ReviewController {
 		return ResponseEntity.ok(InterviewReviewResponse.from(service.complete(id, version)));
 	}
 
+	@PostMapping("/reviews/{id}/reopen")
+	public ResponseEntity<InterviewReviewResponse> reopen(@PathVariable String id,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		return ResponseEntity.ok(InterviewReviewResponse.from(service.reopen(id, version)));
+	}
+
 	@PutMapping("/interview-questions/{id}")
 	public InterviewQuestionResponse updateQuestion(@PathVariable String id,
 			@RequestHeader(value = "If-Match-Version", required = false) Long version,

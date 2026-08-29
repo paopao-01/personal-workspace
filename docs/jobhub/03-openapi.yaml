@@ -399,6 +399,17 @@ paths:
       responses:
         '200': { description: 复盘已完成, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewReview' } } } }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /reviews/{reviewId}/reopen:
+    parameters: [ { $ref: '#/components/parameters/ReviewId' } ]
+    post:
+      tags: [Reviews]
+      summary: 重新打开已完成的复盘（COMPLETED → DRAFT，保留问题与任务关联）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '200': { description: 复盘已重新打开, content: { application/json: { schema: { $ref: '#/components/schemas/InterviewReview' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
   /reviews/{reviewId}/questions:
     parameters: [ { $ref: '#/components/parameters/ReviewId' } ]
     post:

@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成两个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环（到期 PENDING 提醒由调度自动转 SENT 并生成站内通知，TopBar 未读角标 + `/notifications` 页可标记已读）。
+- 项目阶段：P1（V0.2）进行中，已完成三个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen（`POST /reviews/{reviewId}/reopen`，COMPLETED→DRAFT 保留问题与任务关联，页面支持重新打开后继续编辑并再次完成）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口实现**复盘 reopen**（小切片）：OpenAPI 补 `POST /reviews/{reviewId}/reopen`（If-Match-Version，COMPLETED→DRAFT，保留问题与任务关联），ReviewService 支持已完成后恢复编辑，前端复盘页加“重新打开”动作，补集成测试与 E2E。其后可做 `/skills` 技能画像页 + Dashboard 弱点聚合 + 要求合并（契约存量清零）。
+- 当前任务：下一窗口建议实现 `/skills` 技能画像页（契约已有 `GET /skills/profile`、`PUT /skills/{skillId}/self-level`，侧边栏“能力与证据”入口现处禁用态），并顺带补 Dashboard `weakKnowledgePoints` 聚合（契约要求 `WeakKnowledgePoint[]`，当前仍为占位空数组）——两者合为一个契约存量清零切片。其后候选：`POST /job-requirements/merge` 要求合并。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,46 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-9
+
+- 目标：P1 第三切片——复盘 reopen；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 扩展：新增 `POST /reviews/{reviewId}/reopen`（Idempotency-Key + If-Match-Version；200 返回 InterviewReview，404/409/422 IllegalTransition），与状态机第 5 章 `COMPLETED ──reopen──> DRAFT` 对齐。
+  - 后端：`ReviewMapper.reopen`（`review_status='DRAFT'` 单次转移，WHERE version + COMPLETED + 未删除）；`ReviewService.reopen` 专用命令——仅 COMPLETED 可 reopen，从 DRAFT reopen 返回 `422 ILLEGAL_STATE_TRANSITION`；问题、知识点与学习任务来源关联全部保留，仅状态回退并递增版本。
+  - 前端：`reviewApi.reopenReview` + `useReopenReview`（局部更新 + 失效复盘查询）；快速复盘页完成态横幅改为“复盘已完成。如需补充或修改问题，可重新打开复盘（问题与任务关联会保留）”并提供“重新打开”按钮；reopen 后编辑入口自动恢复（`isCompletedReview` 重新计算），可继续新增问题并再次完成。
+  - 集成测试：`ReviewIntegrationTest` 新增 `P1_reopenCompletedReviewKeepsQuestionsAndAllowsEditing`——缺版本 400、reopen 后状态 DRAFT 且问题保留、DRAFT 再 reopen 返回 422 ILLEGAL_STATE_TRANSITION、reopen 后可新增问题并再次完成。
+  - E2E：新增 `frontend/e2e/p1-review-reopen.spec.ts`（API 造完成态复盘 → UI 点“重新打开”→ 状态回草稿 → 补充第二个问题 → 再次完成 → API 校验 2 个问题 COMPLETED）。
+  - 修复 `at-16-complete-review.spec.ts` 的 `getByText('复盘已完成')` 断言：完成态横幅文案更新后与 toast 同时可见导致 strict mode violation，改用 `.first()`。
+- 未完成：
+  - `/skills` 技能画像页、Dashboard `weakKnowledgePoints` 聚合、`POST /job-requirements/merge` 要求合并仍待实现（契约已声明，见总状态当前任务）。
+  - 编辑 COMPLETED 复盘的“仍满足完成条件可直接保持 COMPLETED”路径（状态机 5 章后半）未实现——当前编辑已完成复盘必须先 reopen，语义更严格但不违反状态机。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 修改：`backend/src/main/java/com/jobhub/review/{infrastructure/ReviewMapper,application/ReviewService,api/ReviewController}.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/ReviewIntegrationTest.java`。
+  - 修改：`frontend/src/api/reviews/{reviewApi,useReviewMutations}.ts`、`frontend/src/features/reviews/InterviewReviewPage.tsx`、`frontend/e2e/at-16-complete-review.spec.ts`。
+  - 新增：`frontend/e2e/p1-review-reopen.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReviewIntegrationTest"` -> 4 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，55 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-review-reopen.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 13 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen）。
+- 验证结果：
+  - reopen 链路（完成态 UI 入口 → 状态回退 → 继续编辑 → 再次完成）有集成测试与浏览器级 E2E 覆盖。
+  - 本窗口 OpenAPI 变更为新增端点，非破坏性；未新增数据库迁移。
+- 已知问题：
+  - 完成态横幅文案含“复盘已完成”前缀，页面内同时存在 toast 与横幅时用 `.first()` 断言（已在 at-16 与新 E2E 中处理）。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现 `/skills` 技能画像页：`GET /skills/profile`（聚合 skill/user_skill/skill_evidence 三维度，无 user_skill 的技能也要返回）+ `PUT /skills/{skillId}/self-level`（If-Match-Version + reason），前端启用“能力与证据”导航并新增 `/skills` 页（三维度独立展示，修改自评不触发其他维度变化）；顺带补 Dashboard `weakKnowledgePoints` 真实聚合（复用 `WeakKnowledgePointMapper` 查询，替换占位空数组）。补集成测试与 E2E。
+- 不要重复做：
+  - 不要重建 review reopen 链路；不要让 reopen 修改问题/知识点/任务数据。
+  - 不要在无 `user_skill` 时伪造技能等级或证据状态（无资料显示“未评估”）。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-8
 

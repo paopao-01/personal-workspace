@@ -97,3 +97,15 @@ export async function completeReview(
   )
   return res.data
 }
+
+export async function reopenReview(
+  reviewId: string,
+  version: number,
+): Promise<InterviewReview> {
+  const res = await apiClient.post<InterviewReview>(
+    `/reviews/${reviewId}/reopen`,
+    {},
+    { headers: ifMatchHeader(version) },
+  )
+  return res.data
+}

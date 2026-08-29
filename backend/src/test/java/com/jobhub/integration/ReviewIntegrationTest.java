@@ -129,6 +129,72 @@ class ReviewIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrStr(refreshedStats, "0.questions", 0, "answerStatus")).isEqualTo("PARTIALLY_ANSWERED");
 	}
 
+	@Test
+	void P1_reopenCompletedReviewKeepsQuestionsAndAllowsEditing() {
+		String interviewId = completedInterview();
+		String reviewBody = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/review"),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		).getBody();
+		String reviewId = JsonProbe.str(reviewBody, "id");
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\" reopen 前的问题\",\"answerStatus\":\"UNANSWERED\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		String draftReview = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		restTemplate.exchange(url("/reviews/" + reviewId + "/complete"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(draftReview, "version")),
+			String.class);
+		// complete 会递增版本，reopen 前重新获取当前版本
+		String completedReview = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+
+		// 缺 If-Match-Version → 400
+		ResponseEntity<String> missingVersion = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/reopen"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		);
+		assertThat(missingVersion.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+		// reopen 成功：状态回 DRAFT，问题与版本保留
+		String reopened = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/reopen"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(completedReview, "version")),
+			String.class
+		).getBody();
+		assertThat(JsonProbe.str(reopened, "status")).isEqualTo("DRAFT");
+		assertThat(JsonProbe.arraySize(reopened, "questions")).isEqualTo(1);
+		assertThat(JsonProbe.lng(reopened, "version")).isEqualTo(JsonProbe.lng(completedReview, "version") + 1);
+
+		// DRAFT 再次 reopen → 422 ILLEGAL_STATE_TRANSITION
+		ResponseEntity<String> illegal = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/reopen"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(reopened, "version")),
+			String.class
+		);
+		assertThat(illegal.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		assertThat(JsonProbe.str(illegal.getBody(), "code")).isEqualTo("ILLEGAL_STATE_TRANSITION");
+
+		// reopen 后可继续编辑：新增问题并再次完成
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\" reopen 后补充的问题\",\"answerStatus\":\"PARTIALLY_ANSWERED\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		String editedReview = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(editedReview, "questions")).isEqualTo(2);
+		ResponseEntity<String> completedAgain = restTemplate.exchange(
+			url("/reviews/" + reviewId + "/complete"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(editedReview, "version")),
+			String.class
+		);
+		assertThat(completedAgain.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.str(completedAgain.getBody(), "status")).isEqualTo("COMPLETED");
+	}
+
 	private String completedInterview() {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("复盘科技", "Java 后端工程师")), String.class).getBody(), "id");
