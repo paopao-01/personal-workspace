@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成七个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（P08 附加字段 + 跨面试聚合，V4 迁移新增 project_expression_risk 列，`GET /reviews/analysis` 聚合端点）。
+- 项目阶段：P1（V0.2）进行中，已完成八个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`，只插缺失行 + 冲突预检 + 恢复预览 + 结果报告）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口候选（与用户确认后开工）：数据导入与完整恢复（依赖已完成 JSON 导出格式，自包含）、简历定制草稿（需先建 AI 任务基础设施，规模最大，需用户明确同意接入 AI）、浏览器与邮件提醒（PRD 9.3）。
+- 当前任务：下一窗口候选（与用户确认后开工）：简历定制草稿（需先建 AI 任务基础设施，规模最大，需用户明确同意接入 AI）、浏览器与邮件提醒（PRD 9.3）、CSV 导出（PRD 明确 V0.2 范围，可选）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,50 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-14
+
+- 目标：P1 第八切片——数据导入与完整恢复（PRD 9.5：标准数据包导入、冲突预检、恢复预览、恢复结果报告）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI：新增 `POST /data-imports/validate`（只读预检 + 恢复预览）与 `POST /data-imports/restore`（Idempotency-Key；执行恢复）及 `DataImportPackage`/`ImportTablePreview`/`ImportIssue`/`ImportValidationReport`/`ImportTableResult`/`ImportResultReport` schema。数据包 = 导出端点生成的标准 JSON 原样回传（format/exportedAt/tables），前端文件选择仅做客户端读取，不走 multipart。
+  - 后端 `ImportService`（datamanagement，基于 JdbcTemplate）：预检语义——同键行已存在且内容一致 → duplicateIdentical（跳过）；同键已存在但内容不同 → CONFLICT 问题（用户事实优先，恢复时保留现状）；外键父行在数据库与数据包中均不存在 → MISSING_PARENT（跳过）。恢复语义：只插入缺失行，不修改、不覆盖任何已有行，重复恢复天然幂等（第二次全部重复跳过）。键规则：默认主键 id，复合主键表（question_knowledge/skill_evidence/project_evidence/requirement_skill）按组合键；`user_skill.user_id` 指向不导出的 user_profile（本机单例）豁免预检；插入列以 `PRAGMA table_info` 白名单为准（表名来自硬编码清单，值全参数化）；已知 23 表按外键安全顺序处理，未知表（含排除表 user_setting 等）记录 UNKNOWN_TABLE 问题并跳过。违反业务唯一键（如 knowledge_point.normalized_name）的行进入 ROW_FAILED 问题，不中断其余行。
+  - 内容比较按导出行包含的列进行，数字与数字字符串视为相等（SQLite TEXT 亲和列往返）。
+  - 前端 `/settings` 新增“数据导入与恢复”区块（`ImportRestoreSection`）：文件选择 → 预检并预览（影响范围：每表行数/将插入/重复/冲突/缺父级 + 问题明细，最多展示 20 条）→ window.confirm 展示插入/跳过汇总 → 确认恢复 → 结果报告横幅（插入/跳过/失败计数 + 问题明细）。
+  - `04-database-design.md` 第 6 节更新为 P1 已实现导入/恢复语义（原文“P0 仅定义导出”）。
+  - 集成测试 `DataImportIntegrationTest` 3 用例：①端到端（真实导出 → UUID 整体重映射构造全缺失数据包 → validate insertableRows==totalRows → restore inserted==totalRows → GET 岗位可读 → 重复恢复 inserted==0 && skippedIdentical==totalRows）；②冲突跳过且保留现状（改包内岗位标题 → conflict 问题 → 恢复后数据库标题不变）；③缺父级跳过 + 未知表跳过 + 空指针提醒可插入 + 非法数据包（format 不符/缺 tables）validate/restore 均 422。
+  - E2E `frontend/e2e/p1-data-import.spec.ts`：真实导出 → JS 重映射 UUID 并改写 normalized_name → UI 选文件 → 预检通过 → 确认恢复（dialog accept）→ 恢复完成且失败 0 → API 校验恢复后的岗位 → 二次预检全部重复跳过 → 二次恢复插入 0 行。
+- 未完成：
+  - 恢复报告暂无持久化（同步返回 + 前端展示，无 data_import 表；刷新后不保留历史报告）。
+  - 冲突行不支持“以数据包覆盖”模式（PRD 未要求，用户事实优先默认保留现状；如需覆盖另立需求并更新契约）。
+  - 违反业务唯一键的行只在结果报告中列为 ROW_FAILED，预检阶段不预判（normalized_name 等业务唯一键不在预检模型内）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`frontend/src/features/settings/SettingsPage.tsx`。
+  - 新增（backend）：`datamanagement/application/ImportService.java`、`datamanagement/api/{DataImportController,ImportValidationResponse,ImportResultResponse,ImportIssueResponse}.java`。
+  - 新增（backend test）：`backend/src/test/java/com/jobhub/integration/DataImportIntegrationTest.java`。
+  - 新增（frontend）：`src/api/settings/importApi.ts`、`src/features/settings/ImportRestoreSection.tsx`、`e2e/p1-data-import.spec.ts`；`src/api/generated/types.ts`（重新生成，不入库）。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=DataImportIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，69 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-data-import.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 18 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen/skills/merge/match-report/review-analysis/data-import）。
+- 验证结果：
+  - 导入链路（预检 → 预览 → 恢复 → 幂等重复恢复 → 冲突保留现状 → 缺父级跳过 → 非法包 422）有集成测试与浏览器级 E2E 覆盖。
+  - OpenAPI 变更为新增端点与 schema，非破坏性；未新增数据库迁移（无新表）。
+  - 恢复不覆盖、不删除任何已有数据；预检为只读。
+- 已知问题：
+  - E2E 共享临时库：导出包含其他用例数据，用例内通过 UUID 重映射定位本用例岗位；数据包行数随全量用例数据增长，恢复仍幂等。
+  - 导入大文件（数万行）未做性能优化，逐行 INSERT；本地单用户量级可接受。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认后实现下一个 P1 切片（候选：简历定制草稿——需先建 AI 任务基础设施与用户明确同意、浏览器与邮件提醒、CSV 导出）。
+- 不要重复做：
+  - 不要重建导入/恢复服务或设置页导入区块；不要让恢复覆盖或删除已有行（冲突必须跳过并报告）。
+  - 不要把 user_profile/user_setting/audit_log/idempotency_record/data_export/trash_item 纳入导入范围。
+  - 不要提前实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-13
 

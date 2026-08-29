@@ -19,6 +19,7 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDateTime } from '@/features/jobs/statusLabels'
+import { ImportRestoreSection } from '@/features/settings/ImportRestoreSection'
 import { exportStatusLabel, exportStatusVariant } from '@/features/settings/settingsLabels'
 import { trashExpiryLabel, trashResourceTypeLabel } from '@/features/settings/settingsLabels'
 
@@ -114,7 +115,7 @@ export function SettingsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">设置</h1>
-          <p className="page-subtitle">管理时区、默认提醒节点、数据导出与最近删除。</p>
+          <p className="page-subtitle">管理时区、默认提醒节点、数据导出导入与最近删除。</p>
         </div>
       </div>
 
@@ -187,6 +188,8 @@ export function SettingsPage() {
           ) : null}
         </div>
       </section>
+
+      <ImportRestoreSection />
 
       <section className="card">
         <div className="card-header">
