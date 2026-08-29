@@ -14,6 +14,7 @@ public record InterviewReviewResponse(
 	String overallFeeling,
 	String interviewerFocus,
 	String jobInterest,
+	String projectExpressRisk,
 	long version,
 	String lastModifiedAt,
 	List<InterviewQuestionResponse> questions
@@ -28,6 +29,7 @@ public record InterviewReviewResponse(
 			review.getOverallFeeling(),
 			review.getInterviewerFocus(),
 			review.getJobInterest(),
+			review.getProjectExpressionRisk(),
 			review.getVersion(),
 			review.getUpdatedAt(),
 			review.getQuestions().stream().map(InterviewQuestionResponse::from).toList()

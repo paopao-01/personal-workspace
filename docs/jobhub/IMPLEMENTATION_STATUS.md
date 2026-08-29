@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成六个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告（V3 迁移新增 match_report 表，规则计算 MATCH_RULE_V1，快照 + 指纹过期标记）。
+- 项目阶段：P1（V0.2）进行中，已完成七个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（P08 附加字段 + 跨面试聚合，V4 迁移新增 project_expression_risk 列，`GET /reviews/analysis` 聚合端点）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口候选（与用户确认后开工）：完整复盘分析（P08 附加字段 + 跨面试聚合，规模较小）、数据导入与完整恢复（依赖导出格式，自包含）、简历定制草稿（需先建 AI 任务基础设施，规模最大，需用户明确同意接入 AI）。
+- 当前任务：下一窗口候选（与用户确认后开工）：数据导入与完整恢复（依赖已完成 JSON 导出格式，自包含）、简历定制草稿（需先建 AI 任务基础设施，规模最大，需用户明确同意接入 AI）、浏览器与邮件提醒（PRD 9.3）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,56 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-13
+
+- 目标：P1 第七切片——完整复盘分析（PRD 8.6 完整复盘 + 16.2 指标；P08 附加字段补全 + 跨面试聚合）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - Flyway 迁移 `V4__add_project_expression_risk.sql`：interview_review 新增 `project_expression_risk` 列（复盘级“项目表达与真实性风险”，页面规格 P08 要求；V1~V3 未改动）。
+  - OpenAPI：`InterviewReview`/`ReviewUpsertRequest` 新增 `projectExpressRisk`（nullable，maxLength 5000）；新增 `GET /reviews/analysis`（query：from/to 按面试开始日期、jobId）与 `ReviewAnalysis`（内含 timeRange 内联对象）/`RateFraction`/`ReviewQuestionStats`/`ReviewKnowledgePointStat`/`ReviewQuestionTypeStat`/`ReviewInterviewResultSummary` schema。分析只输出原始计数与分数片段（numerator/denominator），不输出趋势性结论（PRD 16.2）。
+  - 后端复盘附加字段：`saveDraft` 全链路支持 interviewerFocus/jobInterest/projectExpressRisk（问题级 myAnswer/referenceAnswer/difficulty/errorReason/improvementPlan 既有 PUT 已支持）。PUT 语义为全字段替换，不带 `projectExpressRisk` 再次保存会清空该字段（集成测试覆盖）。
+  - 后端聚合分析：`ReviewService.analysis` 汇总——问题回答计数（含完全答出率分子/分母）、按知识点聚合（仅含有关联问题的知识点，questionCount DESC, name ASC）、按问题类型聚合（null 表示未填写类型）、面试结果汇总（reviewCount/withResultCount/passed/failed/pending）。JOIN 过滤与薄弱点查询同构（软删行排除；DRAFT 与 COMPLETED 复盘均计入，契约描述已注明）。
+  - 前端复盘页：新增“展开完整复盘字段”折叠区（面试官关注点/岗位意愿/项目表达与真实性风险），保存草稿始终携带全部复盘级字段（折叠未改字段回显服务端值，不丢数据）；“已记录问题”每行新增“编辑详情”内联表单（问题类型/难度 1-5/我的回答/参考答案/错误原因/改进方案，经既有 PUT 保存）；行摘要显示问题类型。
+  - 前端新增 `/reviews/analysis` 复盘分析页（侧边栏“复盘分析”入口）：时间范围筛选（回显 from/to）、问题回答情况概览（完全答出率以 1/3 形式的分子/分母展示，分母为 0 显示“—”）、知识点表现（“待巩固 N 道”/“全部答出”徽章）、问题类型分布、空状态与样本量提示文案。
+  - 集成测试：`ReviewAnalysisIntegrationTest` 2 用例（跨面试聚合计数/比率/知识点/类型/结果汇总 + from 过滤与 jobId 过滤；空库与未知 jobId 返回零值）；`ReviewIntegrationTest` 新增 `P1_fullReviewExtraFieldsRoundtripOnReviewAndQuestion`（复盘级字段往返 + 问题级完整字段往返 + 全字段替换清空语义）。
+  - E2E `frontend/e2e/p1-review-analysis.spec.ts`：UI 展开完整字段保存 → 刷新持久化 → 逐题编辑详情保存 → 刷新持久化 → 5 月时间窗隔离断言聚合（完全答出率 1/3、知识点行计数、结果汇总）→ 样本外窗口空状态。
+- 未完成：
+  - “薄弱点改善”两时间窗口对比（PRD 16.2）未实现——属趋势类结论，留待有明确需求时补契约。
+  - 分析页暂无 jobId 筛选控件（契约已支持 jobId 参数，与薄弱点页保持一致）。
+  - 面试难度按 PRD 8.6 描述为“面试难度”，现契约沿用 OpenAPI 既有问题级 difficulty 建模，未新增面试级难度字段。
+  - `backend/data/exports/` 为运行时导出目录，仍未纳入 .gitignore（保持历史现状，不提交）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 修改（backend）：`review/{domain/InterviewReview,infrastructure/ReviewMapper,infrastructure/QuestionMapper,application/ReviewService,api/ReviewUpsertRequest,api/InterviewReviewResponse,api/ReviewController}.java`、`backend/src/test/java/com/jobhub/integration/ReviewIntegrationTest.java`。
+  - 新增（backend）：`db/migration/V4__add_project_expression_risk.sql`、`review/domain/ReviewAnalysis.java`、`review/infrastructure/{AnalysisStatusCountRow,AnalysisKnowledgePointStatRow,AnalysisQuestionTypeStatRow,AnalysisResultCountRow}.java`、`review/api/ReviewAnalysisResponse.java`、`backend/src/test/java/com/jobhub/integration/ReviewAnalysisIntegrationTest.java`。
+  - 修改（frontend）：`src/api/reviews/{reviewApi,useReviewQueries}.ts`、`src/app/routes.tsx`、`src/components/layout/Sidebar.tsx`、`src/features/reviews/InterviewReviewPage.tsx`、`src/api/generated/types.ts`（重新生成）。
+  - 新增（frontend）：`src/features/reviews/ReviewAnalysisPage.tsx`、`e2e/p1-review-analysis.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReviewAnalysisIntegrationTest"` -> 2 tests，0 failures，0 errors。
+  - `cd backend && mvn test "-Dtest=ReviewAnalysisIntegrationTest,ReviewIntegrationTest"` -> 7 tests（ReviewIntegrationTest 5 tests 全绿，含新增 P1 往返用例）。
+  - `cd backend && mvn test` -> BUILD SUCCESS，66 tests，0 failures，0 errors（Flyway V1→V4 迁移通过）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-review-analysis.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 17 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen/skills/merge/match-report/review-analysis）。
+- 验证结果：
+  - 完整复盘字段链路（UI 展开 → 保存 → 持久化 → 全字段替换语义）与跨面试聚合（计数、分数片段、过滤）均有集成测试与浏览器级 E2E 覆盖。
+  - 本窗口 OpenAPI 变更为新增字段/端点，非破坏性；数据库变更走 V4 迁移，符合迁移纪律。
+  - 分析为只读聚合，不修改复盘/问题/知识点数据。
+- 已知问题：
+  - JsonProbe 对 JSON null 返回字符串 "null"，新测试断言按此约定书写。
+  - 聚合 SQL 与薄弱点查询在 questionTypeStats 排序上仅保证 questionCount DESC（同数排序未定义），测试用 containsExactlyInAnyOrder 断言。
+  - 复盘页快速表单的面试结果下拉默认停留在 FAILED（既有行为），用户未选择时以 FAILED 保存；如需改为无默认值需另立需求。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认后实现下一个 P1 切片（候选：数据导入与完整恢复、简历定制草稿——后者需 AI 基础设施与用户明确同意、浏览器与邮件提醒）。
+- 不要重复做：
+  - 不要重建复盘附加字段持久化、`/reviews/analysis` 聚合或 `/reviews/analysis` 页面。
+  - 不要在分析输出中加入综合百分比或趋势性结论（PRD 16.2：显示分母与时间范围，样本不足只给原始数量）。
+  - 不要让分析修改复盘/问题/知识点数据；分析只读。
+  - 不要提前实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-12
 

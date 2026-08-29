@@ -11,6 +11,8 @@ import com.jobhub.interview.domain.Interview;
 import com.jobhub.interview.domain.InterviewResult;
 import com.jobhub.interview.domain.InterviewScheduleStatus;
 import com.jobhub.review.domain.*;
+import com.jobhub.review.infrastructure.AnalysisResultCountRow;
+import com.jobhub.review.infrastructure.AnalysisStatusCountRow;
 import com.jobhub.review.infrastructure.QuestionMapper;
 import com.jobhub.review.infrastructure.ReviewMapper;
 import com.jobhub.review.infrastructure.WeakKnowledgePointRow;
@@ -44,7 +46,8 @@ public class ReviewService {
 
 	@Transactional
 	public InterviewReview saveDraft(String interviewId, Long expectedVersion, InterviewResult result,
-			Boolean noQuestionsRecorded, String overallFeeling, String interviewerFocus, String jobInterest) {
+			Boolean noQuestionsRecorded, String overallFeeling, String interviewerFocus, String jobInterest,
+			String projectExpressionRisk) {
 		Interview interview = interviewService.get(interviewId);
 		if (interview.getScheduleStatus() != InterviewScheduleStatus.COMPLETED) {
 			throw new BusinessRuleException("Review draft can only be saved after the interview is completed");
@@ -54,7 +57,7 @@ public class ReviewService {
 		if (existing == null) {
 			InterviewReview created = InterviewReview.draft(ids.newId(), interviewId, result,
 				Boolean.TRUE.equals(noQuestionsRecorded), blankToNull(overallFeeling), blankToNull(interviewerFocus),
-				blankToNull(jobInterest), now);
+				blankToNull(jobInterest), blankToNull(projectExpressionRisk), now);
 			reviewMapper.insert(created);
 			return hydrate(requireReview(reviewMapper.selectById(created.getId()), "InterviewReview", created.getId()));
 		}
@@ -65,7 +68,7 @@ public class ReviewService {
 			throw new BusinessRuleException("Completed review must be reopened before saving a draft");
 		}
 		existing.updateDraft(result, Boolean.TRUE.equals(noQuestionsRecorded), blankToNull(overallFeeling),
-			blankToNull(interviewerFocus), blankToNull(jobInterest), now);
+			blankToNull(interviewerFocus), blankToNull(jobInterest), blankToNull(projectExpressionRisk), now);
 		VersionCheck.requireAffected(reviewMapper.updateDraft(existing, expectedVersion), existing.getVersion());
 		return hydrate(requireReview(reviewMapper.selectById(existing.getId()), "InterviewReview", existing.getId()));
 	}
@@ -182,6 +185,65 @@ public class ReviewService {
 		return questionMapper.selectWeakKnowledgePoints(normalizedFrom, normalizedTo, normalizedJobId).stream()
 			.map(row -> toWeakKnowledgePoint(row, normalizedFrom, normalizedTo, normalizedJobId))
 			.toList();
+	}
+
+	/**
+	 * 跨面试复盘聚合分析：按面试开始日期与岗位过滤，只汇总原始计数，
+	 * 完全答出率以分子/分母片段输出（PRD 16.2），不做趋势推断。
+	 */
+	public ReviewAnalysis analysis(String from, String to, String jobId) {
+		String normalizedFrom = blankToNull(from);
+		String normalizedTo = blankToNull(to);
+		String normalizedJobId = blankToNull(jobId);
+		long totalCount = 0;
+		long fullyAnsweredCount = 0;
+		long partiallyAnsweredCount = 0;
+		long unansweredCount = 0;
+		for (AnalysisStatusCountRow row : questionMapper.selectAnalysisQuestionStatusCounts(normalizedFrom,
+				normalizedTo, normalizedJobId)) {
+			totalCount += row.getCnt();
+			switch (row.getAnswerStatus()) {
+				case "FULLY_ANSWERED" -> fullyAnsweredCount = row.getCnt();
+				case "PARTIALLY_ANSWERED" -> partiallyAnsweredCount = row.getCnt();
+				case "UNANSWERED" -> unansweredCount = row.getCnt();
+				default -> { }
+			}
+		}
+		List<ReviewAnalysis.KnowledgePointStat> knowledgePointStats = questionMapper
+			.selectAnalysisKnowledgePointStats(normalizedFrom, normalizedTo, normalizedJobId)
+			.stream()
+			.map(row -> new ReviewAnalysis.KnowledgePointStat(
+				new KnowledgePoint(row.getKnowledgePointId(), row.getName(), row.getCategory()),
+				row.getQuestionCount(), row.getFullyAnsweredCount()))
+			.toList();
+		List<ReviewAnalysis.QuestionTypeStat> questionTypeStats = questionMapper
+			.selectAnalysisQuestionTypeStats(normalizedFrom, normalizedTo, normalizedJobId)
+			.stream()
+			.map(row -> new ReviewAnalysis.QuestionTypeStat(row.getType(), row.getQuestionCount(),
+				row.getFullyAnsweredCount()))
+			.toList();
+		long reviewCount = 0;
+		long withResultCount = 0;
+		long passedCount = 0;
+		long failedCount = 0;
+		long pendingCount = 0;
+		for (AnalysisResultCountRow row : reviewMapper.selectAnalysisResultCounts(normalizedFrom, normalizedTo,
+				normalizedJobId)) {
+			reviewCount += row.getCnt();
+			if (row.getInterviewResult() == null) {
+				continue;
+			}
+			withResultCount += row.getCnt();
+			switch (row.getInterviewResult()) {
+				case "PASSED" -> passedCount = row.getCnt();
+				case "FAILED" -> failedCount = row.getCnt();
+				case "PENDING" -> pendingCount = row.getCnt();
+				default -> { }
+			}
+		}
+		return new ReviewAnalysis(normalizedFrom, normalizedTo, reviewCount, totalCount, fullyAnsweredCount,
+			partiallyAnsweredCount, unansweredCount, knowledgePointStats, questionTypeStats, withResultCount,
+			passedCount, failedCount, pendingCount);
 	}
 
 	private InterviewReview hydrate(InterviewReview review) {

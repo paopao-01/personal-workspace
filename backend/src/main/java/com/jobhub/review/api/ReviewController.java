@@ -26,7 +26,8 @@ public class ReviewController {
 			@RequestHeader(value = "If-Match-Version", required = false) Long version,
 			@Valid @RequestBody ReviewUpsertRequest request) {
 		return InterviewReviewResponse.from(service.saveDraft(id, version, request.interviewResult(),
-			request.noQuestionsRecorded(), request.overallFeeling(), request.interviewerFocus(), request.jobInterest()));
+			request.noQuestionsRecorded(), request.overallFeeling(), request.interviewerFocus(), request.jobInterest(),
+			request.projectExpressRisk()));
 	}
 
 	@PostMapping("/reviews/{id}/questions")
@@ -87,6 +88,14 @@ public class ReviewController {
 	public ResponseEntity<KnowledgePointResponse> createKnowledgePoint(@Valid @RequestBody KnowledgePointCreateRequest request) {
 		return ResponseEntity.status(HttpStatus.CREATED)
 			.body(KnowledgePointResponse.from(service.createKnowledgePoint(request.name(), request.category())));
+	}
+
+	@GetMapping("/reviews/analysis")
+	public ReviewAnalysisResponse analysis(
+			@RequestParam(value = "from", required = false) String from,
+			@RequestParam(value = "to", required = false) String to,
+			@RequestParam(value = "jobId", required = false) String jobId) {
+		return ReviewAnalysisResponse.from(service.analysis(from, to, jobId));
 	}
 
 	@GetMapping("/knowledge-points/weak")

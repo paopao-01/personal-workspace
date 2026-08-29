@@ -195,6 +195,58 @@ class ReviewIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.str(completedAgain.getBody(), "status")).isEqualTo("COMPLETED");
 	}
 
+	@Test
+	void P1_fullReviewExtraFieldsRoundtripOnReviewAndQuestion() {
+		String interviewId = completedInterview();
+		String saved = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/review"),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"PASSED\",\"noQuestionsRecorded\":false,"
+				+ "\"overallFeeling\":\"整体顺畅\",\"interviewerFocus\":\"系统设计\",\"jobInterest\":\"较高\",\"projectExpressRisk\":\"缺少量化结果\"}",
+				"Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		).getBody();
+		assertThat(JsonProbe.str(saved, "projectExpressRisk")).isEqualTo("缺少量化结果");
+		assertThat(JsonProbe.str(saved, "interviewerFocus")).isEqualTo("系统设计");
+		assertThat(JsonProbe.str(saved, "jobInterest")).isEqualTo("较高");
+
+		String question = restTemplate.exchange(
+			url("/reviews/" + JsonProbe.str(saved, "id") + "/questions"),
+			HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"Redis 缓存穿透怎么解决？\",\"answerStatus\":\"PARTIALLY_ANSWERED\",\"type\":\"技术\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		).getBody();
+
+		String updated = restTemplate.exchange(
+			url("/interview-questions/" + JsonProbe.str(question, "id")),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"content\":\"Redis 缓存穿透怎么解决？\",\"answerStatus\":\"PARTIALLY_ANSWERED\",\"type\":\"技术\","
+				+ "\"myAnswer\":\"提到布隆过滤器\",\"referenceAnswer\":\"布隆过滤器 + 空值缓存\",\"difficulty\":4,"
+				+ "\"errorReason\":\"漏了空值缓存\",\"improvementPlan\":\"整理缓存异常场景清单\",\"knowledgePointIds\":[]}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(question, "version")),
+			String.class
+		).getBody();
+		assertThat(JsonProbe.str(updated, "myAnswer")).isEqualTo("提到布隆过滤器");
+		assertThat(JsonProbe.str(updated, "referenceAnswer")).isEqualTo("布隆过滤器 + 空值缓存");
+		assertThat(JsonProbe.intVal(updated, "difficulty")).isEqualTo(4);
+		assertThat(JsonProbe.str(updated, "errorReason")).isEqualTo("漏了空值缓存");
+		assertThat(JsonProbe.str(updated, "improvementPlan")).isEqualTo("整理缓存异常场景清单");
+
+		String review = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		assertThat(JsonProbe.str(review, "projectExpressRisk")).isEqualTo("缺少量化结果");
+		assertThat(JsonProbe.arrStr(review, "questions", 0, "myAnswer")).isEqualTo("提到布隆过滤器");
+		assertThat(JsonProbe.arrInt(review, "questions", 0, "difficulty")).isEqualTo(4);
+
+		// 复盘为全字段替换：再次保存草稿但不带 projectExpressRisk 时应清空
+		String replaced = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/review"),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"PASSED\",\"noQuestionsRecorded\":false,\"overallFeeling\":\"整体顺畅\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(saved, "version")),
+			String.class
+		).getBody();
+		assertThat(JsonProbe.str(replaced, "projectExpressRisk")).isNull();
+	}
+
 	private String completedInterview() {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("复盘科技", "Java 后端工程师")), String.class).getBody(), "id");

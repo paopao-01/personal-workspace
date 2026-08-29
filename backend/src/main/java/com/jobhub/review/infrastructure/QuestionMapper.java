@@ -117,9 +117,7 @@ public interface QuestionMapper {
 		  AND version=#{expectedVersion}
 		  AND deleted_at IS NULL
 		""")
-	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
-
-	@Update("UPDATE interview_question SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
+	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);	@Update("UPDATE interview_question SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
 	int restoreById(@Param("id") String id, @Param("now") String now);
 
 	@Delete("DELETE FROM interview_question WHERE id=#{id}")
@@ -127,4 +125,59 @@ public interface QuestionMapper {
 
 	@Delete("DELETE FROM task_source WHERE source_type='QUESTION' AND source_id=#{questionId}")
 	int deleteTaskSourceForQuestion(@Param("questionId") String questionId);
+
+	@Select("""
+		SELECT q.answer_status AS answerStatus, COUNT(*) AS cnt
+		FROM interview_question q
+		JOIN interview_review r ON r.id = q.review_id AND r.deleted_at IS NULL
+		JOIN interview_schedule i ON i.id = r.interview_id AND i.deleted_at IS NULL
+		JOIN application_record a ON a.id = i.application_id AND a.deleted_at IS NULL
+		WHERE q.deleted_at IS NULL
+		  AND (#{from} IS NULL OR substr(i.starts_at, 1, 10) >= #{from})
+		  AND (#{to} IS NULL OR substr(i.starts_at, 1, 10) <= #{to})
+		  AND (#{jobId} IS NULL OR a.job_id = #{jobId})
+		GROUP BY q.answer_status
+		""")
+	List<AnalysisStatusCountRow> selectAnalysisQuestionStatusCounts(@Param("from") String from, @Param("to") String to,
+			@Param("jobId") String jobId);
+
+	@Select("""
+		SELECT k.id AS knowledgePointId,
+		       k.name,
+		       k.category,
+		       COUNT(*) AS questionCount,
+		       SUM(CASE WHEN q.answer_status = 'FULLY_ANSWERED' THEN 1 ELSE 0 END) AS fullyAnsweredCount
+		FROM knowledge_point k
+		JOIN question_knowledge qk ON qk.knowledge_point_id = k.id
+		JOIN interview_question q ON q.id = qk.question_id AND q.deleted_at IS NULL
+		JOIN interview_review r ON r.id = q.review_id AND r.deleted_at IS NULL
+		JOIN interview_schedule i ON i.id = r.interview_id AND i.deleted_at IS NULL
+		JOIN application_record a ON a.id = i.application_id AND a.deleted_at IS NULL
+		WHERE k.deleted_at IS NULL
+		  AND (#{from} IS NULL OR substr(i.starts_at, 1, 10) >= #{from})
+		  AND (#{to} IS NULL OR substr(i.starts_at, 1, 10) <= #{to})
+		  AND (#{jobId} IS NULL OR a.job_id = #{jobId})
+		GROUP BY k.id, k.name, k.category
+		ORDER BY questionCount DESC, k.name
+		""")
+	List<AnalysisKnowledgePointStatRow> selectAnalysisKnowledgePointStats(@Param("from") String from,
+			@Param("to") String to, @Param("jobId") String jobId);
+
+	@Select("""
+		SELECT q.question_type AS type,
+		       COUNT(*) AS questionCount,
+		       SUM(CASE WHEN q.answer_status = 'FULLY_ANSWERED' THEN 1 ELSE 0 END) AS fullyAnsweredCount
+		FROM interview_question q
+		JOIN interview_review r ON r.id = q.review_id AND r.deleted_at IS NULL
+		JOIN interview_schedule i ON i.id = r.interview_id AND i.deleted_at IS NULL
+		JOIN application_record a ON a.id = i.application_id AND a.deleted_at IS NULL
+		WHERE q.deleted_at IS NULL
+		  AND (#{from} IS NULL OR substr(i.starts_at, 1, 10) >= #{from})
+		  AND (#{to} IS NULL OR substr(i.starts_at, 1, 10) <= #{to})
+		  AND (#{jobId} IS NULL OR a.job_id = #{jobId})
+		GROUP BY q.question_type
+		ORDER BY questionCount DESC
+		""")
+	List<AnalysisQuestionTypeStatRow> selectAnalysisQuestionTypeStats(@Param("from") String from,
+			@Param("to") String to, @Param("jobId") String jobId);
 }

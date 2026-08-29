@@ -28,6 +28,16 @@ import {
 } from '@/features/interviews/interviewLabels'
 import { answerStatusLabel, reviewStatusLabel } from '@/features/reviews/reviewLabels'
 
+interface QuestionDetailDraft {
+  questionId: string
+  type: string
+  myAnswer: string
+  referenceAnswer: string
+  difficulty: number | null
+  errorReason: string
+  improvementPlan: string
+}
+
 export function InterviewReviewPage() {
   const { interviewId } = useParams<{ interviewId: string }>()
   const navigate = useNavigate()
@@ -47,6 +57,11 @@ export function InterviewReviewPage() {
   const [knowledgePointName, setKnowledgePointName] = useState('')
   const [noQuestionsRecorded, setNoQuestionsRecorded] = useState<boolean | null>(null)
   const [overallFeeling, setOverallFeeling] = useState<string | null>(null)
+  const [interviewerFocus, setInterviewerFocus] = useState<string | null>(null)
+  const [jobInterest, setJobInterest] = useState<string | null>(null)
+  const [projectExpressRisk, setProjectExpressRisk] = useState<string | null>(null)
+  const [showFullReview, setShowFullReview] = useState(false)
+  const [questionDetailDraft, setQuestionDetailDraft] = useState<QuestionDetailDraft | null>(null)
   const [taskDraftQuestionId, setTaskDraftQuestionId] = useState<string | null>(null)
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAcceptanceCriteria, setTaskAcceptanceCriteria] = useState('')
@@ -83,6 +98,10 @@ export function InterviewReviewPage() {
   const selectedInterviewResult = interviewResult || review?.interviewResult || 'FAILED'
   const selectedNoQuestionsRecorded = noQuestionsRecorded ?? review?.noQuestionsRecorded ?? false
   const selectedOverallFeeling = overallFeeling ?? review?.overallFeeling ?? ''
+  const selectedInterviewerFocus = interviewerFocus ?? review?.interviewerFocus ?? ''
+  const selectedJobInterest = jobInterest ?? review?.jobInterest ?? ''
+  const selectedProjectExpressRisk = projectExpressRisk ?? review?.projectExpressRisk ?? ''
+  const fullReviewFieldsDisabled = cannotReview || isCompletedReview || pending
 
   const reportError = (caught: Error) => {
     if (isApiError(caught) || isNetworkError(caught)) {
@@ -111,6 +130,9 @@ export function InterviewReviewPage() {
           interviewResult: selectedInterviewResult,
           noQuestionsRecorded: selectedNoQuestionsRecorded,
           overallFeeling: selectedOverallFeeling.trim() || undefined,
+          interviewerFocus: selectedInterviewerFocus.trim() || undefined,
+          jobInterest: selectedJobInterest.trim() || undefined,
+          projectExpressRisk: selectedProjectExpressRisk.trim() || undefined,
         },
       })
       if (content) {
@@ -145,6 +167,9 @@ export function InterviewReviewPage() {
     const question = review?.questions?.find((item) => item.id === questionId)
     if (!question) return
     setActionError(null)
+    if (questionDetailDraft?.questionId === questionId) {
+      setQuestionDetailDraft(null)
+    }
     try {
       await updateQuestion.mutateAsync({
         questionId,
@@ -164,6 +189,46 @@ export function InterviewReviewPage() {
       })
       await reviewQuery.refetch()
       pushToast('回答状态已更新')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const openQuestionDetail = (question: InterviewQuestion) => {
+    setQuestionDetailDraft({
+      questionId: question.id,
+      type: question.type ?? '',
+      myAnswer: question.myAnswer ?? '',
+      referenceAnswer: question.referenceAnswer ?? '',
+      difficulty: question.difficulty ?? null,
+      errorReason: question.errorReason ?? '',
+      improvementPlan: question.improvementPlan ?? '',
+    })
+  }
+
+  const submitQuestionDetail = async (question: InterviewQuestion) => {
+    if (!questionDetailDraft || questionDetailDraft.questionId !== question.id) return
+    setActionError(null)
+    try {
+      await updateQuestion.mutateAsync({
+        questionId: question.id,
+        interviewId: interview.id,
+        version: question.version,
+        body: {
+          content: question.content,
+          answerStatus: question.answerStatus,
+          type: questionDetailDraft.type.trim() || undefined,
+          knowledgePointIds: question.knowledgePoints?.map((point) => point.id) ?? [],
+          myAnswer: questionDetailDraft.myAnswer.trim() || undefined,
+          referenceAnswer: questionDetailDraft.referenceAnswer.trim() || undefined,
+          difficulty: questionDetailDraft.difficulty ?? undefined,
+          errorReason: questionDetailDraft.errorReason.trim() || undefined,
+          improvementPlan: questionDetailDraft.improvementPlan.trim() || undefined,
+        },
+      })
+      setQuestionDetailDraft(null)
+      await reviewQuery.refetch()
+      pushToast('问题详情已保存')
     } catch (caught) {
       reportError(caught as Error)
     }
@@ -297,6 +362,15 @@ export function InterviewReviewPage() {
       <section className="card">
         <div className="card-header">
           <h2 className="card-title">最小复盘</h2>
+          <Button
+            size="sm"
+            variant="ghost"
+            type="button"
+            disabled={cannotReview || isCompletedReview}
+            onClick={() => setShowFullReview((value) => !value)}
+          >
+            {showFullReview ? '收起完整复盘字段' : '展开完整复盘字段'}
+          </Button>
         </div>
         <div className="card-body">
           <form onSubmit={submit} noValidate>
@@ -363,6 +437,41 @@ export function InterviewReviewPage() {
                 disabled={cannotReview || isCompletedReview}
               />
             </Field>
+            {showFullReview ? (
+              <>
+                <Field label="面试官关注点">
+                  <Textarea
+                    value={selectedInterviewerFocus}
+                    onChange={(event) => setInterviewerFocus(event.target.value)}
+                    rows={3}
+                    maxLength={5000}
+                    disabled={fullReviewFieldsDisabled}
+                  />
+                </Field>
+                <Field label="岗位意愿">
+                  <Input
+                    value={selectedJobInterest}
+                    onChange={(event) => setJobInterest(event.target.value)}
+                    maxLength={1000}
+                    placeholder="例如：较高，团队方向与期望匹配"
+                    disabled={fullReviewFieldsDisabled}
+                  />
+                </Field>
+                <Field label="项目表达与真实性风险">
+                  <Textarea
+                    value={selectedProjectExpressRisk}
+                    onChange={(event) => setProjectExpressRisk(event.target.value)}
+                    rows={3}
+                    maxLength={5000}
+                    placeholder="例如：量化结果不足，追问实现细节时表达含糊"
+                    disabled={fullReviewFieldsDisabled}
+                  />
+                </Field>
+                <p className="muted" style={{ marginTop: -8 }}>
+                  完整复盘字段可随时后补；逐题的我的回答、参考答案、难度、错误原因与改进方案在“已记录问题”中编辑。
+                </p>
+              </>
+            ) : null}
             <div className="flex-row" style={{ justifyContent: 'flex-end' }}>
               <Button
                 variant="default"
@@ -398,6 +507,7 @@ export function InterviewReviewPage() {
                   <div className="requirement-main">
                     <span className="requirement-raw">{question.content}</span>
                     <span className="muted">
+                      {question.type ? `${question.type} · ` : ''}
                       {question.knowledgePoints?.length
                         ? question.knowledgePoints.map((point) => point.name).join('、')
                         : '未关联知识点'}
@@ -422,6 +532,19 @@ export function InterviewReviewPage() {
                       </option>
                       <option value="FULLY_ANSWERED">{answerStatusLabel.FULLY_ANSWERED}</option>
                     </Select>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      type="button"
+                      disabled={pending || isCompletedReview}
+                      onClick={() =>
+                        questionDetailDraft?.questionId === question.id
+                          ? setQuestionDetailDraft(null)
+                          : openQuestionDetail(question)
+                      }
+                    >
+                      {questionDetailDraft?.questionId === question.id ? '收起详情' : '编辑详情'}
+                    </Button>
                     {question.answerStatus !== 'FULLY_ANSWERED' ? (
                       <Button
                         size="sm"
@@ -434,6 +557,98 @@ export function InterviewReviewPage() {
                       </Button>
                     ) : null}
                   </div>
+                  {questionDetailDraft?.questionId === question.id ? (
+                    <div className="inline-edit" style={{ width: '100%' }}>
+                      <div className="form-row">
+                        <Field label="问题类型">
+                          <Input
+                            value={questionDetailDraft.type}
+                            onChange={(event) =>
+                              setQuestionDetailDraft({ ...questionDetailDraft, type: event.target.value })
+                            }
+                            maxLength={100}
+                            placeholder="例如：技术、项目、行为面试"
+                          />
+                        </Field>
+                        <Field label="难度">
+                          <Select
+                            value={questionDetailDraft.difficulty ?? ''}
+                            onChange={(event) =>
+                              setQuestionDetailDraft({
+                                ...questionDetailDraft,
+                                difficulty: event.target.value === '' ? null : Number(event.target.value),
+                              })
+                            }
+                          >
+                            <option value="">未填写</option>
+                            <option value="1">1（简单）</option>
+                            <option value="2">2</option>
+                            <option value="3">3（中等）</option>
+                            <option value="4">4</option>
+                            <option value="5">5（困难）</option>
+                          </Select>
+                        </Field>
+                      </div>
+                      <Field label="我的回答">
+                        <Textarea
+                          value={questionDetailDraft.myAnswer}
+                          onChange={(event) =>
+                            setQuestionDetailDraft({ ...questionDetailDraft, myAnswer: event.target.value })
+                          }
+                          rows={3}
+                          maxLength={20000}
+                        />
+                      </Field>
+                      <Field label="参考答案">
+                        <Textarea
+                          value={questionDetailDraft.referenceAnswer}
+                          onChange={(event) =>
+                            setQuestionDetailDraft({ ...questionDetailDraft, referenceAnswer: event.target.value })
+                          }
+                          rows={3}
+                          maxLength={20000}
+                        />
+                      </Field>
+                      <Field label="错误原因">
+                        <Textarea
+                          value={questionDetailDraft.errorReason}
+                          onChange={(event) =>
+                            setQuestionDetailDraft({ ...questionDetailDraft, errorReason: event.target.value })
+                          }
+                          rows={2}
+                          maxLength={5000}
+                        />
+                      </Field>
+                      <Field label="改进方案">
+                        <Textarea
+                          value={questionDetailDraft.improvementPlan}
+                          onChange={(event) =>
+                            setQuestionDetailDraft({ ...questionDetailDraft, improvementPlan: event.target.value })
+                          }
+                          rows={2}
+                          maxLength={5000}
+                        />
+                      </Field>
+                      <div className="flex-row" style={{ justifyContent: 'flex-end' }}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() => setQuestionDetailDraft(null)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          disabled={pending}
+                          onClick={() => submitQuestionDetail(question)}
+                        >
+                          {updateQuestion.isPending ? '保存中…' : '保存问题详情'}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   {taskDraftQuestionId === question.id ? (
                     <div className="inline-edit" style={{ width: '100%' }}>
                       <Field label="任务名称" required>

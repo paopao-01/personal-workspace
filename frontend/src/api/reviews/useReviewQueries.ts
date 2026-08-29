@@ -2,10 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { isNotFound } from '@/api/errors'
 import {
   getInterviewReview,
+  getReviewAnalysis,
   getWeakKnowledgePoints,
   listKnowledgePoints,
   type InterviewReview,
   type KnowledgePoint,
+  type ReviewAnalysis,
   type WeakKnowledgePoint,
 } from '@/api/reviews/reviewApi'
 
@@ -40,5 +42,16 @@ export function useWeakKnowledgePoints(params?: {
   return useQuery<WeakKnowledgePoint[]>({
     queryKey: ['knowledge-points', 'weak', params],
     queryFn: () => getWeakKnowledgePoints(params),
+  })
+}
+
+export function useReviewAnalysis(params?: {
+  from?: string
+  to?: string
+  jobId?: string
+}) {
+  return useQuery<ReviewAnalysis>({
+    queryKey: ['reviews', 'analysis', params],
+    queryFn: () => getReviewAnalysis(params),
   })
 }
