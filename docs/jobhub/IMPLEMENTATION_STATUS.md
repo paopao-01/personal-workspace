@@ -74,7 +74,7 @@
 ### 窗口 2026-08-29-4
 
 - 目标：在 `dev` 分支实现 P10 最小项目案例与证据引用 CRUD 和 `/projects` 页面；验证无问题后合并回 `main`。
-- 状态：**DONE**（推送远程待用户确认）。
+- 状态：**DONE**（`dev` 与 `main` 已合并，用户确认后均已推送到远程：`dev = 46af103`、`main = 170b9f2`）。
 - 已完成：
   - OpenAPI 细化：`ProjectCaseSummary` 新增可选 `result` 字段（含“不生成虚构指标”描述）。原因：`ProjectCaseCreateRequest` 有可选 `result` 而响应缺失该字段，全字段覆盖 PUT 会在每次编辑时静默清空 `result_text`；属非破坏性细化（先例：`manualMatchStatus`），已重新生成前端类型。
   - 新增后端 `evidence` 模块四层：`GET/POST /api/projects`、`PUT /api/projects/{projectId}`、`GET/POST /api/evidence`、`PUT /api/evidence/{evidenceId}`，与 OpenAPI 端点一一对应（GET 返回数组、无分页、无 DELETE——删除属后续 AT-23）。
