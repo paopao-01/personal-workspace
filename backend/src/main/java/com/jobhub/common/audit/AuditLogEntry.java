@@ -28,6 +28,18 @@ public class AuditLogEntry {
 		return entry;
 	}
 
+	public static AuditLogEntry requirementMerged(String id, String sourceRequirementId,
+			String targetRequirementId, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "JOB_REQUIREMENT";
+		entry.resourceId = sourceRequirementId;
+		entry.action = "REQUIREMENT_MERGED";
+		entry.reason = "Merged into requirement " + targetRequirementId + ".";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
 	public String getId() { return id; }
 	public String getResourceType() { return resourceType; }
 	public String getResourceId() { return resourceId; }

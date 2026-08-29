@@ -36,4 +36,11 @@ public class JobRequirementController {
 						req.getManualMatchStatus()));
 		return ResponseEntity.ok(JobRequirementResponse.from(updated));
 	}
+
+	@PostMapping("/job-requirements/merge")
+	public ResponseEntity<JobRequirementResponse> merge(@Valid @RequestBody RequirementMergeRequest request) {
+		JobRequirement target = requirementService.merge(
+				request.targetRequirementId(), request.sourceRequirementIds());
+		return ResponseEntity.ok(JobRequirementResponse.from(target));
+	}
 }
