@@ -5,10 +5,10 @@
 ## 1. 当前总状态
 
 - 项目阶段：M3 进行中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16）。
-- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15、AT-16 后端、前端和 E2E 路径已完成。
-- 当前任务：AT-16 完成复盘最小条件已完成；下一窗口建议实现 AT-17 薄弱知识点统计。
+- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15、AT-16、AT-17 后端和前端可观察路径已完成。
+- 当前任务：AT-17 薄弱知识点统计已完成；下一窗口建议扩大为 AT-18 从问题创建任务 + AT-19 完成任务不改能力。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-28。
+- 最后更新：2026-08-29。
 
 ## 2. 已完成内容
 
@@ -70,6 +70,59 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-1
+
+- 目标：在 `dev` 分支扩大切片实现 AT-17 薄弱知识点统计，并补最小问题回答状态更新与前端可观察入口；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 后端实现 `GET /api/knowledge-points/weak`：按面试开始日期范围和可选 `jobId` 过滤，`UNANSWERED=1`、`PARTIALLY_ANSWERED=0.5`、`FULLY_ANSWERED=0`，只返回仍计入薄弱点的问题作为下钻数据。
+  - 后端实现最小 `PUT /api/interview-questions/{questionId}`：要求 `If-Match-Version`，可更新题目内容、回答状态、完整复盘字段和知识点关联；回答状态更正后弱点统计实时变化。
+  - 后端实现 `GET/POST /api/knowledge-points` 最小路径：支持查询知识点与创建/复用同名知识点，供复盘页关联使用。
+  - 前端快速复盘页新增“关联知识点”输入；新增问题时可创建/复用知识点并关联；已记录问题可直接更正回答状态。
+  - 前端新增 `/knowledge-points/weak` 薄弱知识点页面和侧边栏入口，展示加权薄弱次数、题目数和原始问题下钻。
+  - 扩展 `JsonProbe` 测试辅助，支持根数组/嵌套数组数字字段断言。
+- 未完成：
+  - AT-18 从问题创建任务、AT-19 完成任务不改能力尚未实现。
+  - `DELETE /api/interview-questions/{id}`、知识点合并、复盘 reopen 仍未实现。
+  - M4 准备包/证据/导出/最近删除仍未开始。
+- 修改文件：
+  - 新增：`backend/src/main/java/com/jobhub/review/api/KnowledgePointCreateRequest.java`、`QuestionUpdateRequest.java`、`WeakKnowledgePointResponse.java`。
+  - 新增：`backend/src/main/java/com/jobhub/review/domain/WeakKnowledgePoint.java`。
+  - 新增：`backend/src/main/java/com/jobhub/review/infrastructure/WeakKnowledgePointRow.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/api/ReviewController.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/application/ReviewService.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/domain/InterviewQuestion.java`、`KnowledgePoint.java`。
+  - 修改：`backend/src/main/java/com/jobhub/review/infrastructure/QuestionMapper.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/ReviewIntegrationTest.java`、`support/JsonProbe.java`。
+  - 修改：`frontend/src/api/reviews/reviewApi.ts`、`useReviewQueries.ts`、`useReviewMutations.ts`。
+  - 修改：`frontend/src/features/reviews/InterviewReviewPage.tsx`。
+  - 新增：`frontend/src/features/reviews/WeakKnowledgePointsPage.tsx`。
+  - 修改：`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`。
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReviewIntegrationTest"` -> BUILD SUCCESS，3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，38 tests，0 failures，0 errors。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，180 modules。
+- 验证结果：
+  - AT-17 后端统计和回答状态更正已由集成测试覆盖。
+  - 前端 AT-17 可观察路径已通过 typecheck/lint/build；本窗口未新增 Playwright 用例。
+  - 本窗口未修改 OpenAPI 契约字段含义；相关路径和 schema 在既有 OpenAPI 中已声明。
+  - 本窗口未新增数据库迁移；V1 既有 `knowledge_point`、`interview_question`、`question_knowledge` 表可支撑本切片。
+- 已知问题：
+  - `PUT /interview-questions/{id}` 缺少 `If-Match-Version` 时当前返回 `BUSINESS_RULE_ERROR`，后续可统一成项目已有的缺版本 400 体验。
+  - 知识点同名复用目前采用小写归一化，尚未实现完整别名/合并记录。
+  - 前端薄弱点页面为最小统计视图，尚未接入任务创建和 jobId 筛选控件。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 扩大为实现 AT-18 + AT-19：从 `PARTIALLY_ANSWERED/UNANSWERED` 问题创建或关联学习任务；任务列表、任务状态专用 transition、完成时可填写验证结果且不得修改 `user_skill.self_level` 或清除历史薄弱题。
+  - 先按 OpenAPI 既有任务契约补后端 task 模块、集成测试，再补前端 `/tasks` 页面和复盘页“创建学习任务”入口。
+- 不要重复做：
+  - 不要重建 AT-15/AT-16 review 基础能力或 AT-17 弱点统计。
+  - 不要提前实现 M4 准备包、证据、导出、最近删除。
+  - 不要实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-28-4
 

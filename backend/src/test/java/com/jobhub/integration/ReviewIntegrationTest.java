@@ -85,6 +85,50 @@ class ReviewIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arraySize(completed.getBody(), "questions")).isEqualTo(1);
 	}
 
+	@Test
+	void AT17_updatingAnswerStatusRefreshesWeakKnowledgePointStatsWithDrillDownQuestions() {
+		String interviewId = completedInterview();
+		String reviewBody = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/review"),
+			HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class
+		).getBody();
+		String reviewId = JsonProbe.str(reviewBody, "id");
+		String knowledgePointId = JsonProbe.str(restTemplate.exchange(url("/knowledge-points"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"name\":\"Redis 缓存一致性\",\"category\":\"Redis\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class).getBody(), "id");
+
+		String firstQuestion = restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存与数据库双写时如何处理一致性？\",\"answerStatus\":\"UNANSWERED\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"Cache Aside 删除缓存失败怎么办？\",\"answerStatus\":\"PARTIALLY_ANSWERED\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class);
+
+		String stats = restTemplate.getForEntity(url("/knowledge-points/weak"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(stats, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(stats, "", 0, "knowledgePoint.name")).isEqualTo("Redis 缓存一致性");
+		assertThat(JsonProbe.arrDbl(stats, "", 0, "weightedWeaknessCount")).isEqualTo(1.5);
+		assertThat(JsonProbe.arrInt(stats, "", 0, "questionCount")).isEqualTo(2);
+		assertThat(JsonProbe.arraySize(stats, "0.questions")).isEqualTo(2);
+
+		String firstQuestionId = JsonProbe.str(firstQuestion, "id");
+		long firstQuestionVersion = JsonProbe.lng(firstQuestion, "version");
+		ResponseEntity<String> updated = restTemplate.exchange(url("/interview-questions/" + firstQuestionId), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存与数据库双写时如何处理一致性？\",\"answerStatus\":\"FULLY_ANSWERED\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(firstQuestionVersion)), String.class);
+
+		assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.str(updated.getBody(), "answerStatus")).isEqualTo("FULLY_ANSWERED");
+
+		String refreshedStats = restTemplate.getForEntity(url("/knowledge-points/weak"), String.class).getBody();
+		assertThat(JsonProbe.arrDbl(refreshedStats, "", 0, "weightedWeaknessCount")).isEqualTo(0.5);
+		assertThat(JsonProbe.arrInt(refreshedStats, "", 0, "questionCount")).isEqualTo(1);
+		assertThat(JsonProbe.arraySize(refreshedStats, "0.questions")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(refreshedStats, "0.questions", 0, "answerStatus")).isEqualTo("PARTIALLY_ANSWERED");
+	}
+
 	private String completedInterview() {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("复盘科技", "Java 后端工程师")), String.class).getBody(), "id");

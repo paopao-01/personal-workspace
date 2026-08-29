@@ -30,6 +30,19 @@ public class InterviewQuestion {
 		return q;
 	}
 
+	public void update(String content, AnswerStatus answerStatus, String type, String myAnswer, String referenceAnswer,
+			Integer difficulty, String errorReason, String improvementPlan, String now) {
+		this.content = content;
+		this.answerStatus = answerStatus;
+		this.type = type;
+		this.myAnswer = myAnswer;
+		this.referenceAnswer = referenceAnswer;
+		this.difficulty = difficulty;
+		this.errorReason = errorReason;
+		this.improvementPlan = improvementPlan;
+		this.updatedAt = now;
+	}
+
 	public String getId() { return id; }
 	public String getReviewId() { return reviewId; }
 	public String getContent() { return content; }
