@@ -33,6 +33,9 @@ backend/data/*.db-shm
 *.db
 *.db-journal
 
+# Generated export files (never commit user data)
+backend/data/exports/
+
 # Keep backend/data/ directory tracked but not its db files
 !backend/data/.gitkeep
 
