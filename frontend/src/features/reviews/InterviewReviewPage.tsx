@@ -6,6 +6,7 @@ import {
   useCompleteReview,
   useCreateKnowledgePoint,
   useCreateReviewQuestion,
+  useReopenReview,
   useSaveReviewDraft,
   useUpdateReviewQuestion,
 } from '@/api/reviews/useReviewMutations'
@@ -35,6 +36,7 @@ export function InterviewReviewPage() {
   const saveDraft = useSaveReviewDraft()
   const createQuestion = useCreateReviewQuestion()
   const completeReview = useCompleteReview()
+  const reopenReview = useReopenReview()
   const createKnowledgePoint = useCreateKnowledgePoint()
   const updateQuestion = useUpdateReviewQuestion()
   const createTaskFromQuestion = useCreateTaskFromQuestion()
@@ -74,6 +76,7 @@ export function InterviewReviewPage() {
     saveDraft.isPending ||
     createQuestion.isPending ||
     completeReview.isPending ||
+    reopenReview.isPending ||
     createKnowledgePoint.isPending ||
     updateQuestion.isPending ||
     createTaskFromQuestion.isPending
@@ -186,6 +189,25 @@ export function InterviewReviewPage() {
     }
   }
 
+  const reopen = async () => {
+    setError(null)
+    setActionError(null)
+    if (!review) {
+      setActionError('请先保存复盘草稿')
+      return
+    }
+    try {
+      await reopenReview.mutateAsync({
+        reviewId: review.id,
+        version: review.version,
+      })
+      await reviewQuery.refetch()
+      pushToast('复盘已重新打开，可继续编辑')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
   const openTaskDraft = (question: InterviewQuestion) => {
     setTaskDraftQuestionId(question.id)
     setTaskTitle(`补齐：${question.content.slice(0, 60)}`)
@@ -253,8 +275,17 @@ export function InterviewReviewPage() {
         </div>
       ) : null}
       {isCompletedReview ? (
-        <div className="success-banner">
-          <span>复盘已完成，当前切片暂不支持重新打开后编辑。</span>
+        <div className="success-banner" style={{ gap: 12 }}>
+          <span>复盘已完成。如需补充或修改问题，可重新打开复盘（问题与任务关联会保留）。</span>
+          <Button
+            size="sm"
+            variant="default"
+            type="button"
+            disabled={pending}
+            onClick={reopen}
+          >
+            重新打开
+          </Button>
         </div>
       ) : null}
       {actionError ? (

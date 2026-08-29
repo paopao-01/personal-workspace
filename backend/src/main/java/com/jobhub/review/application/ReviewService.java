@@ -1,6 +1,7 @@
 package com.jobhub.review.application;
 
 import com.jobhub.common.error.BusinessRuleException;
+import com.jobhub.common.error.IllegalStateTransitionException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
@@ -86,6 +87,21 @@ public class ReviewService {
 			throw new BusinessRuleException("Every question must have answer status before completing review");
 		}
 		VersionCheck.requireAffected(reviewMapper.complete(reviewId, expectedVersion, time.now()), review.getVersion());
+		return hydrate(requireReview(reviewMapper.selectById(reviewId), "InterviewReview", reviewId));
+	}
+
+	/**
+	 * 重新打开已完成的复盘（COMPLETED -> DRAFT，状态机第 5 章）。
+	 * 问题、知识点与学习任务来源关联全部保留，仅状态回退为 DRAFT。
+	 */
+	@Transactional
+	public InterviewReview reopen(String reviewId, long expectedVersion) {
+		InterviewReview review = hydrate(requireReview(reviewMapper.selectById(reviewId), "InterviewReview", reviewId));
+		if (review.getStatus() != ReviewStatus.COMPLETED) {
+			throw new IllegalStateTransitionException(review.getStatus().name(), ReviewStatus.DRAFT.name(),
+				"only COMPLETED review can be reopened");
+		}
+		VersionCheck.requireAffected(reviewMapper.reopen(reviewId, expectedVersion, time.now()), review.getVersion());
 		return hydrate(requireReview(reviewMapper.selectById(reviewId), "InterviewReview", reviewId));
 	}
 
