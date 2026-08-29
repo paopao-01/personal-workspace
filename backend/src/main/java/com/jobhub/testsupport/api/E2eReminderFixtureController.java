@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -31,7 +32,9 @@ public class E2eReminderFixtureController {
 	}
 
 	@PostMapping("/jobs/{jobId}/seed-project-evidence")
-	public Map<String, Object> seedProjectEvidence(@PathVariable String jobId) {
+	public Map<String, Object> seedProjectEvidence(
+			@PathVariable String jobId,
+			@RequestBody(required = false) Map<String, String> body) {
 		String requirementId = jdbc.queryForObject(
 			"SELECT id FROM job_requirement WHERE job_id=? AND confirmation_status='CONFIRMED' AND deleted_at IS NULL LIMIT 1",
 			String.class,
@@ -39,11 +42,13 @@ public class E2eReminderFixtureController {
 		);
 		String suffix = UUID.randomUUID().toString();
 		String now = "2026-08-29T00:00:00Z";
+		// skillName 可选：全量 E2E 共享临时库，用唯一名称避免多个用例创建同名技能
+		String skillName = body == null || body.get("skillName") == null ? "Redis" : body.get("skillName");
 		String skillId = UUID.randomUUID().toString();
 		String projectId = UUID.randomUUID().toString();
 		String evidenceId = UUID.randomUUID().toString();
 		jdbc.update("INSERT INTO skill (id, name, normalized_name, category, is_system, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-			skillId, "Redis", "redis-" + suffix, "Redis", 1, now, now);
+			skillId, skillName, skillName.toLowerCase() + "-" + suffix, "Redis", 1, now, now);
 		jdbc.update("INSERT INTO requirement_skill (requirement_id, skill_id, created_at) VALUES (?,?,?)", requirementId, skillId, now);
 		jdbc.update("INSERT INTO project (id, title, scenario, approach, problem_solved, result_text, created_at, updated_at, version) VALUES (?,?,?,?,?,?,?,?,0)",
 			projectId, "库存服务缓存改造", "库存查询接口压力高。", "使用 Cache Aside 管理热点数据。", "降低重复查询并保持可接受一致性。", null, now, now);

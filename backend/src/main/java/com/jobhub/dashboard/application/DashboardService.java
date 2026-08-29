@@ -9,6 +9,8 @@ import com.jobhub.job.infrastructure.JobMapper;
 import com.jobhub.interview.domain.Interview;
 import com.jobhub.interview.domain.InterviewScheduleStatus;
 import com.jobhub.interview.infrastructure.InterviewMapper;
+import com.jobhub.review.application.ReviewService;
+import com.jobhub.review.domain.WeakKnowledgePoint;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -28,7 +30,7 @@ import java.util.stream.Collectors;
  *   - activeApplications：进行中的活动投递
  *   - recentJobs：最近更新的岗位（复用 JobMapper.selectPage）
  *   - upcomingInterviews：未来已安排面试（按开始时间，最多 5 条）
- *   - weakKnowledgePoints：空数组（复盘/任务模块未实现）
+ *   - weakKnowledgePoints：全时段薄弱知识点统计（复用复盘模块聚合查询）
  *
  * 行动缺失不阻断状态转换（02-state-machines.md §3），仅作为 dashboard 提示。
  */
@@ -49,13 +51,15 @@ public class DashboardService {
 	private final ApplicationMapper applicationMapper;
 	private final JobMapper jobMapper;
 	private final InterviewMapper interviewMapper;
+	private final ReviewService reviewService;
 	private final UtcTime utcTime;
 
 	public DashboardService(ApplicationMapper applicationMapper, JobMapper jobMapper,
-			InterviewMapper interviewMapper, UtcTime utcTime) {
+			InterviewMapper interviewMapper, ReviewService reviewService, UtcTime utcTime) {
 		this.applicationMapper = applicationMapper;
 		this.jobMapper = jobMapper;
 		this.interviewMapper = interviewMapper;
+		this.reviewService = reviewService;
 		this.utcTime = utcTime;
 	}
 
@@ -96,7 +100,8 @@ public class DashboardService {
 				.limit(UPCOMING_INTERVIEWS_LIMIT)
 				.toList();
 
-		return new DashboardOverview(actionItems, activeApps, recentJobs, upcomingInterviews, List.of());
+		List<WeakKnowledgePoint> weakKnowledgePoints = reviewService.weakKnowledgePoints(null, null, null);
+		return new DashboardOverview(actionItems, activeApps, recentJobs, upcomingInterviews, weakKnowledgePoints);
 	}
 
 	private Map<String, Job> batchJobs(List<Application> apps) {
@@ -157,7 +162,7 @@ public class DashboardService {
 			List<Application> activeApplications,
 			List<Job> recentJobs,
 			List<Interview> upcomingInterviews,
-			List<Object> weakKnowledgePoints
+			List<WeakKnowledgePoint> weakKnowledgePoints
 	) { }
 
 	public record ActionItem(

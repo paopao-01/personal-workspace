@@ -1231,10 +1231,10 @@ components:
       properties:
         skillId: { type: string, format: uuid }
         skillName: { type: string }
-        selfLevel: { type: integer, minimum: 0, maximum: 5 }
-        evidenceStatus: { $ref: '#/components/schemas/EvidenceStatus' }
+        selfLevel: { type: integer, minimum: 0, maximum: 5, nullable: true, description: 用户自评等级；尚无自评记录时为 null，界面显示“未评估” }
+        evidenceStatus: { type: string, nullable: true, enum: [NO_EVIDENCE, WEAK, VALID], description: 证据状态；尚无自评记录时为 null，界面显示“未评估” }
         interviewPerformance: { type: object, additionalProperties: true, nullable: true }
-        version: { type: integer }
+        version: { type: integer, description: 乐观锁版本；尚无自评记录时为 0，首次 PUT self-level 以 0 作为 If-Match-Version }
     SelfLevelUpdateRequest:
       type: object
       required: [selfLevel]
