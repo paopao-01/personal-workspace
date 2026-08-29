@@ -5,6 +5,7 @@ import type {
   RequirementConfirmationStatus,
   RequirementType,
 } from '@/api/jobs/jobApi'
+import { getDisplayTimeZone } from '@/api/settings/displayTimeZone'
 
 /** UI 文案映射（非类型重复，集中管理）。颜色非传达状态的唯一方式。 */
 
@@ -82,7 +83,7 @@ export const gapStatusVariant: Record<
   PENDING_CONFIRMATION: 'subtle',
 }
 
-/** ISO-8601 UTC → 用户当前时区显示（原生 Intl，无新依赖）。 */
+/** ISO-8601 UTC → 用户设置时区显示（原生 Intl，无新依赖）；未配置时按浏览器本地时区。 */
 export function formatDateTime(isoUtc: string | null | undefined): string {
   if (!isoUtc) return '—'
   try {
@@ -91,6 +92,7 @@ export function formatDateTime(isoUtc: string | null | undefined): string {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: 'short',
       timeStyle: 'short',
+      timeZone: getDisplayTimeZone(),
     }).format(dt)
   } catch {
     return '—'

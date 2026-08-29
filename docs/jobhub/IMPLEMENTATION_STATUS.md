@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M4 已完成（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包、P10 项目案例/证据 CRUD、AT-23 最近删除和 AT-24 JSON 导出全部完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20、AT-23、AT-24 和 P10）。
-- 当前里程碑：M1~M4 全部 `DONE`；发布门槛 AT-01 至 AT-24 已全部实现并有自动化测试覆盖（AT-20~AT-24 属 M4，AT-21/AT-22 由准备包后端与乐观锁测试覆盖）。
-- 当前任务：AT-24 JSON 导出已完成，M4 收尾；下一窗口建议按 PRD 版本规划启动 P1 阶段（V0.2），优先候选：`/settings` 时区与默认提醒节点设置（`GET/PUT /api/settings`）、通知中心（`notification` 表已有）或简历定制前置——开始前先与用户确认 P1 优先级。
+- 项目阶段：P1（V0.2）第一切片已完成（设置页时区与默认提醒节点：`GET/PUT /api/settings` 落地、面试默认提醒接入用户配置、`/settings` 表单与全局时区显示）。P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
+- 当前里程碑：P1/V0.2 `IN_PROGRESS`；已完成设置切片，候选后续切片：通知中心（需先补 `/notifications` 契约）、简历定制前置、P05 投递卡片时间线等 UI 增强。
+- 当前任务：P1 设置切片已完成；下一窗口建议实现通知中心（先在 OpenAPI 补 `GET /notifications`、`POST /notifications/{id}/read` 契约，V1 已有 `notification` 表），或与用户确认其他 P1 优先级。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -51,7 +51,7 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 183 个 Java 文件，其中 evidence 模块 16 个、datamanagement 12 个：trash 5 个 + 导出 7 个）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 189 个 Java 文件，其中 evidence 模块 16 个、datamanagement 18 个：trash 5 + 导出 7 + settings 6）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
@@ -70,6 +70,54 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-7
+
+- 目标：P1（V0.2）第一切片——设置页时区与默认提醒节点；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**（P1 方向由用户确认为"设置页时区与提醒节点"）。
+- 已完成：
+  - 后端 datamanagement 新增 settings 四层：`GET /api/settings`、`PUT /api/settings`（Idempotency-Key + If-Match-Version，缺版本 400、版本冲突 409）。契约（UserSettings/UserSettingsUpdateRequest schema）无需修改。
+  - 校验规则：timeZone 必填且必须是合法 IANA 时区（`ZoneId.of` 校验，非法返回 `400 VALIDATION_ERROR` 及示例提示）；提醒偏移分钟数逐项 `@Min(1)`，服务端去重、倒序归一化；空数组合法，表示不生成默认提醒。
+  - 面试默认提醒接入用户配置：`InterviewService.createDefaultReminders` 改为读取 `user_setting.default_reminder_offsets_json`，1440/120/30 映射 ONE_DAY/TWO_HOURS/THIRTY_MINUTES，其余为 CUSTOM；创建与改期均按当前配置重新生成；配置为空则不生成。行为不改变种子默认值 `[1440,120,30]`，既有 AT-10/AT-11 断言不受影响。
+  - 前端：`api/settings` 新增 settingsApi/useSettingsQueries/useSettingsMutations；`displayTimeZone` 模块单例 + `AppLayout` 挂载时同步设置，`formatDateTime` 按用户配置时区格式化（未加载时回退浏览器本地时区）；面试事件时区显示逻辑不变。
+  - `/settings` 页新增"时区与提醒"区块（页面规格 P11 首位）：IANA 时区输入、预设节点勾选（1 天/2 小时/30 分钟）、自定义节点添加、保存后按服务端版本重挂载表单（无 effect 状态同步，React Compiler lint 干净）。
+  - `DatabaseCleaner` 每用例将 `user_setting` 重置为种子值，防止依赖默认提醒节点的用例跨类串扰。
+  - 新增 `frontend/e2e/p1-settings-reminders.spec.ts`：UI 修改时区/关闭预设/添加自定义节点并保存 → 刷新后表单与 API 状态一致 → 通过 API 恢复种子设置并验证表单还原。
+- 未完成：
+  - 通知中心：OpenAPI 无 `/notifications` 端点，`notification` 表尚未被任何业务流写入（P0 提醒以面试详情列表展示）。
+  - 提醒节点变更不影响已生成的提醒，仅作用于之后创建/改期的面试（符合 PRD"修改面试时间后按新时间重新生成"的语义）。
+  - 时区设置仅影响 `formatDateTime` 通用时间显示；面试事件时区（创建时选择）展示逻辑未改动。
+  - `/settings` 页仍缺导出历史列表（无列表端点）与设置页其余 P1 项。
+- 修改文件：
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+  - 新增：`backend/src/main/java/com/jobhub/datamanagement/{domain/UserSettings,infrastructure/UserSettingsMapper,application/SettingsService,api/UserSettingsUpdateRequest,api/UserSettingsResponse,api/SettingsController}.java`。
+  - 修改：`backend/src/main/java/com/jobhub/interview/application/InterviewService.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/SettingsIntegrationTest.java`。
+  - 新增：`frontend/src/api/settings/{settingsApi,useSettingsQueries,useSettingsMutations,displayTimeZone}.ts`。
+  - 修改：`frontend/src/features/jobs/statusLabels.ts`、`frontend/src/components/layout/AppLayout.tsx`、`frontend/src/features/settings/SettingsPage.tsx`。
+  - 新增：`frontend/e2e/p1-settings-reminders.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=SettingsIntegrationTest"` -> 2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，52 tests，0 failures，0 errors。
+  - `cd frontend && npm run lint` -> 0 warning / 0 error（重构消除 set-state-in-effect warning）；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-settings-reminders.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 11 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings）。
+- 验证结果：
+  - 设置读写、乐观锁、时区与偏移校验、面试默认提醒按配置生成（含改期）均有集成测试覆盖；UI 保存/刷新/还原路径有 E2E 覆盖。
+  - 本窗口未修改 OpenAPI（契约已声明）；未新增数据库迁移（V1 `user_setting` 表支撑）。
+- 已知问题：
+  - `user_setting` 无独立行级审计；乐观锁版本随更新递增。
+  - E2E 共享临时库，`p1-settings-reminders.spec.ts` 结束时通过 API 恢复种子设置。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现通知中心：先在 OpenAPI 补 `GET /notifications`（列表 + 未读数）与 `POST /notifications/{id}/read` 契约，明确 notification 何时写入（提醒到期标记 SENT 时、面试改期/取消时），再实现 datamanagement 通知四层与前端入口（TopBar 未读角标或独立页面），补集成测试与 E2E。
+  - 或与用户确认其他 P1 优先级（简历定制前置、P05 卡片时间线等）。
+- 不要重复做：
+  - 不要重建 settings 四层、`/settings` 时区表单或 `displayTimeZone` 机制。
+  - 不要让提醒节点变更追溯修改已生成提醒；不要在 P0/P1 中引入系统级推送、邮件、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-6
 
