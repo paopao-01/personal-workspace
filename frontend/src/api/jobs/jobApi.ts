@@ -105,6 +105,17 @@ export async function listRequirements(jobId: string): Promise<JobRequirement[]>
   return res.data
 }
 
+export async function mergeRequirements(
+  targetRequirementId: string,
+  sourceRequirementIds: string[],
+): Promise<JobRequirement> {
+  const res = await apiClient.post<JobRequirement>('/job-requirements/merge', {
+    targetRequirementId,
+    sourceRequirementIds,
+  })
+  return res.data
+}
+
 export async function updateRequirement(
   requirementId: string,
   version: number,

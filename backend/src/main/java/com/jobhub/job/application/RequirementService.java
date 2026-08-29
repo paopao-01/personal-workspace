@@ -1,5 +1,8 @@
 package com.jobhub.job.application;
 
+import com.jobhub.common.audit.AuditLogEntry;
+import com.jobhub.common.audit.infrastructure.AuditLogMapper;
+import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
@@ -10,7 +13,9 @@ import com.jobhub.job.infrastructure.RequirementMatchMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class RequirementService {
@@ -18,16 +23,18 @@ public class RequirementService {
 	private final JobMapper jobMapper;
 	private final JobRequirementMapper requirementMapper;
 	private final RequirementMatchMapper matchMapper;
+	private final AuditLogMapper auditLogMapper;
 	private final IdGenerator idGenerator;
 	private final UtcTime utcTime;
 	private final RequirementExtractor extractor;
 
 	public RequirementService(JobMapper jobMapper, JobRequirementMapper requirementMapper,
-							   RequirementMatchMapper matchMapper, IdGenerator idGenerator,
-							   UtcTime utcTime, RequirementExtractor extractor) {
+							   RequirementMatchMapper matchMapper, AuditLogMapper auditLogMapper,
+							   IdGenerator idGenerator, UtcTime utcTime, RequirementExtractor extractor) {
 		this.jobMapper = jobMapper;
 		this.requirementMapper = requirementMapper;
 		this.matchMapper = matchMapper;
+		this.auditLogMapper = auditLogMapper;
 		this.idGenerator = idGenerator;
 		this.utcTime = utcTime;
 		this.extractor = extractor;
@@ -87,5 +94,49 @@ public class RequirementService {
 		}
 
 		return requirementMapper.selectById(requirementId);
+	}
+
+	/**
+	 * 合并同一岗位的重复待确认要求（页面规格 P02：批量操作仅限同类候选项）。
+	 * 来源要求软删除并记录 merged_into_requirement_id 指向目标，同时写审计；
+	 * 已确认/已忽略的要求不可作为来源，避免破坏既有差距结论。
+	 */
+	@Transactional
+	public JobRequirement merge(String targetRequirementId, List<String> sourceRequirementIds) {
+		JobRequirement target = requirementMapper.selectById(targetRequirementId);
+		VersionCheck.requireFound(target, "JobRequirement", targetRequirementId);
+
+		Set<String> sourceIds = new LinkedHashSet<>();
+		if (sourceRequirementIds != null) {
+			for (String id : sourceRequirementIds) {
+				if (id != null && !id.isBlank()) {
+					sourceIds.add(id.trim());
+				}
+			}
+		}
+		if (sourceIds.isEmpty()) {
+			throw new BusinessRuleException("At least one source requirement is required to merge");
+		}
+		if (sourceIds.contains(targetRequirementId)) {
+			throw new BusinessRuleException("Target requirement cannot be merged into itself");
+		}
+
+		String now = utcTime.now();
+		for (String sourceId : sourceIds) {
+			JobRequirement source = requirementMapper.selectById(sourceId);
+			VersionCheck.requireFound(source, "JobRequirement", sourceId);
+			if (!source.getJobId().equals(target.getJobId())) {
+				throw new BusinessRuleException("Merged requirements must belong to the same job");
+			}
+			if (source.getConfirmationStatus() != ConfirmationStatus.PENDING) {
+				throw new BusinessRuleException("Only PENDING requirements can be merged");
+			}
+		}
+		for (String sourceId : sourceIds) {
+			requirementMapper.mergeInto(sourceId, targetRequirementId, now);
+			auditLogMapper.insert(AuditLogEntry.requirementMerged(idGenerator.newId(), sourceId,
+					targetRequirementId, now));
+		}
+		return requirementMapper.selectById(targetRequirementId);
 	}
 }

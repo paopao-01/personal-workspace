@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成四个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合（契约存量仅剩 `POST /job-requirements/merge`）。
+- 项目阶段：P1（V0.2）进行中，已完成五个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并。**OpenAPI 声明的全部端点均已实现，契约存量清零。**
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口实现**要求合并**（OpenAPI 已有 `POST /job-requirements/merge` 契约，用于合并同一岗位的重复候选要求），完成契约存量清零；其后进入 P1 新功能（候选：可解释匹配分数前置、简历定制前置、完整复盘分析），开始前与用户确认优先级。
+- 当前任务：下一窗口起进入 P1 新功能，候选（按 PRD V0.2 规划）：可解释匹配分数、完整复盘分析、简历定制草稿、数据导入、浏览器通知/邮件提醒（注意 AGENTS.md 约束：邮件/推送属 P1 且需用户明确要求）——开始前与用户确认优先级。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,42 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-11
+
+- 目标：P1 第五切片——要求合并（`POST /job-requirements/merge`），OpenAPI 契约存量清零；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - 后端：`RequirementService.merge` 专用命令——来源要求软删除并写 `merged_into_requirement_id` 指向目标（表预留字段，保留原始记录与合并溯源），逐来源写 `REQUIREMENT_MERGED` 审计；守卫规则：目标存在、来源非空（`@NotEmpty` 400）、来源不得含目标、来源必须同岗位且为 PENDING（已确认/已忽略来源 422，防止破坏既有差距结论）。`JobRequirementMapper.mergeInto` 单语句转移。响应返回合并后目标要求。
+  - 前端：`jobApi.mergeRequirements` + `useMergeRequirements`（局部更新 requirements 缓存）；候选要求确认区为 PENDING 行新增勾选框，选中 ≥2 项时显示合并操作条（目标为第一项；跨类型选择禁用合并，对应页面规格“批量操作仅限同类候选项”）；合并前 window.confirm 展示影响，成功后清空选择并刷新。
+  - 集成测试：`RequirementMergeIntegrationTest` 2 用例——合并成功（来源软删 + merged_into 指向目标 + 审计存在 + 列表移除）；跨岗位 422 且来源不删、目标同时作为来源 422、已确认来源 422、空来源 400。
+  - E2E：`frontend/e2e/p1-requirement-merge.spec.ts`（无提示词 JD 提取 MUST 分组 → UI 勾选两条同类候选 → 合并确认框 → 来源行移出 → API 校验列表）。
+- 未完成：
+  - 无（本切片范围）。P1 新功能候选见总状态当前任务。
+- 修改文件：
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/src/main/java/com/jobhub/common/audit/AuditLogEntry.java`、`backend/src/main/java/com/jobhub/job/infrastructure/JobRequirementMapper.java`、`backend/src/main/java/com/jobhub/job/application/RequirementService.java`、`backend/src/main/java/com/jobhub/job/api/JobRequirementController.java`、`frontend/src/api/jobs/{jobApi,useJobMutations}.ts`、`frontend/src/features/jobs/components/RequirementConfirmationSection.tsx`。
+  - 新增：`backend/src/main/java/com/jobhub/job/api/RequirementMergeRequest.java`、`backend/src/test/java/com/jobhub/integration/RequirementMergeIntegrationTest.java`、`frontend/e2e/p1-requirement-merge.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=RequirementMergeIntegrationTest"` -> 2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，60 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-requirement-merge.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 15 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen/skills/merge）。
+- 验证结果：
+  - 合并链路（UI 勾选 → 确认 → 来源软删 + merged_into + 审计 → 列表移除）有集成测试与浏览器级 E2E 覆盖。
+  - 本窗口未修改 OpenAPI（merge 契约已声明）；未新增数据库迁移（`merged_into_requirement_id` 为 V1 预留列）。
+- 已知问题：
+  - 提取器 rawText 取关键词 ±20/30 字符窗口，相邻关键词的窗口文本可能互相包含，E2E 行级文本断言不可靠（以 API 与选择状态断言为准）。
+  - 合并仅支持 PENDING 来源；已确认要求的合并/拆分语义未定义（需要时先补契约）。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认 P1 新功能优先级后开工（候选：可解释匹配分数、完整复盘分析、简历定制草稿、数据导入）。匹配分数属 PRD V0.2 且依赖差距清单与证据数据，建议优先；数据导入依赖导出格式，其次。
+- 不要重复做：
+  - 不要重建合并命令或候选确认区 UI。
+  - 不要允许已确认/已忽略要求作为合并来源（会静默改变差距结论）。
+  - 不要提前实现 AI 异步分析、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-10
 

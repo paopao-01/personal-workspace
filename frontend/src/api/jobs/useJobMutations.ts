@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  mergeRequirements,
   type JobCreateRequest,
   type JobUpdateRequest,
   type RequirementUpdateRequest,
@@ -90,6 +91,19 @@ export interface UpdateRequirementArgs {
   jobId: string
   version: number
   body: RequirementUpdateRequest
+}
+
+export function useMergeRequirements() {
+  const qc = useQueryClient()
+  return useMutation<JobRequirement, Error, { jobId: string; targetId: string; sourceIds: string[] }>({
+    mutationFn: ({ targetId, sourceIds }) => mergeRequirements(targetId, sourceIds),
+    onSuccess: (target, vars) => {
+      qc.setQueryData<JobRequirement[]>(
+        ['jobs', vars.jobId, 'requirements'],
+        (prev) => prev?.map((r) => (r.id === target.id ? target : r)) ?? prev,
+      )
+    },
+  })
 }
 
 export function useUpdateRequirement() {

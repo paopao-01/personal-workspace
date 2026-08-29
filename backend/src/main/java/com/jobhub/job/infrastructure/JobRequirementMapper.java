@@ -60,4 +60,8 @@ public interface JobRequirementMapper {
 	@Update("UPDATE job_requirement SET version = version + 1 " +
 			"WHERE id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL")
 	int bumpVersionByIdAndVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
+
+	@Update("UPDATE job_requirement SET deleted_at = #{now}, updated_at = #{now}, " +
+			"merged_into_requirement_id = #{targetId} WHERE id = #{id} AND deleted_at IS NULL")
+	int mergeInto(@Param("id") String id, @Param("targetId") String targetId, @Param("now") String now);
 }
