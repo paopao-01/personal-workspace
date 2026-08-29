@@ -1,5 +1,6 @@
 package com.jobhub.ai.application;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobhub.ai.domain.AiJob;
 import com.jobhub.ai.domain.AiJobItem;
@@ -26,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * AI 异步任务服务（PRD 9.2）：创建入队、重试（上限 3）、取消、候选条目逐项采纳（可编辑）/拒绝。
+ * AI 异步任务服务（PRD 9.2/9.4）：创建入队、重试（上限 3）、取消、候选条目逐项采纳（可编辑）/拒绝。
+ * 采纳按任务类型分派：JD_EXTRACTION 创建 source_type=AI 的 PENDING 岗位要求；
+ * RESUME_DRAFT 仅确认建议文本（溯源字段不可篡改），不创建业务数据。
  * 重新生成即再创建新任务，既有条目与确认状态不受影响。
  */
 @Service
@@ -60,14 +63,12 @@ public class AiJobService {
 
 	@Transactional
 	public AiJob create(AiJobType jobType, String objectId) {
-		if (jobType != AiJobType.JD_EXTRACTION) {
-			throw new BusinessRuleException("暂不支持的任务类型：" + jobType);
-		}
+		AiTaskHandler handler = handlers.stream()
+			.filter(h -> h.type() == jobType)
+			.findFirst()
+			.orElseThrow(() -> new BusinessRuleException("暂不支持的任务类型：" + jobType));
 		Job job = jobMapper.selectById(objectId);
 		VersionCheck.requireFound(job, "Job", objectId);
-		if (job.getJdRawText() == null || job.getJdRawText().isBlank()) {
-			throw new BusinessRuleException("岗位缺少 JD 原文，无法执行 AI 提取");
-		}
 		AiProvider provider = providerMapper.selectActive();
 		if (provider == null) {
 			throw new BusinessRuleException("尚未配置激活的 AI 供应商，请先在设置中配置");
@@ -82,9 +83,9 @@ public class AiJobService {
 		aiJob.setProviderId(provider.getId());
 		aiJob.setProviderType(provider.getProviderType().name());
 		aiJob.setModel(provider.getModel());
-		aiJob.setPromptVersion(promptVersion(jobType));
+		aiJob.setPromptVersion(handler.promptVersion());
 		aiJob.setAttemptCount(0);
-		aiJob.setInputSnapshot(job.getJdRawText());
+		aiJob.setInputSnapshot(handler.buildInputSnapshot(objectId));
 		aiJob.setCreatedAt(now);
 		aiJob.setUpdatedAt(now);
 		aiJobMapper.insert(aiJob);
@@ -143,20 +144,39 @@ public class AiJobService {
 		return requireJob(id);
 	}
 
-	/** 采纳候选（可编辑）：创建 source_type=AI 的 PENDING 岗位要求并回链条目。 */
+	/**
+	 * 采纳候选（可编辑），按任务类型分派：
+	 * JD_EXTRACTION → 创建 source_type=AI 的 PENDING 岗位要求并回链条目；
+	 * RESUME_DRAFT → 仅确认建议文本，不创建业务数据（溯源字段 sourceId/sourceType/sourceTitle 锁定为原文）。
+	 */
 	@Transactional
-	public AiJobItem acceptItem(String itemId, AiItemPayload editedPayload) {
+	public AiJobItem acceptItem(String itemId, JsonNode editedPayload) {
 		AiJobItem item = requireItem(itemId);
 		if (item.getStatus() != AiJobItemStatus.PROPOSED) {
 			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"仅 PROPOSED 条目可采纳");
 		}
-		AiItemPayload payload = resolvePayload(item, editedPayload);
+		AiJob job = aiJobMapper.selectById(item.getAiJobId());
+		if (job == null) {
+			throw new ResourceNotFoundException("AiJob", item.getAiJobId());
+		}
 		String now = time.now();
-		var requirement = requirementService.createAiCandidate(requireJobOfItem(item), payload.type(),
-				payload.rawText(), payload.normalizedName(), payload.proficiencyText());
-		String editedJson = editedPayload == null ? null : serialize(editedPayload);
-		if (itemMapper.markAccepted(itemId, editedJson, requirement.getId(), now) == 0) {
+		if (job.getJobType() == AiJobType.JD_EXTRACTION) {
+			AiItemPayload base = AiItemPayload.parseList("[" + item.getPayloadJson() + "]").get(0);
+			AiItemPayload payload = mergeJdPayload(base, editedPayload);
+			var requirement = requirementService.createAiCandidate(job.getObjectId(), payload.type(),
+					payload.rawText(), payload.normalizedName(), payload.proficiencyText());
+			String editedJson = editedPayload == null ? null : editedPayload.toString();
+			if (itemMapper.markAccepted(itemId, editedJson, requirement.getId(), now) == 0) {
+				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+						"条目状态已变化");
+			}
+			return itemMapper.selectById(itemId);
+		}
+		// RESUME_DRAFT：确认建议文本；溯源字段强制取原文
+		String suggestedText = resolveSuggestedText(item.getPayloadJson(), editedPayload);
+		String editedJson = editedPayload == null ? null : lockSuggestionSource(item.getPayloadJson(), editedPayload);
+		if (itemMapper.markAccepted(itemId, editedJson, null, now) == 0) {
 			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"条目状态已变化");
 		}
@@ -173,40 +193,59 @@ public class AiJobService {
 		return itemMapper.selectById(itemId);
 	}
 
-	private String serialize(AiItemPayload payload) {
-		try {
-			return JSON.writeValueAsString(payload);
-		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
-			throw new BusinessRuleException("候选内容序列化失败：" + ex.getMessage());
-		}
-	}
-
-	private AiItemPayload resolvePayload(AiJobItem item, AiItemPayload edited) {
-		AiItemPayload base = AiItemPayload.parseList("[" + item.getPayloadJson() + "]").get(0);
+	private AiItemPayload mergeJdPayload(AiItemPayload base, JsonNode edited) {
 		if (edited == null) {
 			return base;
 		}
-		return new AiItemPayload(
-			edited.type() == null || edited.type().isBlank() ? base.type() : edited.type(),
-			edited.rawText() == null || edited.rawText().isBlank() ? base.rawText() : edited.rawText(),
-			edited.normalizedName() == null || edited.normalizedName().isBlank() ? base.normalizedName() : edited.normalizedName(),
-			edited.proficiencyText() == null ? base.proficiencyText() : edited.proficiencyText());
-	}
-
-	private String requireJobOfItem(AiJobItem item) {
-		AiJob job = aiJobMapper.selectById(item.getAiJobId());
-		if (job == null) {
-			throw new ResourceNotFoundException("AiJob", item.getAiJobId());
+		AiItemPayload editedPayload;
+		try {
+			editedPayload = JSON.treeToValue(edited, AiItemPayload.class);
+		} catch (Exception ex) {
+			throw new BusinessRuleException("采纳内容解析失败：" + ex.getMessage());
 		}
-		return job.getObjectId();
+		return new AiItemPayload(
+			editedPayload.type() == null || editedPayload.type().isBlank() ? base.type() : editedPayload.type(),
+			editedPayload.rawText() == null || editedPayload.rawText().isBlank() ? base.rawText() : editedPayload.rawText(),
+			editedPayload.normalizedName() == null || editedPayload.normalizedName().isBlank()
+					? base.normalizedName() : editedPayload.normalizedName(),
+			editedPayload.proficiencyText() == null ? base.proficiencyText() : editedPayload.proficiencyText());
 	}
 
-	private String promptVersion(AiJobType jobType) {
-		return handlers.stream()
-			.filter(h -> h.type() == jobType)
-			.findFirst()
-			.orElseThrow(() -> new BusinessRuleException("暂不支持的任务类型：" + jobType))
-			.promptVersion();
+	private String resolveSuggestedText(String payloadJson, JsonNode edited) {
+		String base = readTextField(payloadJson, "suggestedText");
+		if (edited != null && edited.has("suggestedText") && !edited.get("suggestedText").asText("").isBlank()) {
+			return edited.get("suggestedText").asText().trim();
+		}
+		if (base == null || base.isBlank()) {
+			throw new BusinessRuleException("建议文本为空，无法采纳");
+		}
+		return base;
+	}
+
+	/** 采纳时锁定溯源字段：sourceType/sourceId/sourceTitle 一律取原文，用户仅可编辑建议文本。 */
+	private String lockSuggestionSource(String payloadJson, JsonNode edited) {
+		try {
+			com.fasterxml.jackson.databind.node.ObjectNode node =
+					(com.fasterxml.jackson.databind.node.ObjectNode) JSON.readTree(payloadJson);
+			if (edited != null && edited.has("suggestedText") && !edited.get("suggestedText").asText("").isBlank()) {
+				node.put("suggestedText", edited.get("suggestedText").asText().trim());
+			}
+			return JSON.writeValueAsString(node);
+		} catch (BusinessRuleException ex) {
+			throw ex;
+		} catch (Exception ex) {
+			throw new BusinessRuleException("采纳内容处理失败：" + ex.getMessage());
+		}
+	}
+
+	private String readTextField(String payloadJson, String field) {
+		try {
+			JsonNode node = JSON.readTree(payloadJson);
+			JsonNode value = node.get(field);
+			return value == null || value.isNull() ? null : value.asText();
+		} catch (Exception ex) {
+			return null;
+		}
 	}
 
 	private AiJob requireJob(String id) {

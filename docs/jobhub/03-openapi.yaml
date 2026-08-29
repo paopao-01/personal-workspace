@@ -885,7 +885,7 @@ paths:
   /ai-jobs:
     post:
       tags: [Ai]
-      summary: 创建 AI 异步任务（当前支持 JD_EXTRACTION）
+      summary: 创建 AI 异步任务（当前支持 JD_EXTRACTION 与 RESUME_DRAFT）
       description: |
         任务入队后由后台执行器调用激活供应商完成；重新生成即再创建新任务，
         既有任务的候选条目与确认状态不受影响（PRD 9.2：重新生成不得覆盖已确认内容）。
@@ -1856,7 +1856,7 @@ components:
       type: object
       required: [jobType, objectId]
       properties:
-        jobType: { type: string, enum: [JD_EXTRACTION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT] }
         objectId: { type: string, format: uuid }
     AiItemPayload:
       type: object
@@ -1872,10 +1872,14 @@ components:
       properties:
         id: { type: string, format: uuid }
         aiJobId: { type: string, format: uuid }
-        payload: { $ref: '#/components/schemas/AiItemPayload' }
+        payload:
+          type: object
+          additionalProperties: true
+          description: 任务条目载荷，按 jobType 区分：JD_EXTRACTION 为候选要求（type/rawText/normalizedName/proficiencyText）；RESUME_DRAFT 为简历建议（sourceType/sourceId/sourceTitle/suggestedText）
         editedPayload:
-          description: 采纳时的编辑内容；为 null 表示未编辑
-          $ref: '#/components/schemas/AiItemPayload'
+          type: object
+          additionalProperties: true
+          description: 采纳时的编辑内容（同 payload 结构）；null 表示未编辑
         status: { type: string, enum: [PROPOSED, ACCEPTED, REJECTED] }
         requirementId: { type: string, format: uuid, nullable: true, description: 采纳后创建的岗位要求 id }
         createdAt: { type: string, format: date-time }
@@ -1885,7 +1889,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }
@@ -1902,8 +1906,9 @@ components:
       type: object
       properties:
         payload:
-          description: 编辑后的候选内容；省略表示按原文采纳
-          $ref: '#/components/schemas/AiItemPayload'
+          type: object
+          additionalProperties: true
+          description: 编辑后的候选内容（同条目 payload 结构）；省略表示按原文采纳
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]
