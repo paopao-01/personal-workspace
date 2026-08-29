@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成八个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`，只插缺失行 + 冲突预检 + 恢复预览 + 结果报告）。
+- 项目阶段：P1（V0.2）进行中，已完成九个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移新增 notification_channel + channel_delivery 两表，渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：用户已确认（2026-08-29）下一窗口开发浏览器与邮件提醒（PRD 9.3）——用户主动授权后开启，支持测试通知，各渠道独立记录发送状态与失败原因，权限被拒或发送失败时保留站内提醒；站内通知始终兜底。不引入云同步/多租户；发送失败不阻塞手工流程。后续候选：CSV 导出（小）、AI 异步任务基础设施 + 简历定制草稿（需用户明确同意接入 AI）。
+- 当前任务：下一窗口候选（与用户确认后开工）：CSV 导出（V0.2 小收尾项）、AI 异步任务基础设施 + 简历定制草稿（PRD 9.2/9.4，需用户明确同意接入 AI）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,52 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-15
+
+- 目标：P1 第九切片——浏览器与邮件提醒（PRD 9.3：用户主动授权、测试通知、渠道独立发送状态、站内通知兜底）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - Flyway 迁移 `V5__create_notification_channels.sql`：`notification_channel`（channel_type 唯一 BROWSER/EMAIL、enabled、config_json 存 EMAIL SMTP 配置含凭据）与 `channel_delivery`（notification_id + channel_type 唯一、status PENDING/SENT/FAILED、failure_reason、attempt_count、sent_at）及待投递索引。两表不参与导出/导入（凭据不外流）。
+  - pom 新增 `spring-boot-starter-mail`（编译）与 `com.icegreen:greenmail-junit5:2.1.3`（测试，内置 SMTP 3025 端口）。
+  - OpenAPI：新增 `GET/PUT /notification-channels/{channelType}`（首次保存以 0 作为 If-Match-Version；启用 EMAIL 需已有 smtpHost 与 toAddress；password 仅写入不回显，凭据存在与否见 hasCredential）、`POST /notification-channels/{channelType}/test`（站内测试通知始终创建；EMAIL 同步投递返回最终状态，未配置返回 422；BROWSER 由前端展示后回执）、`POST /notifications/{notificationId}/channel-deliveries/BROWSER/ack`（幂等回执，仅 BROWSER）、`GET /notifications/{notificationId}`（单条含 deliveries）；`Notification` schema 新增 `deliveries` 数组。
+  - 后端：`NotificationChannelService`（配置合并/校验/首存插入路径 + 乐观锁、为已启用渠道生成 PENDING 投递、测试通知、浏览器回执幂等 upsert）、`EmailDeliveryService`（按渠道配置动态构建 JavaMailSender 逐条投递；失败记录原因并递增尝试次数、状态保持 PENDING 以便重试，达 3 次置 FAILED；密码存本地库不回显）、`ChannelDeliveryScheduler`（`jobhub.channel-scan-delay-ms`，默认 60s/e2e 1s/test 1h）。`NotificationService.createFromReminder` 在通知创建后为已启用渠道生成投递记录；`list()/get()` 携带 deliveries。
+  - 前端：`api/notifications/channelApi + useChannelQueries + useChannelMutations`；`useBrowserNotifications` hook（BROWSER 启用且 `Notification.permission === 'granted'` 时，对轮询新到达的未读通知弹系统通知并回执；首次加载仅记录不补发；权限被拒/展示失败仅跳过浏览器渠道）；TopBar 接入 hook；设置页新增“通知渠道”区块（`NotificationChannelSection`：浏览器卡片启用开关 + 权限状态 + 测试通知；邮件卡片 SMTP 表单 + 密码留空保持既有凭据 + 保存 + 测试邮件并显示成功/失败原因）。
+  - 集成测试 `NotificationChannelIntegrationTest` 4 用例：①EMAIL 真实 SMTP（GreenMail）投递成功、3 封邮件主题匹配、投递 SENT；②SMTP 不可达 → 重试 3 次后 FAILED 且失败原因落库、站内通知保留；③配置校验（缺主机 422、缺版本 400、旧版本 409）、password 不回显且免密更新保留凭据、BROWSER 默认投影；④BROWSER 回执幂等置 SENT、EMAIL 回执拒绝 422、未知通知 404、BROWSER 测试通知 PENDING、EMAIL 未配置测试 422。
+  - E2E `p1-notification-channels.spec.ts`：启用双渠道 → 造到期面试 → 断言每条通知带 BROWSER/EMAIL 两条投递 → headless 权限被拒场景（Notification.permission === 'denied'，前端不回执，BROWSER 保持 PENDING，验证 PRD 兜底）→ API 逐条 ack 置 SENT → EMAIL 不可达重试耗尽后 FAILED 带原因 → 通知页站内可见 → 收尾标记已读避免污染 p1-notifications。
+  - 既有 E2E `p1-notifications.spec.ts` 计数断言改为按本用例轮次名过滤（全量共享库中通知用例增加后的隔离改造），`p1-notification-channels` 结尾标记已读保证角标断言稳定。
+- 未完成：
+  - 邮件无附件/HTML 模板，纯文本；邮件重试为固定 3 次被动重试（更完善的重试策略 PRD 归入后续）。
+  - 浏览器渠道的服务端推送（Service Worker/Push）未实现，展示由前端轮询驱动（本地单用户可接受）。
+  - headless 浏览器中 Notification.permission 恒为 denied，E2E 无法覆盖“授权后前端自动回执”路径（由 API ack 断言 + 手工验证覆盖）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/pom.xml`、`backend/src/main/resources/application.yml`、`backend/src/main/resources/application-e2e.yml`、`backend/src/test/resources/application-test.yml`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`。
+  - 修改（backend）：`datamanagement/application/NotificationService.java`、`datamanagement/api/NotificationResponse.java`、`datamanagement/domain/Notification.java`。
+  - 新增（backend）：`db/migration/V5__create_notification_channels.sql`、`datamanagement/domain/{ChannelType,DeliveryStatus,NotificationChannel,ChannelDelivery}.java`、`datamanagement/infrastructure/{NotificationChannelMapper,ChannelDeliveryMapper,ChannelDeliveryScheduler}.java`、`datamanagement/application/{NotificationChannelService,EmailDeliveryService,EmailChannelConfig}.java`、`datamanagement/api/{NotificationChannelController,NotificationChannelResponse,NotificationChannelUpdateRequest,ChannelDeliveryResponse,ChannelTestResultResponse}.java`、`backend/src/test/java/com/jobhub/integration/NotificationChannelIntegrationTest.java`。
+  - 新增（frontend）：`src/api/notifications/{channelApi,useChannelQueries,useChannelMutations,useBrowserNotifications}.ts`、`src/features/settings/NotificationChannelSection.tsx`、`e2e/p1-notification-channels.spec.ts`；修改 `src/components/layout/TopBar.tsx`、`src/features/settings/SettingsPage.tsx`、`e2e/p1-notifications.spec.ts`、`src/api/generated/types.ts`（重新生成，不入库）。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=NotificationChannelIntegrationTest"` -> 4 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，73 tests，0 failures，0 errors（Flyway V1→V5 迁移通过）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-notification-channels.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 19 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/notification-channels/reopen/skills/merge/match-report/review-analysis/data-import）。
+- 验证结果：
+  - 渠道链路（授权启用 → 配置校验 → 测试通知 → 提醒联动生成渠道投递 → EMAIL 真实 SMTP 发送成功/失败重试记录 → 浏览器回执幂等 → 站内通知始终保留）有集成测试（含 GreenMail 真实 SMTP）与浏览器级 E2E 覆盖。
+  - OpenAPI 变更为新增端点/schema 与 Notification.deliveries 可选数组，非破坏性；数据库变更走 V5 迁移。
+  - 渠道失败不回滚、不影响站内通知；凭据仅存本地库且不导出、不回显。
+- 已知问题：
+  - headless 浏览器 Notification.permission 恒为 denied，“授权后前端自动回执”路径无法在 E2E 覆盖（API ack 由集成测试覆盖）。
+  - E2E 共享临时库：`p1-notification-channels` 结尾标记已读、`p1-notifications` 按轮次名过滤，后续新增通知类用例须沿用该隔离约定。
+  - EMAIL 投递依赖用户自配 SMTP；端口不可达时每次尝试 10s 连接超时，重试窗口最长约 30s（e2e 1s 扫描）。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认后实现下一个 P1 切片（候选：CSV 导出、AI 异步任务基础设施 + 简历定制草稿——后者需用户明确同意接入 AI）。
+- 不要重复做：
+  - 不要重建渠道配置/投递服务或设置页渠道区块；不要让渠道失败影响站内通知或业务流程。
+  - 不要在任何响应中回显 SMTP 密码；不要把 notification_channel/channel_delivery 纳入导出。
+  - 不要提前实现 AI、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-14
 

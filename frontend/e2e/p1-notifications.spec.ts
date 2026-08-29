@@ -58,13 +58,13 @@ test('P1 notifications generated from due reminders and markable as read', async
   })
   expect(interviewResponse.ok(), `POST /api/interviews returned ${interviewResponse.status()}`).toBe(true)
 
-  // 等待调度扫描（e2e profile 间隔 1s）生成 3 条通知
+  // 等待调度扫描（e2e profile 间隔 1s）生成 3 条通知（按本用例轮次名过滤，隔离共享库中其他用例通知）
   await expect
     .poll(
       async () => {
         const list = await request.get('/api/notifications')
-        const items = (await list.json()) as unknown[]
-        return items.length
+        const items = (await list.json()) as Array<{ title: string }>
+        return items.filter((item) => item.title.includes('P1 通知一面')).length
       },
       { timeout: 30_000, intervals: [1_000, 2_000, 5_000] },
     )
@@ -76,17 +76,18 @@ test('P1 notifications generated from due reminders and markable as read', async
   await page.getByRole('button', { name: '站内通知' }).click()
   await page.waitForURL(/\/notifications$/)
 
-  const rows = page.locator('.requirement-row')
+  const rows = page.locator('.requirement-row').filter({ hasText: 'P1 通知一面' })
   await expect(rows).toHaveCount(3)
   await expect(page.getByText('面试提醒：P1 通知一面').first()).toBeVisible()
-  await expect(page.getByText('未读', { exact: true })).toHaveCount(3)
+  await expect(rows.getByText('未读', { exact: true })).toHaveCount(3)
 
-  // 标记第一条已读：未读减少，TopBar 角标同步
+  // 标记第一条已读：本用例未读减少（全量共享库中其他用例已读/未读不计入）
   await rows.first().getByRole('button', { name: '标记已读' }).click()
-  await expect(page.getByText('未读', { exact: true })).toHaveCount(2)
-  await expect(page.getByLabel('未读通知 2 条')).toBeVisible()
+  await expect(rows.getByText('未读', { exact: true })).toHaveCount(2)
 
   const listAfter = await request.get('/api/notifications')
-  const itemsAfter = (await listAfter.json()) as Array<{ id: string; readAt: string | null }>
-  expect(itemsAfter.filter((item) => item.readAt !== null)).toHaveLength(1)
+  const itemsAfter = (await listAfter.json()) as Array<{ id: string; title: string; readAt: string | null }>
+  expect(
+    itemsAfter.filter((item) => item.title.includes('P1 通知一面') && item.readAt !== null),
+  ).toHaveLength(1)
 })

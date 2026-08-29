@@ -762,6 +762,14 @@ paths:
       summary: 查询站内通知（最近 100 条，含未读；由到期提醒的调度生成）
       responses:
         '200': { description: 通知列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } }
+  /notifications/{notificationId}:
+    parameters: [ { $ref: '#/components/parameters/NotificationId' } ]
+    get:
+      tags: [Notifications]
+      summary: 查询单条通知（含渠道投递状态）
+      responses:
+        '200': { description: 通知详情, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /notifications/{notificationId}/read:
     parameters: [ { $ref: '#/components/parameters/NotificationId' } ]
     post:
@@ -771,6 +779,52 @@ paths:
       responses:
         '200': { description: 通知当前状态, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/{notificationId}/channel-deliveries/{channelType}/ack:
+    parameters:
+      - { $ref: '#/components/parameters/NotificationId' }
+      - { $ref: '#/components/parameters/ChannelType' }
+    post:
+      tags: [Notifications]
+      summary: 浏览器通知渠道投递回执（前端展示系统通知后调用；幂等，仅 BROWSER）
+      description: 将该通知的 BROWSER 渠道投递标记为 SENT；不存在时创建 SENT 记录。EMAIL 渠道返回 422。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '204': { description: 已回执（幂等） }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /notification-channels/{channelType}:
+    parameters: [ { $ref: '#/components/parameters/ChannelType' } ]
+    get:
+      tags: [Notifications]
+      summary: 查询通知渠道配置（未配置的渠道返回默认禁用与版本 0）
+      responses:
+        '200': { description: 渠道配置, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationChannel' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    put:
+      tags: [Notifications]
+      summary: 更新通知渠道（启用/禁用与配置；首次保存以 0 作为 If-Match-Version）
+      description: |
+        启用 EMAIL 渠道时必须已有 smtpHost 与 toAddress（请求或既有配置中）。
+        password 仅写入不回显：请求中省略或为 null 表示保留既有凭据；是否已设置凭据见 hasCredential。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/NotificationChannelUpdateRequest' } } }
+      responses:
+        '200': { description: 渠道配置已更新, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationChannel' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /notification-channels/{channelType}/test:
+    parameters: [ { $ref: '#/components/parameters/ChannelType' } ]
+    post:
+      tags: [Notifications]
+      summary: 发送测试通知（站内通知始终创建；EMAIL 同步投递并返回结果，BROWSER 由前端展示后回执）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 测试结果, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelTestResult' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
 
 components:
   parameters:
@@ -805,6 +859,7 @@ components:
     ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
+    ChannelType: { name: channelType, in: path, required: true, schema: { type: string, enum: [BROWSER, EMAIL] } }
   responses:
     NotFound:
       description: 资源不存在或不可见
@@ -1585,6 +1640,55 @@ components:
         content: { type: string }
         readAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+        deliveries:
+          type: array
+          description: 渠道投递状态（各渠道独立记录；仅已启用渠道在通知创建时生成投递记录）
+          items: { $ref: '#/components/schemas/ChannelDelivery' }
+    ChannelDelivery:
+      type: object
+      required: [id, notificationId, channelType, status, attemptCount, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        notificationId: { type: string, format: uuid }
+        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        status: { type: string, enum: [PENDING, SENT, FAILED] }
+        failureReason: { type: string, nullable: true }
+        attemptCount: { type: integer }
+        sentAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    NotificationChannel:
+      type: object
+      required: [channelType, enabled, hasCredential, version]
+      properties:
+        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        enabled: { type: boolean }
+        config:
+          description: 渠道配置；BROWSER 渠道为 null。password 永远不回显。
+          $ref: '#/components/schemas/NotificationChannelConfig'
+        hasCredential: { type: boolean, description: EMAIL 渠道是否已保存密码 }
+        version: { type: integer }
+    NotificationChannelConfig:
+      type: object
+      properties:
+        smtpHost: { type: string, nullable: true }
+        smtpPort: { type: integer, nullable: true, minimum: 1, maximum: 65535 }
+        username: { type: string, nullable: true }
+        password: { type: string, nullable: true, description: 仅写入；响应中永远为 null }
+        fromAddress: { type: string, nullable: true }
+        toAddress: { type: string, nullable: true }
+        useStartTls: { type: boolean, nullable: true }
+    NotificationChannelUpdateRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        config: { $ref: '#/components/schemas/NotificationChannelConfig' }
+    ChannelTestResult:
+      type: object
+      required: [channelType, notificationId, deliveries]
+      properties:
+        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        notificationId: { type: string, format: uuid }
+        deliveries: { type: array, items: { $ref: '#/components/schemas/ChannelDelivery' } }
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

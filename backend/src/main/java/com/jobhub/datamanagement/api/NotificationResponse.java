@@ -8,7 +8,8 @@ public record NotificationResponse(
 	String title,
 	String content,
 	String readAt,
-	String createdAt
+	String createdAt,
+	java.util.List<ChannelDeliveryResponse> deliveries
 ) {
 	public static NotificationResponse from(Notification notification) {
 		return new NotificationResponse(
@@ -17,7 +18,8 @@ public record NotificationResponse(
 			notification.getTitle(),
 			notification.getContent(),
 			notification.getReadAt(),
-			notification.getCreatedAt()
+			notification.getCreatedAt(),
+			notification.getDeliveries().stream().map(ChannelDeliveryResponse::from).toList()
 		);
 	}
 }

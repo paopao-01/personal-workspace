@@ -20,6 +20,11 @@ public class NotificationController {
 		return service.list().stream().map(NotificationResponse::from).toList();
 	}
 
+	@GetMapping("/notifications/{notificationId}")
+	public NotificationResponse get(@PathVariable String notificationId) {
+		return NotificationResponse.from(service.get(notificationId));
+	}
+
 	@PostMapping("/notifications/{notificationId}/read")
 	public ResponseEntity<NotificationResponse> markRead(@PathVariable String notificationId) {
 		Notification notification = service.markRead(notificationId);

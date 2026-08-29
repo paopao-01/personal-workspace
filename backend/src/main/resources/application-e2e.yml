@@ -2,3 +2,5 @@
 jobhub:
   reminder-scan-delay-ms: 1000
   reminder-scan-initial-delay-ms: 500
+  channel-scan-delay-ms: 1000
+  channel-scan-initial-delay-ms: 500
