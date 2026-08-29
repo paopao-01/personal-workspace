@@ -31,10 +31,13 @@ public class ExportController {
 
 	@GetMapping("/data-exports/{exportId}/download")
 	public ResponseEntity<byte[]> download(@PathVariable String exportId) {
-		byte[] content = service.readExportFile(service.get(exportId));
+		DataExport export = service.get(exportId);
+		byte[] content = service.readExportFile(export);
+		boolean csv = "CSV".equals(export.getFormat());
 		return ResponseEntity.ok()
-			.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=jobhub-export-" + exportId + ".json")
-			.contentType(MediaType.APPLICATION_JSON)
+			.header(HttpHeaders.CONTENT_DISPOSITION,
+				"attachment; filename=jobhub-export-" + exportId + (csv ? ".zip" : ".json"))
+			.contentType(csv ? MediaType.valueOf("application/zip") : MediaType.APPLICATION_JSON)
 			.body(content);
 	}
 }

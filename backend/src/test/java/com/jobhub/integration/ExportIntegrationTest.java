@@ -57,9 +57,10 @@ class ExportIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void AT24_exportRejectsNonJsonFormatAndHidesMissingFile() {
+	void AT24_exportRejectsUnsupportedFormatAndHidesMissingFile() {
+		// P1 起 CSV 为合法格式（见 P1_csvExport…），不支持格式改为 XML
 		ResponseEntity<String> invalidFormat = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"format\":\"CSV\"}", "Idempotency-Key", TestFixtures.newKey()),
+			TestFixtures.httpWithHeaders("{\"format\":\"XML\"}", "Idempotency-Key", TestFixtures.newKey()),
 			String.class);
 		assertThat(invalidFormat.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(invalidFormat.getBody()).contains("VALIDATION_ERROR");
@@ -71,5 +72,54 @@ class ExportIntegrationTest extends AbstractIntegrationTest {
 		ResponseEntity<String> missingFile = restTemplate.getForEntity(
 			url("/data-exports/99999999-9999-9999-9999-999999999999/download"), String.class);
 		assertThat(missingFile.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+	}
+
+	@Test
+	void P1_csvExportPackagesBusinessTablesAsZipWithoutIdempotencyKey() throws Exception {
+		String job = restTemplate.exchange(url("/jobs"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders(TestFixtures.createJobBody("CSV导出科技", "P1 CSV 岗位"),
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String jobId = JsonProbe.str(job, "id");
+
+		ResponseEntity<String> created = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"format\":\"CSV\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		assertThat(created.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+		assertThat(JsonProbe.str(created.getBody(), "format")).isEqualTo("CSV");
+		assertThat(JsonProbe.str(created.getBody(), "status")).isEqualTo("SUCCEEDED");
+		String exportId = JsonProbe.str(created.getBody(), "id");
+
+		ResponseEntity<byte[]> download = restTemplate.getForEntity(
+			url("/data-exports/" + exportId + "/download"), byte[].class);
+		assertThat(download.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(download.getHeaders().getContentType().toString()).isEqualTo("application/zip");
+
+		// 解包 ZIP：全部业务表 CSV、job_posting 行数据在列、application_status_log 不含幂等键列
+		java.util.Map<String, String> entries = new java.util.LinkedHashMap<>();
+		try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(
+				new java.io.ByteArrayInputStream(download.getBody()))) {
+			java.util.zip.ZipEntry entry;
+			while ((entry = zip.getNextEntry()) != null) {
+				String content = new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+				entries.put(entry.getName(), content);
+			}
+		}
+		assertThat(entries).containsKey("job_posting.csv");
+		assertThat(entries).containsKey("application_status_log.csv");
+		assertThat(entries.size()).isGreaterThanOrEqualTo(23);
+
+		String jobCsv = entries.get("job_posting.csv");
+		assertThat(jobCsv).startsWith("\uFEFF"); // UTF-8 BOM
+		assertThat(jobCsv).contains("company_name");
+		assertThat(jobCsv).contains("CSV导出科技");
+		assertThat(jobCsv).contains(jobId);
+		// 表头行不含幂等键列（application_status_log 是唯一含该列的业务表）
+		assertThat(entries.get("application_status_log.csv")).doesNotContain("idempotency_key");
+
+		// 非法格式仍拒绝
+		ResponseEntity<String> invalid = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"format\":\"XML\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		assertThat(invalid.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 	}
 }

@@ -4,9 +4,10 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成九个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移新增 notification_channel + channel_delivery 两表，渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）。
+- 项目阶段：P1（V0.2）进行中，已完成十个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移 + 渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）；CSV 导出（V6 迁移放宽 data_export.format，ZIP 打包按表拆分 CSV）。
+- 里程碑说明：V0.2 清单中除「AI 异步分析和候选变更确认」「简历定制草稿」「复杂恢复报告与完整附件证据库」「多实例提醒协调与失败重试」外均已实现；AI 两项需用户明确同意接入 AI 后启动。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口候选（与用户确认后开工）：CSV 导出（V0.2 小收尾项）、AI 异步任务基础设施 + 简历定制草稿（PRD 9.2/9.4，需用户明确同意接入 AI）。
+- 当前任务：下一窗口候选（与用户确认后开工）：AI 异步任务基础设施 + 简历定制草稿（PRD 9.2/9.4，需用户明确同意接入 AI）、复杂恢复报告/附件证据库（PRD V0.2 列表内，依赖附件体系）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +71,43 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-16
+
+- 目标：P1 第十切片——CSV 导出（PRD 18 / V0.2「面向分析的 CSV 导出」）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - Flyway 迁移 `V6__allow_csv_export.sql`：重建 `data_export` 表放宽 CHECK（format ∈ JSON/CSV），存量行迁移，V1~V5 未改动。
+  - OpenAPI：`ExportCreateRequest.format` 枚举扩展为 [JSON, CSV]；`DataExport` schema 新增必填 `format`；下载端点 summary 说明 CSV 为 ZIP。
+  - 后端 `ExportService`：`create(format)` 支持 CSV——复用 `collectTables()` 的 23 张业务表数据，逐表写 `.csv`（UTF-8 BOM 便于 Excel、RFC 4180 转义、列名取自 `PRAGMA table_info` 且排除 `application_status_log.idempotency_key`、空表仅表头）打包为 `jobhub-export-{id}.zip`。下载端点按 format 区分 Content-Type（application/zip）与文件名后缀。
+  - 前端设置页数据导出区块：格式单选（JSON 完整备份 / CSV 分析用 ZIP）+ 按格式显示按钮文案与下载链接后缀。
+  - 集成测试 `ExportIntegrationTest` 新增 `P1_csvExportPackagesBusinessTablesAsZipWithoutIdempotencyKey`：CSV 导出 202/SUCCEEDED/format=CSV、下载 application/zip、ZIP 含全部业务表、BOM 与列头正确、业务行在列、幂等键列排除、XML 格式 400。原 `AT24_exportRejectsNonJsonFormat…` 更新为 XML（CSV 自本切片起合法）。
+  - E2E `p1-csv-export.spec.ts`：UI 选择 CSV → 创建导出 → 完成徽章与 ZIP 下载链接 → 下载响应为 application/zip 且 PK 魔数正确（ZIP 内容解析由集成测试覆盖）。
+- 未完成：
+  - 「复杂恢复报告」「完整附件证据库」仍属后续（依赖附件体系，暂无需求）。
+  - CSV 导出为同步任务，与 JSON 一致；无异步队列。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`datamanagement/{application/ExportService,api/ExportController,api/ExportCreateRequest,api/DataExportResponse,domain/DataExport}.java`、`backend/src/test/java/com/jobhub/integration/ExportIntegrationTest.java`、`frontend/src/api/settings/{exportApi,useExportMutations}.ts`、`frontend/src/features/settings/SettingsPage.tsx`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
+  - 新增：`backend/src/main/resources/db/migration/V6__allow_csv_export.sql`、`frontend/e2e/p1-csv-export.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ExportIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，74 tests，0 failures，0 errors（Flyway V1→V6 迁移通过）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-csv-export.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 20 tests passed（含新增 p1-csv-export）。
+- 验证结果：
+  - CSV 导出链路（格式选择 → 任务创建 → ZIP 下载 → 内容合规）有集成测试与浏览器级 E2E 覆盖。
+  - OpenAPI 变更为枚举扩展与 DataExport 响应新增 format 字段（向后兼容的响应扩展）；数据库变更走 V6 迁移。
+- 已知问题：
+  - `data_export` 存量行 format 均为 JSON，V6 重建表无数据风险。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认后实现 AI 异步任务基础设施 + 简历定制草稿（需用户明确同意接入 AI），或其他按需增强。
+- 不要重复做：
+  - 不要重建 CSV 导出逻辑或设置页格式选择；不要把 idempotency_key 列写入 CSV。
+  - 不要提前实现 AI、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-15
 
