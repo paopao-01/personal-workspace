@@ -12,13 +12,14 @@ public class InterviewReview {
 	private String overallFeeling;
 	private String interviewerFocus;
 	private String jobInterest;
+	private String projectExpressionRisk;
 	private String createdAt;
 	private String updatedAt;
 	private long version;
 	private List<InterviewQuestion> questions = List.of();
 
 	public static InterviewReview draft(String id, String interviewId, InterviewResult result, boolean noQuestionsRecorded,
-			String overallFeeling, String interviewerFocus, String jobInterest, String now) {
+			String overallFeeling, String interviewerFocus, String jobInterest, String projectExpressionRisk, String now) {
 		InterviewReview r = new InterviewReview();
 		r.id = id;
 		r.interviewId = interviewId;
@@ -28,19 +29,21 @@ public class InterviewReview {
 		r.overallFeeling = overallFeeling;
 		r.interviewerFocus = interviewerFocus;
 		r.jobInterest = jobInterest;
+		r.projectExpressionRisk = projectExpressionRisk;
 		r.createdAt = now;
 		r.updatedAt = now;
 		return r;
 	}
 
 	public void updateDraft(InterviewResult result, boolean noQuestionsRecorded, String overallFeeling,
-			String interviewerFocus, String jobInterest, String now) {
+			String interviewerFocus, String jobInterest, String projectExpressionRisk, String now) {
 		this.status = ReviewStatus.DRAFT;
 		this.interviewResult = result;
 		this.noQuestionsRecorded = noQuestionsRecorded;
 		this.overallFeeling = overallFeeling;
 		this.interviewerFocus = interviewerFocus;
 		this.jobInterest = jobInterest;
+		this.projectExpressionRisk = projectExpressionRisk;
 		this.updatedAt = now;
 	}
 
@@ -52,6 +55,7 @@ public class InterviewReview {
 	public String getOverallFeeling() { return overallFeeling; }
 	public String getInterviewerFocus() { return interviewerFocus; }
 	public String getJobInterest() { return jobInterest; }
+	public String getProjectExpressionRisk() { return projectExpressionRisk; }
 	public String getCreatedAt() { return createdAt; }
 	public String getUpdatedAt() { return updatedAt; }
 	public long getVersion() { return version; }

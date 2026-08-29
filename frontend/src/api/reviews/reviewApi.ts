@@ -11,6 +11,7 @@ export type QuestionCreateRequest = Schemas['QuestionCreateRequest']
 export type QuestionUpdateRequest = Schemas['QuestionUpdateRequest']
 export type KnowledgePointCreateRequest = Schemas['KnowledgePointCreateRequest']
 export type AnswerStatus = Schemas['AnswerStatus']
+export type ReviewAnalysis = Schemas['ReviewAnalysis']
 
 const ifMatchHeader = (version: number | undefined) =>
   version === undefined ? undefined : { 'If-Match-Version': String(version) }
@@ -81,6 +82,17 @@ export async function getWeakKnowledgePoints(params?: {
   jobId?: string
 }): Promise<WeakKnowledgePoint[]> {
   const res = await apiClient.get<WeakKnowledgePoint[]>('/knowledge-points/weak', {
+    params,
+  })
+  return res.data
+}
+
+export async function getReviewAnalysis(params?: {
+  from?: string
+  to?: string
+  jobId?: string
+}): Promise<ReviewAnalysis> {
+  const res = await apiClient.get<ReviewAnalysis>('/reviews/analysis', {
     params,
   })
   return res.data

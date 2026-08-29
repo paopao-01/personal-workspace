@@ -7,5 +7,6 @@ public record ReviewUpsertRequest(
 	Boolean noQuestionsRecorded,
 	String overallFeeling,
 	String interviewerFocus,
-	String jobInterest
+	String jobInterest,
+	String projectExpressRisk
 ) { }

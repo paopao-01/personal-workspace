@@ -10,6 +10,7 @@ import { InterviewDetailPage } from '@/features/interviews/InterviewDetailPage'
 import { InterviewListPage } from '@/features/interviews/InterviewListPage'
 import { InterviewPreparationPage } from '@/features/interviews/InterviewPreparationPage'
 import { InterviewReviewPage } from '@/features/reviews/InterviewReviewPage'
+import { ReviewAnalysisPage } from '@/features/reviews/ReviewAnalysisPage'
 import { WeakKnowledgePointsPage } from '@/features/reviews/WeakKnowledgePointsPage'
 import { TaskListPage } from '@/features/tasks/TaskListPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
@@ -38,6 +39,7 @@ export function AppRouter() {
         <Route path="/interviews/:interviewId" element={<InterviewDetailPage />} />
         <Route path="/interviews/:interviewId/preparation" element={<InterviewPreparationPage />} />
         <Route path="/interviews/:interviewId/review" element={<InterviewReviewPage />} />
+        <Route path="/reviews/analysis" element={<ReviewAnalysisPage />} />
         <Route path="/knowledge-points/weak" element={<WeakKnowledgePointsPage />} />
         <Route path="/tasks" element={<TaskListPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
