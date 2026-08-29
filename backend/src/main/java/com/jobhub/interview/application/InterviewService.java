@@ -8,6 +8,7 @@ import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.datamanagement.application.SettingsService;
 import com.jobhub.interview.domain.*;
 import com.jobhub.interview.infrastructure.*;
 import com.jobhub.interview.api.InterviewUpdateRequest;
@@ -21,8 +22,8 @@ import java.util.List;
 @Service
 public class InterviewService {
     private final InterviewMapper interviewMapper; private final ChecklistMapper checklistMapper; private final ReminderMapper reminderMapper;
-    private final ApplicationService applicationService; private final IdGenerator ids; private final UtcTime time;
-    public InterviewService(InterviewMapper im, ChecklistMapper cm, ReminderMapper rm, ApplicationService as, IdGenerator ids, UtcTime time){this.interviewMapper=im;this.checklistMapper=cm;this.reminderMapper=rm;this.applicationService=as;this.ids=ids;this.time=time;}
+    private final ApplicationService applicationService; private final SettingsService settingsService; private final IdGenerator ids; private final UtcTime time;
+    public InterviewService(InterviewMapper im, ChecklistMapper cm, ReminderMapper rm, ApplicationService as, SettingsService ss, IdGenerator ids, UtcTime time){this.interviewMapper=im;this.checklistMapper=cm;this.reminderMapper=rm;this.applicationService=as;this.settingsService=ss;this.ids=ids;this.time=time;}
 
     @Transactional
     public Interview create(String applicationId,String roundName,String startsAt,String zone,InterviewMode mode,String address,String contact,List<String> checklist,String notes){
@@ -48,6 +49,6 @@ public class InterviewService {
     private void persistState(Interview i,long expected){VersionCheck.requireAffected(interviewMapper.updateState(i,expected),i.getVersion());VersionCheck.requireAffected(interviewMapper.bumpVersion(i.getId(),expected),i.getVersion());}
     private void persistSchedule(Interview i,long expected){VersionCheck.requireAffected(interviewMapper.updateSchedule(i,expected),i.getVersion());VersionCheck.requireAffected(interviewMapper.bumpVersion(i.getId(),expected),i.getVersion());}
     private void saveChecklist(String id,List<String> values,String now){if(values!=null)for(int n=0;n<values.size();n++)if(values.get(n)!=null&&!values.get(n).isBlank())checklistMapper.insert(ids.newId(),id,values.get(n),n,now);}
-    private void createDefaultReminders(String id,String startsAt,String now){Instant at=Instant.parse(startsAt);ReminderType[] ts={ReminderType.ONE_DAY,ReminderType.TWO_HOURS,ReminderType.THIRTY_MINUTES};long[] mins={1440,120,30};for(int n=0;n<3;n++)reminderMapper.insert(Reminder.create(ids.newId(),id,ts[n],at.minus(Duration.ofMinutes(mins[n])).toString(),now));}
+    private void createDefaultReminders(String id,String startsAt,String now){Instant at=Instant.parse(startsAt);for(Integer minutes:settingsService.defaultReminderOffsetsMinutes()){ReminderType type=switch(minutes){case 1440->ReminderType.ONE_DAY;case 120->ReminderType.TWO_HOURS;case 30->ReminderType.THIRTY_MINUTES;default->ReminderType.CUSTOM;};reminderMapper.insert(Reminder.create(ids.newId(),id,type,at.minus(Duration.ofMinutes(minutes)).toString(),now));}}
     private String normalizeInstant(String value){try{return Instant.parse(value).toString();}catch(DateTimeParseException ex){throw new BusinessRuleException("Time must be an ISO-8601 instant with UTC offset");}}
 }
