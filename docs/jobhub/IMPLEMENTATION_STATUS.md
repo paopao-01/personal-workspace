@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M3 进行中（投递、面试、提醒、dashboard 主路径和 P05 月视图/时间线切换已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16）。
-- 当前里程碑：M3（复盘、问题、知识点、学习任务）进行中；AT-15、AT-16、AT-17 后端和前端可观察路径已完成。
-- 当前任务：AT-17 薄弱知识点统计已完成；下一窗口建议扩大为 AT-18 从问题创建任务 + AT-19 完成任务不改能力。
+- 项目阶段：M3 已完成，准备进入 M4（投递、面试、提醒、dashboard 主路径、复盘、薄弱点和学习任务闭环已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18）。
+- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）待启动；M3 的 AT-15 至 AT-19 已完成。
+- 当前任务：AT-18 从问题创建任务、AT-19 完成任务不改能力已完成；下一窗口建议实现 AT-20 面试准备包聚合且可追溯。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -66,10 +66,65 @@
 |---|---|---|---|---|
 | M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
 | M2 | 投递状态机、下一步行动、面试与提醒 | `DONE` | M1 完成 | AT-05 至 AT-14 通过 |
-| M3 | 复盘、问题、知识点、薄弱点、学习任务 | `IN_PROGRESS` | M2 完成 | AT-15 至 AT-19 通过 |
+| M3 | 复盘、问题、知识点、薄弱点、学习任务 | `DONE` | M2 完成 | AT-15 至 AT-19 通过 |
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-2
+
+- 目标：在 `dev` 分支扩大切片实现 AT-18 从问题创建任务和 AT-19 完成任务不改能力；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增后端 task 模块最小四层实现：`GET /api/tasks`、`POST /api/tasks`、`PUT /api/tasks/{taskId}`、`POST /api/tasks/{taskId}/transition`。
+  - 新增 `POST /api/interview-questions/{questionId}/create-task`：仅在用户确认提交后创建任务；`CREATE_NEW` 要求标题、验收标准和验证方式；`LINK_EXISTING` 可关联已有任务；`FULLY_ANSWERED` 问题拒绝创建任务。
+  - 学习任务状态转换按专用命令执行：`TODO -> IN_PROGRESS/ABANDONED`、`IN_PROGRESS -> COMPLETED/ABANDONED/TODO`、`COMPLETED -> IN_PROGRESS`、`ABANDONED -> TODO`；非法转换返回 `422 ILLEGAL_STATE_TRANSITION`。
+  - 任务完成可保存 `verificationResult`；未填写时显式保存“未验证完成”；完成任务不会更新 `user_skill.self_level`，也不会清除历史薄弱题。
+  - 任务来源通过 `task_source` 写入 `QUESTION` 和 `KNOWLEDGE_POINT`；无来源的手工任务写入 `MANUAL`。由于 V1 `task_source.source_type` 没有 `JOB`，本窗口未支持前端/服务端写 `relatedJobIds`。
+  - 前端新增 task API/hooks、`/tasks` 学习任务页面和侧边栏入口；支持手工创建、状态筛选、开始/完成/放弃/恢复，并在完成时填写验证结果。
+  - 快速复盘页为 `PARTIALLY_ANSWERED/UNANSWERED` 问题新增“创建学习任务”确认表单；打开预填表单不写库，点击“确认创建”后才调用后端。
+  - 新增 AT-18 Playwright E2E：构造弱问题后打开创建任务表单，断言任务数仍为 0；确认提交后任务数为 1 且 `/tasks` 可见。
+- 未完成：
+  - M4 准备包/项目案例/证据/导出/最近删除尚未实现。
+  - `relatedJobIds` 因 V1 来源枚举缺少 `JOB` 暂未支持；后续若需要关联岗位，应新增迁移扩展 `task_source.source_type` 或调整契约。
+  - 任务详情页、任务编辑表单、任务来源下钻展示仍为后续增强；本窗口只做 P09 最小列表和状态操作。
+  - 复盘完成后的 reopen 仍未实现；当前已完成复盘仍不允许继续新增问题。
+- 修改文件：
+  - 新增：`backend/src/main/java/com/jobhub/task/domain/TaskStatus.java`、`TaskPriority.java`、`TaskSourceType.java`、`LearningTask.java`。
+  - 新增：`backend/src/main/java/com/jobhub/task/application/TaskService.java`、`TaskCreateCommand.java`、`TaskUpdateCommand.java`、`TaskTransitionCommand.java`、`TaskListQuery.java`、`TaskListResult.java`、`CreateTaskFromQuestionCommand.java`。
+  - 新增：`backend/src/main/java/com/jobhub/task/infrastructure/TaskMapper.java`。
+  - 新增：`backend/src/main/java/com/jobhub/task/api/TaskController.java`、`TaskCreateRequest.java`、`TaskUpdateRequest.java`、`TaskTransitionRequest.java`、`CreateTaskFromQuestionRequest.java`、`LearningTaskResponse.java`、`PageTaskResponse.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/TaskIntegrationTest.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`。
+  - 新增：`frontend/src/api/tasks/taskApi.ts`、`useTaskQueries.ts`、`useTaskMutations.ts`。
+  - 新增：`frontend/src/features/tasks/TaskListPage.tsx`、`taskLabels.ts`。
+  - 修改：`frontend/src/features/reviews/InterviewReviewPage.tsx`。
+  - 修改：`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`。
+  - 新增：`frontend/e2e/at-18-create-task-from-question.spec.ts`。
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=TaskIntegrationTest"` -> BUILD SUCCESS，2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，40 tests，0 failures，0 errors。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，185 modules。
+  - `cd frontend && npx playwright test e2e/at-18-create-task-from-question.spec.ts --reporter=list` -> 1 passed，自然返回。
+- 验证结果：
+  - AT-18 后端与浏览器路径均已覆盖；预填不落库、确认后落库并写 `task_source`。
+  - AT-19 后端已覆盖；完成任务保留验证结果，不改变 `user_skill.self_level`，薄弱题仍可在 `/knowledge-points/weak` 下钻查看。
+  - M3 的 AT-15 至 AT-19 均已完成；可进入 M4。
+  - 本窗口未新增数据库迁移；V1 既有 `learning_task`、`task_source`、`user_skill`、`skill` 表可支撑本切片。
+- 已知问题：
+  - `relatedJobIds` 暂不支持，原因是 V1 `task_source.source_type` 未包含 `JOB`；当前若请求中包含相关岗位会返回业务错误。
+  - 任务状态转换没有单独历史表；V1 没有任务状态日志表，本窗口仅更新当前任务状态并依赖审计/后续增强。
+  - E2E 仍输出 React Router v7 future flag 警告和 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 进入 M4，实现 AT-20 面试准备包聚合且可追溯：`GET /api/interviews/{interviewId}/preparation` 聚合面试、岗位要求/差距、历史问题、未完成任务、检查清单，并确保每个 `prioritizedItem` 至少有一个 reason 和 sourceRef。
+  - 如 AT-20 需要项目案例最小数据，可只补读取/展示占位“待补充”，不要提前做完整项目/证据 CRUD。
+- 不要重复做：
+  - 不要重建 AT-15/AT-16 review、AT-17 弱点统计或 AT-18/AT-19 学习任务基础能力。
+  - 不要提前实现 AT-23 最近删除、AT-24 导出、AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-29-1
 

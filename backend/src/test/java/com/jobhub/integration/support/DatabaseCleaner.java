@@ -25,6 +25,8 @@ public class DatabaseCleaner {
 	public void clearAll() {
 		jdbc.execute("DELETE FROM idempotency_record");
 		jdbc.execute("DELETE FROM audit_log");
+		jdbc.execute("DELETE FROM task_source");
+		jdbc.execute("DELETE FROM learning_task");
 		jdbc.execute("DELETE FROM question_knowledge");
 		jdbc.execute("DELETE FROM interview_question");
 		jdbc.execute("DELETE FROM interview_review");
@@ -37,5 +39,8 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM requirement_skill");
 		jdbc.execute("DELETE FROM job_requirement");
 		jdbc.execute("DELETE FROM job_posting");
+		jdbc.execute("DELETE FROM user_skill");
+		jdbc.execute("DELETE FROM skill_alias");
+		jdbc.execute("DELETE FROM skill");
 	}
 }
