@@ -42,6 +42,24 @@ public class JobRequirement {
 		return r;
 	}
 
+	public static JobRequirement createFromAi(String id, String jobId, String rawText, String normalizedName,
+											  RequirementType type, String proficiencyText, int sortOrder, String now) {
+		JobRequirement r = new JobRequirement();
+		r.id = id;
+		r.jobId = jobId;
+		r.rawText = rawText;
+		r.normalizedName = normalizedName;
+		r.type = type;
+		r.proficiencyText = proficiencyText;
+		r.confirmationStatus = ConfirmationStatus.PENDING;
+		r.source = RequirementSource.AI;
+		r.sortOrder = sortOrder;
+		r.version = 0;
+		r.createdAt = now;
+		r.updatedAt = now;
+		return r;
+	}
+
 	public JobRequirement confirm(String normalizedName, RequirementType type, String proficiencyText, String now) {
 		this.normalizedName = normalizedName;
 		this.type = type;

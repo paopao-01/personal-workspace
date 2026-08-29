@@ -17,6 +17,7 @@ tags:
   - name: SkillsAndEvidence
   - name: DataManagement
   - name: Notifications
+  - name: Ai
 paths:
   /dashboard:
     get:
@@ -825,6 +826,136 @@ paths:
         '200': { description: 测试结果, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelTestResult' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /ai-providers:
+    get:
+      tags: [Ai]
+      summary: 查询已配置的 AI 供应商（含未激活）
+      responses:
+        '200': { description: 供应商列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiProvider' } } } } }
+    post:
+      tags: [Ai]
+      summary: 新增 AI 供应商配置
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AiProviderCreateRequest' } } }
+      responses:
+        '201': { description: 已创建, content: { application/json: { schema: { $ref: '#/components/schemas/AiProvider' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /ai-providers/{providerId}:
+    parameters: [ { $ref: '#/components/parameters/AiProviderId' } ]
+    get:
+      tags: [Ai]
+      summary: 查询单个供应商配置
+      responses:
+        '200': { description: 供应商配置, content: { application/json: { schema: { $ref: '#/components/schemas/AiProvider' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Ai]
+      summary: 更新供应商配置（api_key 省略表示保留既有凭据）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AiProviderCreateRequest' } } }
+      responses:
+        '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/AiProvider' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /ai-providers/{providerId}/activate:
+    parameters: [ { $ref: '#/components/parameters/AiProviderId' } ]
+    post:
+      tags: [Ai]
+      summary: 切换激活供应商（同一时刻仅一个激活；新任务使用激活供应商）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 已切换, content: { application/json: { schema: { $ref: '#/components/schemas/AiProvider' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-providers/{providerId}/test:
+    parameters: [ { $ref: '#/components/parameters/AiProviderId' } ]
+    post:
+      tags: [Ai]
+      summary: 连通性测试（发送一条最小补全请求，返回延迟与结果）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 测试结果, content: { application/json: { schema: { $ref: '#/components/schemas/AiProviderTestResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-jobs:
+    post:
+      tags: [Ai]
+      summary: 创建 AI 异步任务（当前支持 JD_EXTRACTION）
+      description: |
+        任务入队后由后台执行器调用激活供应商完成；重新生成即再创建新任务，
+        既有任务的候选条目与确认状态不受影响（PRD 9.2：重新生成不得覆盖已确认内容）。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AiJobCreateRequest' } } }
+      responses:
+        '202': { description: 任务已入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /ai-jobs/{aiJobId}:
+    parameters: [ { $ref: '#/components/parameters/AiJobId' } ]
+    get:
+      tags: [Ai]
+      summary: 查询任务（含候选条目）
+      responses:
+        '200': { description: 任务详情, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Ai]
+      summary: 取消任务（QUEUED/RUNNING → CANCELED；已完成任务返回 422）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 任务当前状态, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /ai-jobs/{aiJobId}/retry:
+    parameters: [ { $ref: '#/components/parameters/AiJobId' } ]
+    post:
+      tags: [Ai]
+      summary: 重试失败任务（FAILED → QUEUED，attempt_count + 1，上限 3）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 任务已重新入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /jobs/{jobId}/ai-jobs:
+    parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Ai]
+      summary: 查询岗位的 AI 任务历史（最新优先）
+      responses:
+        '200': { description: 任务列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiJob' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-job-items/{itemId}/accept:
+    parameters: [ { $ref: '#/components/parameters/AiJobItemId' } ]
+    post:
+      tags: [Ai]
+      summary: 采纳候选要求（可携带编辑后的内容）；创建 source_type=AI 的 PENDING 岗位要求
+      description: 采纳后仍需在岗位要求确认区确认，与其他候选要求一致。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: '#/components/schemas/AiJobItemAcceptRequest' } } }
+      responses:
+        '200': { description: 已采纳, content: { application/json: { schema: { $ref: '#/components/schemas/AiJobItem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
+  /ai-job-items/{itemId}/reject:
+    parameters: [ { $ref: '#/components/parameters/AiJobItemId' } ]
+    post:
+      tags: [Ai]
+      summary: 拒绝候选要求（PROPOSED → REJECTED，幂等）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 已拒绝, content: { application/json: { schema: { $ref: '#/components/schemas/AiJobItem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/IllegalTransition' }
 
 components:
   parameters:
@@ -860,6 +991,9 @@ components:
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
     ChannelType: { name: channelType, in: path, required: true, schema: { type: string, enum: [BROWSER, EMAIL] } }
+    AiProviderId: { name: providerId, in: path, required: true, schema: { type: string, format: uuid } }
+    AiJobId: { name: aiJobId, in: path, required: true, schema: { type: string, format: uuid } }
+    AiJobItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
   responses:
     NotFound:
       description: 资源不存在或不可见
@@ -1690,6 +1824,86 @@ components:
         channelType: { type: string, enum: [BROWSER, EMAIL] }
         notificationId: { type: string, format: uuid }
         deliveries: { type: array, items: { $ref: '#/components/schemas/ChannelDelivery' } }
+    AiProvider:
+      type: object
+      required: [id, providerType, name, baseUrl, model, hasCredential, isActive, version]
+      properties:
+        id: { type: string, format: uuid }
+        providerType: { type: string, enum: [OPENAI_COMPATIBLE, ANTHROPIC] }
+        name: { type: string }
+        baseUrl: { type: string, description: OpenAI 兼容端点如 https://api.deepseek.com/v1；Anthropic 填 https://api.anthropic.com }
+        model: { type: string }
+        hasCredential: { type: boolean, description: 是否已保存 api_key（key 本身永不回显、不导出） }
+        isActive: { type: boolean, description: 同一时刻仅一个激活供应商 }
+        version: { type: integer }
+    AiProviderCreateRequest:
+      type: object
+      required: [providerType, name, baseUrl, model]
+      properties:
+        providerType: { type: string, enum: [OPENAI_COMPATIBLE, ANTHROPIC] }
+        name: { type: string, maxLength: 100 }
+        baseUrl: { type: string, maxLength: 500 }
+        model: { type: string, maxLength: 200 }
+        apiKey: { type: string, maxLength: 500, nullable: true, description: 仅写入；更新时省略/null 表示保留既有 key }
+    AiProviderTestResult:
+      type: object
+      required: [ok, latencyMs]
+      properties:
+        ok: { type: boolean }
+        latencyMs: { type: integer, nullable: true }
+        message: { type: string, nullable: true }
+    AiJobCreateRequest:
+      type: object
+      required: [jobType, objectId]
+      properties:
+        jobType: { type: string, enum: [JD_EXTRACTION] }
+        objectId: { type: string, format: uuid }
+    AiItemPayload:
+      type: object
+      required: [type, rawText]
+      properties:
+        type: { type: string, enum: [MUST, BONUS] }
+        rawText: { type: string, maxLength: 2000 }
+        normalizedName: { type: string, maxLength: 200 }
+        proficiencyText: { type: string, nullable: true, maxLength: 500 }
+    AiJobItem:
+      type: object
+      required: [id, aiJobId, payload, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        aiJobId: { type: string, format: uuid }
+        payload: { $ref: '#/components/schemas/AiItemPayload' }
+        editedPayload:
+          description: 采纳时的编辑内容；为 null 表示未编辑
+          $ref: '#/components/schemas/AiItemPayload'
+        status: { type: string, enum: [PROPOSED, ACCEPTED, REJECTED] }
+        requirementId: { type: string, format: uuid, nullable: true, description: 采纳后创建的岗位要求 id }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AiJob:
+      type: object
+      required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        jobType: { type: string, enum: [JD_EXTRACTION] }
+        objectId: { type: string, format: uuid }
+        status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
+        providerType: { type: string }
+        model: { type: string }
+        promptVersion: { type: string }
+        attemptCount: { type: integer }
+        failureReason: { type: string, nullable: true }
+        items: { type: array, items: { $ref: '#/components/schemas/AiJobItem' } }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AiJobItemAcceptRequest:
+      type: object
+      properties:
+        payload:
+          description: 编辑后的候选内容；省略表示按原文采纳
+          $ref: '#/components/schemas/AiItemPayload'
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

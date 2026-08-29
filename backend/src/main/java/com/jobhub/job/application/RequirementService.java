@@ -53,6 +53,23 @@ public class RequirementService {
 		return new ExtractionResult(candidates, candidates.size());
 	}
 
+	/**
+	 * AI 候选采纳（PRD 9.2）：创建 source_type=AI 的 PENDING 岗位要求，进入既有确认流。
+	 */
+	@Transactional
+	public JobRequirement createAiCandidate(String jobId, String type, String rawText, String normalizedName,
+			String proficiencyText) {
+		Job job = jobMapper.selectById(jobId);
+		VersionCheck.requireFound(job, "Job", jobId);
+		List<JobRequirement> existing = requirementMapper.selectByJobId(jobId);
+		RequirementType requirementType = RequirementType.valueOf(type);
+		JobRequirement candidate = JobRequirement.createFromAi(idGenerator.newId(), jobId, rawText,
+				normalizedName == null || normalizedName.isBlank() ? rawText : normalizedName,
+				requirementType, proficiencyText, existing.size(), utcTime.now());
+		requirementMapper.batchInsert(List.of(candidate));
+		return candidate;
+	}
+
 	public List<JobRequirement> listByJob(String jobId) {
 		return requirementMapper.selectByJobId(jobId);
 	}

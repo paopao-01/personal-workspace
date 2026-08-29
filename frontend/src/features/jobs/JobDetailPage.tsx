@@ -8,6 +8,7 @@ import { DecisionSection } from '@/features/jobs/components/DecisionSection'
 import { RequirementConfirmationSection } from '@/features/jobs/components/RequirementConfirmationSection'
 import { GapListSection } from '@/features/jobs/components/GapListSection'
 import { MatchReportSection } from '@/features/jobs/components/MatchReportSection'
+import { AiExtractionSection } from '@/features/jobs/AiExtractionSection'
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -48,6 +49,7 @@ export function JobDetailPage() {
         <JobSummarySection job={job} />
         <DecisionSection job={job} />
         <RequirementConfirmationSection jobId={job.id} />
+        <AiExtractionSection jobId={job.id} />
         <GapListSection jobId={job.id} />
         <MatchReportSection jobId={job.id} />
       </div>

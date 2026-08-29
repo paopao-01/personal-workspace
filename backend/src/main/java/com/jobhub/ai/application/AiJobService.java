@@ -1,0 +1,228 @@
+package com.jobhub.ai.application;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobhub.ai.domain.AiJob;
+import com.jobhub.ai.domain.AiJobItem;
+import com.jobhub.ai.domain.AiJobItemStatus;
+import com.jobhub.ai.domain.AiJobStatus;
+import com.jobhub.ai.domain.AiJobType;
+import com.jobhub.ai.domain.AiItemPayload;
+import com.jobhub.ai.domain.AiProvider;
+import com.jobhub.ai.infrastructure.AiJobItemMapper;
+import com.jobhub.ai.infrastructure.AiJobMapper;
+import com.jobhub.ai.infrastructure.AiProviderMapper;
+import com.jobhub.common.error.BusinessRuleException;
+import com.jobhub.common.error.IllegalStateTransitionException;
+import com.jobhub.common.error.ResourceNotFoundException;
+import com.jobhub.common.id.IdGenerator;
+import com.jobhub.common.time.UtcTime;
+import com.jobhub.common.version.VersionCheck;
+import com.jobhub.job.application.RequirementService;
+import com.jobhub.job.domain.Job;
+import com.jobhub.job.infrastructure.JobMapper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+/**
+ * AI 异步任务服务（PRD 9.2）：创建入队、重试（上限 3）、取消、候选条目逐项采纳（可编辑）/拒绝。
+ * 重新生成即再创建新任务，既有条目与确认状态不受影响。
+ */
+@Service
+public class AiJobService {
+	public static final int MAX_ATTEMPTS = 3;
+	private static final ObjectMapper JSON = new ObjectMapper();
+
+	private final AiJobMapper aiJobMapper;
+	private final AiJobItemMapper itemMapper;
+	private final AiProviderMapper providerMapper;
+	private final JobMapper jobMapper;
+	private final RequirementService requirementService;
+	private final AiJobExecutor executor;
+	private final IdGenerator ids;
+	private final UtcTime time;
+	private final List<AiTaskHandler> handlers;
+
+	public AiJobService(AiJobMapper aiJobMapper, AiJobItemMapper itemMapper, AiProviderMapper providerMapper,
+			JobMapper jobMapper, RequirementService requirementService, AiJobExecutor executor, IdGenerator ids,
+			UtcTime time, List<AiTaskHandler> handlers) {
+		this.aiJobMapper = aiJobMapper;
+		this.itemMapper = itemMapper;
+		this.providerMapper = providerMapper;
+		this.jobMapper = jobMapper;
+		this.requirementService = requirementService;
+		this.executor = executor;
+		this.ids = ids;
+		this.time = time;
+		this.handlers = handlers;
+	}
+
+	@Transactional
+	public AiJob create(AiJobType jobType, String objectId) {
+		if (jobType != AiJobType.JD_EXTRACTION) {
+			throw new BusinessRuleException("暂不支持的任务类型：" + jobType);
+		}
+		Job job = jobMapper.selectById(objectId);
+		VersionCheck.requireFound(job, "Job", objectId);
+		if (job.getJdRawText() == null || job.getJdRawText().isBlank()) {
+			throw new BusinessRuleException("岗位缺少 JD 原文，无法执行 AI 提取");
+		}
+		AiProvider provider = providerMapper.selectActive();
+		if (provider == null) {
+			throw new BusinessRuleException("尚未配置激活的 AI 供应商，请先在设置中配置");
+		}
+		String now = time.now();
+		AiJob aiJob = new AiJob();
+		aiJob.setId(ids.newId());
+		aiJob.setJobType(jobType);
+		aiJob.setObjectId(objectId);
+		aiJob.setObjectVersion(job.getVersion());
+		aiJob.setStatus(AiJobStatus.QUEUED);
+		aiJob.setProviderId(provider.getId());
+		aiJob.setProviderType(provider.getProviderType().name());
+		aiJob.setModel(provider.getModel());
+		aiJob.setPromptVersion(promptVersion(jobType));
+		aiJob.setAttemptCount(0);
+		aiJob.setInputSnapshot(job.getJdRawText());
+		aiJob.setCreatedAt(now);
+		aiJob.setUpdatedAt(now);
+		aiJobMapper.insert(aiJob);
+		submitAfterCommit(aiJob.getId());
+		return requireJob(aiJob.getId());
+	}
+
+	/** 事务提交后再投递执行器，避免执行器线程读不到未提交的任务行。 */
+	private void submitAfterCommit(String aiJobId) {
+		if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+			org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+				new org.springframework.transaction.support.TransactionSynchronization() {
+					@Override
+					public void afterCommit() {
+						executor.submit(aiJobId);
+					}
+				});
+		} else {
+			executor.submit(aiJobId);
+		}
+	}
+
+	public AiJob get(String id) {
+		return hydrate(requireJob(id));
+	}
+
+	public List<AiJob> listByObject(AiJobType jobType, String objectId) {
+		return aiJobMapper.selectByObject(jobType.name(), objectId).stream().map(this::hydrate).toList();
+	}
+
+	@Transactional
+	public AiJob retry(String id) {
+		AiJob job = requireJob(id);
+		if (job.getStatus() != AiJobStatus.FAILED) {
+			throw new IllegalStateTransitionException(job.getStatus().name(), AiJobStatus.QUEUED.name(),
+					"仅 FAILED 任务可重试");
+		}
+		if (job.getAttemptCount() >= MAX_ATTEMPTS) {
+			throw new BusinessRuleException("已达最大重试次数（" + MAX_ATTEMPTS + "），请检查供应商配置后新建任务");
+		}
+		if (aiJobMapper.markQueuedForRetry(id, time.now()) == 0) {
+			throw new IllegalStateTransitionException(job.getStatus().name(), AiJobStatus.QUEUED.name(),
+					"任务状态已变化");
+		}
+		submitAfterCommit(id);
+		return requireJob(id);
+	}
+
+	@Transactional
+	public AiJob cancel(String id) {
+		AiJob job = requireJob(id);
+		if (aiJobMapper.markCanceled(id, time.now()) == 0) {
+			throw new IllegalStateTransitionException(job.getStatus().name(), AiJobStatus.CANCELED.name(),
+					"仅 QUEUED/RUNNING 任务可取消");
+		}
+		return requireJob(id);
+	}
+
+	/** 采纳候选（可编辑）：创建 source_type=AI 的 PENDING 岗位要求并回链条目。 */
+	@Transactional
+	public AiJobItem acceptItem(String itemId, AiItemPayload editedPayload) {
+		AiJobItem item = requireItem(itemId);
+		if (item.getStatus() != AiJobItemStatus.PROPOSED) {
+			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+					"仅 PROPOSED 条目可采纳");
+		}
+		AiItemPayload payload = resolvePayload(item, editedPayload);
+		String now = time.now();
+		var requirement = requirementService.createAiCandidate(requireJobOfItem(item), payload.type(),
+				payload.rawText(), payload.normalizedName(), payload.proficiencyText());
+		String editedJson = editedPayload == null ? null : serialize(editedPayload);
+		if (itemMapper.markAccepted(itemId, editedJson, requirement.getId(), now) == 0) {
+			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+					"条目状态已变化");
+		}
+		return itemMapper.selectById(itemId);
+	}
+
+	@Transactional
+	public AiJobItem rejectItem(String itemId) {
+		AiJobItem item = requireItem(itemId);
+		if (itemMapper.markRejected(itemId, time.now()) == 0) {
+			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.REJECTED.name(),
+					"仅 PROPOSED 条目可拒绝");
+		}
+		return itemMapper.selectById(itemId);
+	}
+
+	private String serialize(AiItemPayload payload) {
+		try {
+			return JSON.writeValueAsString(payload);
+		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+			throw new BusinessRuleException("候选内容序列化失败：" + ex.getMessage());
+		}
+	}
+
+	private AiItemPayload resolvePayload(AiJobItem item, AiItemPayload edited) {
+		AiItemPayload base = AiItemPayload.parseList("[" + item.getPayloadJson() + "]").get(0);
+		if (edited == null) {
+			return base;
+		}
+		return new AiItemPayload(
+			edited.type() == null || edited.type().isBlank() ? base.type() : edited.type(),
+			edited.rawText() == null || edited.rawText().isBlank() ? base.rawText() : edited.rawText(),
+			edited.normalizedName() == null || edited.normalizedName().isBlank() ? base.normalizedName() : edited.normalizedName(),
+			edited.proficiencyText() == null ? base.proficiencyText() : edited.proficiencyText());
+	}
+
+	private String requireJobOfItem(AiJobItem item) {
+		AiJob job = aiJobMapper.selectById(item.getAiJobId());
+		if (job == null) {
+			throw new ResourceNotFoundException("AiJob", item.getAiJobId());
+		}
+		return job.getObjectId();
+	}
+
+	private String promptVersion(AiJobType jobType) {
+		return handlers.stream()
+			.filter(h -> h.type() == jobType)
+			.findFirst()
+			.orElseThrow(() -> new BusinessRuleException("暂不支持的任务类型：" + jobType))
+			.promptVersion();
+	}
+
+	private AiJob requireJob(String id) {
+		AiJob job = aiJobMapper.selectById(id);
+		VersionCheck.requireFound(job, "AiJob", id);
+		return job;
+	}
+
+	private AiJob hydrate(AiJob job) {
+		job.setItems(itemMapper.selectByJob(job.getId()));
+		return job;
+	}
+
+	private AiJobItem requireItem(String id) {
+		AiJobItem item = itemMapper.selectById(id);
+		VersionCheck.requireFound(item, "AiJobItem", id);
+		return item;
+	}
+}

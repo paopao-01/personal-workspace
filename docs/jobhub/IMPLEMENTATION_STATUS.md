@@ -4,10 +4,10 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移 + 渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）；CSV 导出（V6 迁移放宽 data_export.format，ZIP 打包按表拆分 CSV）。
+- 项目阶段：P1（V0.2）进行中，已完成十一个切片：AI 基础设施与 JD 结构化提取（V7/V8 迁移新增 ai_provider/ai_job/ai_job_item，可切换供应商，候选逐项确认）；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移 + 渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）；CSV 导出（V6 迁移放宽 data_export.format，ZIP 打包按表拆分 CSV）；AI 基础设施 + JD 结构化提取（可切换供应商）。
 - 里程碑说明：V0.2 清单中除「AI 异步分析和候选变更确认」「简历定制草稿」「复杂恢复报告与完整附件证据库」「多实例提醒协调与失败重试」外均已实现；AI 两项需用户明确同意接入 AI 后启动。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口候选（与用户确认后开工）：AI 异步任务基础设施 + 简历定制草稿（PRD 9.2/9.4，需用户明确同意接入 AI）、复杂恢复报告/附件证据库（PRD V0.2 列表内，依赖附件体系）。
+- 当前任务：下一窗口开发简历定制草稿（PRD 9.4，基于本窗口完成的 AI 基础设施；用户已明确同意接入 AI 并要求供应商可切换——已满足）。后续候选：复杂恢复报告/附件证据库（依赖附件体系）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -71,6 +71,51 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-17
+
+- 目标：P1 第十一切片——AI 异步任务基础设施（PRD 9.2）+ 首个场景 JD 结构化提取；用户已明确同意接入 AI 并要求供应商可随时切换；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - Flyway 迁移 `V7__create_ai_infrastructure.sql`（ai_provider / ai_job / ai_job_item）与 `V8__add_ai_job_item_sort_order.sql`（条目排序，保持模型输出顺序）。
+  - 供应商抽象：`AiChatClient` 接口 + `AiClientFactory` 按 provider_type 路由；实现 `OpenAiCompatibleClient`（/chat/completions，Bearer 鉴权，覆盖 OpenAI/DeepSeek/Kimi/GLM/Qwen/Ollama 等）与 `AnthropicClient`（/v1/messages，x-api-key + anthropic-version）。基于 Spring RestClient，无新增 SDK 依赖；连接 15s/读取 180s 超时。api_key 仅存 ai_provider.api_key，永不回显、不导出（ExportService 表清单不含新表）；更新时省略 key 表示保留。
+  - 异步任务状态机（PRD 9.2）：QUEUED -> RUNNING -> SUCCEEDED/FAILED；QUEUED/RUNNING -> CANCELED；FAILED -> QUEUED（retry，attempt_count+1，上限 3，超出 422）。所有转移单次 WHERE 守卫。任务审计字段：job_type、object_id/object_version、provider_id/provider_type/model、prompt_version、attempt_count、failure_reason、input_snapshot（JD 原文快照）、output_json、started/finished_at。事务提交后才投递执行器（afterCommit），避免执行器读不到未提交行。
+  - 执行器 `AiJobExecutor`：单线程守护线程顺序执行；取消后的完成转移不生效（结果丢弃）。
+  - 首个场景 JD_EXTRACTION（prompt_version JD_EXTRACTION_V1）：系统提示词约束只输出 JSON 数组、只提炼 JD 明确要求、type 限 MUST/BONUS；解析宽松剥离围栏，非法条目跳过，空结果判 FAILED；上限 20 条。
+  - 候选变更确认：`POST /ai-job-items/{id}/accept`（可带编辑 payload，字段级合并）创建 source_type=AI、PENDING 的 job_requirement 并回链 requirement_id；`/reject` PROPOSED -> REJECTED；重复采纳 422。重新生成 = 新任务，既有条目与确认状态不受影响（PRD 9.2）。
+  - 前端：`api/ai` API 层 + hooks；设置页 `AiProviderSection`（列表/新增/编辑/切换激活/测试连通，类型含 OpenAI 兼容与 Anthropic，key 密码框留空保持）；岗位详情页 `AiExtractionSection`（AI 提取按钮 → 任务状态徽章/失败原因/重试/取消 → 候选条目采纳（可编辑）/拒绝 → 采纳后进入既有要求确认区）。
+  - E2E 基建：`e2e/fake-ai-server.mjs`（Node OpenAI 兼容假供应商，端口 18090）注册进 playwright webServer。
+  - 集成测试 `AiIntegrationTest` 3 用例（JDK HttpServer 假供应商走真实 HTTP）：供应商切换/凭据保留/409；JD 提取全流程（SUCCEEDED、非法类型跳过、采纳带编辑生成 AI 候选要求、拒绝、重新生成保留历史、重复采纳 422）；失败带原因/重试递增/取消/终态取消 422/测试端点失败原因。
+  - E2E `p1-ai-extraction.spec.ts`：配置激活假供应商 → 岗位创建提取任务 → 候选 2 条 → UI 采纳/拒绝 → API 校验 AI 来源 PENDING 要求 → 重新生成不影响历史 → 设置页激活徽章可见。
+- 未完成：
+  - 简历定制草稿（PRD 9.4）为下一窗口任务，基于本切片基础设施新增 RESUME_DRAFT 处理器即可。
+  - ai_provider 无删除端点（可编辑/停用由激活切换覆盖，删除按需补契约）。
+  - AI 结果确认目前仅需求类条目；「回答质量分析、任务建议」等场景按需扩展 handler。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
+  - 新增：`backend/src/main/resources/db/migration/V7__create_ai_infrastructure.sql`、`V8__add_ai_job_item_sort_order.sql`、`backend/src/main/java/com/jobhub/ai/**`（domain 8 + infrastructure 3 + application 8 + api 7 个文件）、`backend/src/test/java/com/jobhub/integration/AiIntegrationTest.java`、`frontend/src/api/ai/{aiApi,useAiQueries}.ts`、`frontend/src/features/settings/AiProviderSection.tsx`、`frontend/src/features/jobs/AiExtractionSection.tsx`、`frontend/e2e/{fake-ai-server.mjs,p1-ai-extraction.spec.ts}`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=AiIntegrationTest"` -> 3 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，77 tests，0 failures，0 errors（Flyway V1→V8 迁移通过）。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-ai-extraction.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 21 tests passed（含新增 p1-ai-extraction）。
+- 验证结果：
+  - AI 链路（供应商配置/切换/测试 → 任务入队 → 异步执行 → 候选条目逐项采纳（可编辑）/拒绝 → source=AI 候选要求进入既有确认流 → 失败重试与取消 → 重新生成不覆盖已确认内容）有集成测试（真实 HTTP 假供应商）与浏览器级 E2E 覆盖。
+  - OpenAPI 变更为新增 tag/路径/schema，非破坏性；数据库变更走 V7/V8 迁移。
+  - 用户事实优先：AI 只产出候选，采纳后仍为 PENDING，需用户显式确认；api_key 不回显不导出。
+- 已知问题：
+  - V7 执行后补 V8 加 sort_order（模型输出顺序需要稳定排序）；后续新增列一律新迁移。
+  - 任务执行器为单线程顺序执行；外部供应商超时上限 180s，阻塞后续任务（本地单用户可接受）。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现简历定制草稿（PRD 9.4）：新增 RESUME_DRAFT 任务处理器与相关页面，只引用已确认经历/技能/证据，AI 仅重写表达，建议可溯源，确认前保持草稿。
+- 不要重复做：
+  - 不要重建 ai_provider/ai_job/ai_job_item 基础设施或执行器；不要在任何响应中回显 api_key；不要把 AI 表纳入导出。
+  - 不要让 AI 自动确认候选或修改业务数据（只创建候选变更，用户逐项确认）。
+  - 不要提前实现第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-16
 
