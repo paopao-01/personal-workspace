@@ -697,6 +697,36 @@ paths:
             application/json:
               schema: { type: string }
         '404': { $ref: '#/components/responses/NotFound' }
+  /data-imports/validate:
+    post:
+      tags: [DataManagement]
+      summary: 数据包冲突预检与恢复预览（不写库）
+      description: |
+        解析 P0/P1 导出的标准 JSON 数据包，做冲突预检：同 ID 已存在且内容一致的行标记为重复（恢复时跳过），
+        同 ID 已存在但内容不同的行标记为冲突（恢复时跳过，保留现状，用户事实优先），
+        外键父行（数据库与数据包中均不存在）标记为缺父级（恢复时跳过）。
+        该端点只读，不产生任何数据副作用；恢复预览即影响范围展示。
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DataImportPackage' } } }
+      responses:
+        '200': { description: 预检与恢复预览, content: { application/json: { schema: { $ref: '#/components/schemas/ImportValidationReport' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /data-imports/restore:
+    post:
+      tags: [DataManagement]
+      summary: 执行数据恢复（只插入缺失行，不覆盖已有数据）
+      description: |
+        按预检结果执行恢复：仅插入数据库中缺失的行；重复行、冲突行与缺父级行一律跳过并在结果报告中列出，
+        不修改、不覆盖任何已有行。恢复为幂等操作：重复恢复同一数据包时第二次全部标记为“重复跳过”。
+        结果报告即恢复结果报告（每表 inserted/skipped/failed 计数与问题明细）。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DataImportPackage' } } }
+      responses:
+        '200': { description: 恢复结果报告, content: { application/json: { schema: { $ref: '#/components/schemas/ImportResultReport' } } } }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /trash:
     get:
       tags: [DataManagement]
@@ -1470,6 +1500,70 @@ components:
         downloadUrl: { type: string, format: uri-reference, nullable: true, description: '相对 API 下载路径，如 /api/data-exports/{exportId}/download' }
         failureReason: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+    DataImportPackage:
+      type: object
+      required: [format, exportedAt, tables]
+      description: 由导出端点生成的标准数据包，原样作为请求体回传
+      properties:
+        format: { type: string, enum: [JSON] }
+        exportedAt: { type: string, format: date-time }
+        tables:
+          type: object
+          description: 表名到行数组（列名到值的映射）的映射；未知表与排除表（用户资料/设置、审计、幂等、导出任务、回收站）会被跳过并记录问题
+          additionalProperties:
+            type: array
+            items: { type: object, additionalProperties: true }
+    ImportTablePreview:
+      type: object
+      required: [tableName, packageRows, toInsert, duplicateIdentical, conflict, missingParent]
+      properties:
+        tableName: { type: string }
+        packageRows: { type: integer, description: 数据包内该表行数 }
+        toInsert: { type: integer, description: 恢复时将插入的行数（数据库缺失） }
+        duplicateIdentical: { type: integer, description: 同 ID 且内容一致的行数（恢复时跳过） }
+        conflict: { type: integer, description: 同 ID 但内容不同的行数（恢复时跳过，保留现状） }
+        missingParent: { type: integer, description: 外键父行缺失的行数（恢复时跳过） }
+    ImportIssue:
+      type: object
+      required: [type, detail]
+      properties:
+        type: { type: string, enum: [INVALID_PACKAGE, UNKNOWN_TABLE, CONFLICT, MISSING_PARENT, ROW_FAILED] }
+        tableName: { type: string, nullable: true }
+        rowId: { type: string, nullable: true }
+        detail: { type: string }
+    ImportValidationReport:
+      type: object
+      required: [valid, exportedAt, totalRows, insertableRows, tablePreviews, issues]
+      properties:
+        valid:
+          type: boolean
+          description: 数据包可解析且至少包含一行数据；冲突与缺父级不影响 valid（恢复时跳过）
+        exportedAt: { type: string, format: date-time, nullable: true }
+        totalRows: { type: integer }
+        insertableRows: { type: integer }
+        tablePreviews: { type: array, items: { $ref: '#/components/schemas/ImportTablePreview' } }
+        issues: { type: array, items: { $ref: '#/components/schemas/ImportIssue' } }
+    ImportTableResult:
+      type: object
+      required: [tableName, inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed]
+      properties:
+        tableName: { type: string }
+        inserted: { type: integer }
+        skippedIdentical: { type: integer }
+        skippedConflict: { type: integer }
+        skippedMissingParent: { type: integer }
+        failed: { type: integer }
+    ImportResultReport:
+      type: object
+      required: [inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed, tableResults, issues]
+      properties:
+        inserted: { type: integer }
+        skippedIdentical: { type: integer }
+        skippedConflict: { type: integer }
+        skippedMissingParent: { type: integer }
+        failed: { type: integer }
+        tableResults: { type: array, items: { $ref: '#/components/schemas/ImportTableResult' } }
+        issues: { type: array, items: { $ref: '#/components/schemas/ImportIssue' } }
     TrashItem:
       type: object
       required: [id, resourceType, resourceId, deletedAt, expiresAt]
