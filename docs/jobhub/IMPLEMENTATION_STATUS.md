@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M3 已完成，准备进入 M4（投递、面试、提醒、dashboard 主路径、复盘、薄弱点和学习任务闭环已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18）。
-- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）待启动；M3 的 AT-15 至 AT-19 已完成。
-- 当前任务：AT-18 从问题创建任务、AT-19 完成任务不改能力已完成；下一窗口建议实现 AT-20 面试准备包聚合且可追溯。
+- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环和面试准备包聚合已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20）。
+- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20 已完成，AT-21 的“无资料显示待补充/不伪造能力分数”已在准备包后端覆盖，项目/证据 CRUD、最近删除和导出尚未实现。
+- 当前任务：AT-20 面试准备包聚合且可追溯已完成；下一窗口建议实现 P10 最小项目案例与证据引用 CRUD，为准备包提供用户可维护的真实资料来源。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -67,9 +67,64 @@
 | M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
 | M2 | 投递状态机、下一步行动、面试与提醒 | `DONE` | M1 完成 | AT-05 至 AT-14 通过 |
 | M3 | 复盘、问题、知识点、薄弱点、学习任务 | `DONE` | M2 完成 | AT-15 至 AT-19 通过 |
-| M4 | 面试准备包、项目案例、证据、导出、最近删除 | `NOT_STARTED` | M3 完成 | AT-20 至 AT-24 通过 |
+| M4 | 面试准备包、项目案例、证据、导出、最近删除 | `PARTIAL` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-3
+
+- 目标：在 `dev` 分支实现 AT-20 面试准备包聚合且可追溯；验证无问题后合并回 `main` 并推送。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `GET /api/interviews/{interviewId}/preparation` 后端实现，返回只读聚合的 `PreparationPack`，不复制业务数据。
+  - 准备包聚合面试摘要、已确认岗位要求差距、项目案例/证据摘要、同岗位历史问题、关联未完成学习任务和面试准备事项。
+  - 每个 `prioritizedItem` 都包含至少一个排序原因和 `sourceRef`；优先项来源覆盖 `JOB_REQUIREMENT`、`QUESTION`、`TASK`、`PROJECT_CASE`、`CHECKLIST`。
+  - `requirements` 只基于 `CONFIRMED` 岗位要求；`PENDING` 要求不进入确定性准备结论。
+  - 没有关联项目案例时返回“待补充项目案例”占位，不伪造项目描述、量化结果或综合能力分数。
+  - 前端新增 `/interviews/:interviewId/preparation` 面试准备包页面；从面试详情可打开准备包；页面展示优先准备项、岗位要求与差距、可讲项目案例、历史问题、未完成任务和准备事项。
+  - 新增 AT-20 Playwright E2E：构造岗位/投递/历史复盘/任务/项目证据后打开准备包，断言聚合区块可见，并检查 API 中每个优先项有 reason/sourceRef。
+  - 扩展仅 `e2e` profile 可用的测试夹具接口，用于在项目/证据 CRUD 尚未实现前为 AT-20 写入项目证据测试数据。
+- 未完成：
+  - P10 项目案例和证据引用 CRUD 尚未实现；当前真实项目/证据只能由测试夹具或后续接口写入。
+  - 准备事项仍为只读展示，未实现勾选完成操作；本窗口只覆盖准备包读取路径。
+  - 准备包项目匹配当前依赖 `requirement_skill -> skill_evidence -> project_evidence` 链路；因尚无项目-技能直接关系表，未做更复杂关联。
+  - 最近删除、完整 JSON 导出尚未实现。
+- 修改文件：
+  - 新增：`backend/src/main/java/com/jobhub/interview/application/PreparationService.java`、`PreparationPack.java`、`PreparationItem.java`、`SourceRef.java`、`ProjectCaseSummary.java`、`EvidenceReference.java`、`ChecklistItem.java`。
+  - 新增：`backend/src/main/java/com/jobhub/interview/infrastructure/PreparationMapper.java`。
+  - 新增：`backend/src/main/java/com/jobhub/interview/api/PreparationPackResponse.java`、`PreparationItemResponse.java`、`SourceRefResponse.java`、`ProjectCaseSummaryResponse.java`、`EvidenceReferenceResponse.java`、`ChecklistItemResponse.java`。
+  - 修改：`backend/src/main/java/com/jobhub/interview/api/InterviewController.java`、`backend/src/main/java/com/jobhub/interview/infrastructure/ChecklistMapper.java`。
+  - 修改：`backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`（仅 `e2e` profile 测试夹具扩展）。
+  - 新增：`backend/src/test/java/com/jobhub/integration/PreparationIntegrationTest.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`。
+  - 修改：`frontend/src/api/interviews/interviewApi.ts`、`useInterviewQueries.ts`、`frontend/src/api/tasks/taskApi.ts`。
+  - 新增：`frontend/src/features/interviews/InterviewPreparationPage.tsx`。
+  - 修改：`frontend/src/features/interviews/InterviewDetailPage.tsx`、`frontend/src/features/tasks/taskLabels.ts`、`frontend/src/app/routes.tsx`、`frontend/src/styles/globals.css`。
+  - 新增：`frontend/e2e/at-20-preparation-pack.spec.ts`。
+  - 修改：`docs/jobhub/IMPLEMENTATION_STATUS.md`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=PreparationIntegrationTest"` -> BUILD SUCCESS，2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，42 tests，0 failures，0 errors。
+  - `cd frontend && npm run typecheck` -> 通过。
+  - `cd frontend && npm run lint` -> 通过。
+  - `cd frontend && npm run build` -> 通过；OpenAPI TS 类型生成、TS 编译和 Vite 生产构建均成功，186 modules。
+  - `cd frontend && npx playwright test e2e/at-20-preparation-pack.spec.ts --reporter=list` -> 1 passed，自然返回。
+- 验证结果：
+  - AT-20 后端和浏览器路径均已覆盖；准备包聚合且每个优先准备项可追溯。
+  - AT-21 的关键后端规则已覆盖：无项目资料时显示“待补充”，不返回虚构项目描述、量化结果或综合能力分数。
+  - 本窗口未修改 OpenAPI；使用既有 `PreparationPack` 契约。
+  - 本窗口未新增数据库迁移；V1 既有 `project`、`evidence`、`project_evidence`、`skill_evidence`、`requirement_skill`、`learning_task`、`task_source` 等表可支撑本切片。
+- 已知问题：
+  - 项目/证据 CRUD 尚未实现，普通用户暂不能在 UI 中维护准备包项目案例；E2E 通过 `e2e` profile 测试夹具造数。
+  - 准备包中的项目来源链接目前不跳转项目页，因为 `/projects` 页面未实现。
+  - E2E 仍输出 React Router v7 future flag 警告和 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现 P10 最小项目案例与证据引用 CRUD：`GET/POST/PUT /api/projects`、`GET/POST/PUT /api/evidence` 的最小路径，以及 `/projects` 页面，让用户能维护准备包使用的真实项目案例和外部证据引用。
+  - 保持 P0 规则：证据 `urlOrPath` 只作为文本保存，不读取、扫描或上传本地路径；不生成虚构指标。
+- 不要重复做：
+  - 不要重建 AT-20 preparation pack 聚合服务和页面。
+  - 不要提前实现最近删除、完整 JSON 导出、AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
 
 ### 窗口 2026-08-29-2
 

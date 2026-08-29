@@ -4,6 +4,7 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type Interview = Schemas['Interview']
 export type InterviewListItem = Schemas['InterviewListItem']
+export type PreparationPack = Schemas['PreparationPack']
 export type Reminder = Schemas['Reminder']
 export type InterviewCreateRequest = Schemas['InterviewCreateRequest']
 export type InterviewCompleteRequest = Schemas['InterviewCompleteRequest']
@@ -40,6 +41,15 @@ export async function listInterviews(
 
 export async function getInterview(interviewId: string): Promise<Interview> {
   const res = await apiClient.get<Interview>(`/interviews/${interviewId}`)
+  return res.data
+}
+
+export async function getPreparationPack(
+  interviewId: string,
+): Promise<PreparationPack> {
+  const res = await apiClient.get<PreparationPack>(
+    `/interviews/${interviewId}/preparation`,
+  )
   return res.data
 }
 
