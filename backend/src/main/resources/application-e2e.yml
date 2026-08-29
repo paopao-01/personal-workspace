@@ -1,0 +1,4 @@
+# E2E profile：独立端口与临时库由启动脚本参数提供；此处仅加速提醒调度以便浏览器级断言。
+jobhub:
+  reminder-scan-delay-ms: 1000
+  reminder-scan-initial-delay-ms: 500

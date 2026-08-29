@@ -7,8 +7,11 @@ spring:
     driver-class-name: org.sqlite.JDBC
 
 # 导出文件写入 target/exports，随 mvn clean 清理，不污染 backend/data。
+# 提醒调度间隔拉长到 1 小时：集成测试直调 ReminderDispatchService 保证确定性，后台调度不干扰断言。
 jobhub:
   export-dir: ./target/exports
+  reminder-scan-delay-ms: 3600000
+  reminder-scan-initial-delay-ms: 3600000
 
 # Flyway 配置继承主 application.yml（enabled/locations/baseline-on-migrate/baseline-version/execute-in-transaction）。
 # execute-in-transaction=false 必须（V1 含 PRAGMA 非事务语句），勿在此覆盖为 true。

@@ -27,6 +27,7 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM audit_log");
 		jdbc.execute("DELETE FROM trash_item");
 		jdbc.execute("DELETE FROM data_export");
+		jdbc.execute("DELETE FROM notification");
 		// user_setting 为 V1 种子行，不删除；重置为种子值，保证依赖默认提醒节点的用例互不串扰
 		jdbc.update("UPDATE user_setting SET time_zone='Asia/Shanghai', default_reminder_offsets_json='[1440,120,30]', version=0");
 		jdbc.execute("DELETE FROM task_source");

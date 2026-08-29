@@ -28,6 +28,8 @@ mybatis:
 
 jobhub:
   export-dir: ${JOBHUB_EXPORT_DIR:./data/exports}
+  reminder-scan-delay-ms: ${JOBHUB_REMINDER_SCAN_DELAY_MS:60000}
+  reminder-scan-initial-delay-ms: ${JOBHUB_REMINDER_SCAN_INITIAL_DELAY_MS:1000}
 
 logging:
   level:
