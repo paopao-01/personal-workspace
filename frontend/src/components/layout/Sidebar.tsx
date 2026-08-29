@@ -12,6 +12,7 @@ const items: NavItem[] = [
   { to: '/interviews', label: '面试中心', enabled: true },
   { to: '/knowledge-points/weak', label: '薄弱知识点', enabled: true },
   { to: '/tasks', label: '学习任务', enabled: true },
+  { to: '/projects', label: '项目与证据', enabled: true },
   { to: '/skills', label: '能力与证据', enabled: false },
   { to: '/settings', label: '设置', enabled: false },
 ]

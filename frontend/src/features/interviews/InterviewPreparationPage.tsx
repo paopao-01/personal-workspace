@@ -151,17 +151,32 @@ export function InterviewPreparationPage() {
         <section className="card">
           <div className="card-header"><h2 className="card-title">可讲项目案例</h2></div>
           <div className="card-body stack">
-            {pack.projectCases.map((project) => (
-              <article key={project.id} className="plain-block">
-                <h3>{project.title}</h3>
-                <p><strong>场景：</strong>{project.scenario}</p>
-                <p><strong>方案：</strong>{project.approach}</p>
-                <p><strong>解决问题：</strong>{project.problemSolved}</p>
-                {(project.evidenceRefs ?? []).length > 0 ? (
-                  <p className="muted">证据引用：{(project.evidenceRefs ?? []).map((e) => e.title).join('、')}</p>
-                ) : null}
-              </article>
-            ))}
+            {pack.projectCases.length === 0 ? (
+              <EmptyState
+                text="待补充项目案例。可在“项目与证据”页面维护真实项目，准备包会自动引用。"
+                action={
+                  <Link className="btn btn-link" to="/projects">
+                    打开项目与证据
+                  </Link>
+                }
+              />
+            ) : (
+              pack.projectCases.map((project) => (
+                <article key={project.id} className="plain-block">
+                  <h3>
+                    <Link className="btn btn-link" style={{ padding: 0 }} to="/projects">
+                      {project.title}
+                    </Link>
+                  </h3>
+                  <p><strong>场景：</strong>{project.scenario}</p>
+                  <p><strong>方案：</strong>{project.approach}</p>
+                  <p><strong>解决问题：</strong>{project.problemSolved}</p>
+                  {(project.evidenceRefs ?? []).length > 0 ? (
+                    <p className="muted">证据引用：{(project.evidenceRefs ?? []).map((e) => e.title).join('、')}</p>
+                  ) : null}
+                </article>
+              ))
+            )}
           </div>
         </section>
 

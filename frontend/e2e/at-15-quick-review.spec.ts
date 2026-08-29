@@ -120,7 +120,13 @@ test('AT-15 quick review saves a minimal draft and can be reopened', async ({ pa
   await expect(page.getByText('快速复盘已保存')).toBeVisible()
   await expect(page.getByText('草稿')).toBeVisible()
   await expect(page.getByText('Redis 缓存一致性如何保证？')).toBeVisible()
-  await expect(page.getByText('未答出').last()).toBeVisible()
+  // 已记录问题的回答状态渲染为行内下拉框，断言其值而不是隐藏的 option 文本
+  await expect(
+    page
+      .locator('.requirement-row')
+      .filter({ hasText: 'Redis 缓存一致性如何保证？' })
+      .getByLabel('更新回答状态'),
+  ).toHaveValue('UNANSWERED')
   await expect(page.getByText('我的回答')).toHaveCount(0)
   await expect(page.getByText('参考答案')).toHaveCount(0)
   await expect(page.getByText('错误原因')).toHaveCount(0)
