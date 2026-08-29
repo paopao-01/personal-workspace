@@ -26,6 +26,9 @@ mybatis:
     default-fetch-size: 100
     default-statement-timeout: 30
 
+jobhub:
+  export-dir: ${JOBHUB_EXPORT_DIR:./data/exports}
+
 logging:
   level:
     com.jobhub: DEBUG

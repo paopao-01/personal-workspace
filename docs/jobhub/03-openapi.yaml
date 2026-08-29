@@ -636,6 +636,18 @@ paths:
       summary: 查询导出任务与下载地址
       responses:
         '200': { description: 导出详情, content: { application/json: { schema: { $ref: '#/components/schemas/DataExport' } } } }
+  /data-exports/{exportId}/download:
+    parameters: [ { $ref: '#/components/parameters/ExportId' } ]
+    get:
+      tags: [DataManagement]
+      summary: 下载导出的 JSON 文件（不含令牌、密钥、应用日志、幂等记录和未确认 AI 输入输出）
+      responses:
+        '200':
+          description: 导出文件
+          content:
+            application/json:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
   /trash:
     get:
       tags: [DataManagement]
@@ -1266,7 +1278,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED] }
-        downloadUrl: { type: string, format: uri, nullable: true }
+        downloadUrl: { type: string, format: uri-reference, nullable: true, description: '相对 API 下载路径，如 /api/data-exports/{exportId}/download' }
         failureReason: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
     TrashItem:

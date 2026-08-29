@@ -1,5 +1,27 @@
 import type { TrashItem } from '@/api/settings/trashApi'
 
+export const exportStatusLabels: Record<string, string> = {
+  QUEUED: '排队中',
+  RUNNING: '导出中',
+  SUCCEEDED: '导出完成',
+  FAILED: '导出失败',
+}
+
+export const exportStatusVariants: Record<string, 'success' | 'info' | 'subtle' | 'danger'> = {
+  QUEUED: 'subtle',
+  RUNNING: 'info',
+  SUCCEEDED: 'success',
+  FAILED: 'danger',
+}
+
+export function exportStatusLabel(status: string): string {
+  return exportStatusLabels[status] ?? status
+}
+
+export function exportStatusVariant(status: string): 'success' | 'info' | 'subtle' | 'danger' {
+  return exportStatusVariants[status] ?? 'subtle'
+}
+
 export const trashResourceTypeLabels: Record<string, string> = {
   PROJECT_CASE: '项目案例',
   EVIDENCE: '证据引用',
