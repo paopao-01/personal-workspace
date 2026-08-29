@@ -7,6 +7,7 @@ import com.jobhub.dashboard.application.DashboardService.DashboardOverview;
 import com.jobhub.dashboard.application.DashboardService.SourceRef;
 import com.jobhub.job.api.JobResponse;
 import com.jobhub.interview.api.InterviewResponse;
+import com.jobhub.review.api.WeakKnowledgePointResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,7 +37,7 @@ public class DashboardController {
 			List<ActionItemResponse> actionItems,
 			List<InterviewResponse> upcomingInterviews,
 			List<ApplicationResponse> activeApplications,
-			List<WeakKnowledgePointPlaceholder> weakKnowledgePoints,
+			List<WeakKnowledgePointResponse> weakKnowledgePoints,
 			List<JobResponse> recentJobs
 	) {
 		static DashboardOverviewResponse from(DashboardOverview o) {
@@ -48,11 +49,13 @@ public class DashboardController {
 					.map(JobResponse::from).toList();
 			List<InterviewResponse> interviews = o.upcomingInterviews().stream()
 					.map(i -> InterviewResponse.from(i, List.of())).toList();
+			List<WeakKnowledgePointResponse> weakPoints = o.weakKnowledgePoints().stream()
+					.map(WeakKnowledgePointResponse::from).toList();
 			return new DashboardOverviewResponse(
 					actions,
 					interviews,
 					apps,
-					List.of(),
+					weakPoints,
 					jobs);
 		}
 	}
@@ -77,6 +80,4 @@ public class DashboardController {
 		}
 	}
 
-	/** 占位类型：薄弱点模块未实现时返回空数组。 */
-	public record WeakKnowledgePointPlaceholder(String placeholder) { }
 }

@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成三个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen（`POST /reviews/{reviewId}/reopen`，COMPLETED→DRAFT 保留问题与任务关联，页面支持重新打开后继续编辑并再次完成）。
+- 项目阶段：P1（V0.2）进行中，已完成四个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合（契约存量仅剩 `POST /job-requirements/merge`）。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口建议实现 `/skills` 技能画像页（契约已有 `GET /skills/profile`、`PUT /skills/{skillId}/self-level`，侧边栏“能力与证据”入口现处禁用态），并顺带补 Dashboard `weakKnowledgePoints` 聚合（契约要求 `WeakKnowledgePoint[]`，当前仍为占位空数组）——两者合为一个契约存量清零切片。其后候选：`POST /job-requirements/merge` 要求合并。
+- 当前任务：下一窗口实现**要求合并**（OpenAPI 已有 `POST /job-requirements/merge` 契约，用于合并同一岗位的重复候选要求），完成契约存量清零；其后进入 P1 新功能（候选：可解释匹配分数前置、简历定制前置、完整复盘分析），开始前与用户确认优先级。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -70,6 +70,53 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-10
+
+- 目标：P1 第四切片——`/skills` 技能画像页 + Dashboard 弱点真实聚合（契约存量清零第一步）；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 细化：`SkillProfile.selfLevel` 与 `evidenceStatus` 允许 null（键仍 required），描述“尚无自评记录时为 null，界面显示‘未评估’”；`version` 描述明确首次 PUT self-level 以 0 作为 If-Match-Version。非破坏性细化，已重新生成前端类型。
+  - 新增后端 `skill` 模块四层：`GET /skills/profile`（skill LEFT JOIN user_skill，全部未删除技能按名称排序返回，无自评记录时 selfLevel/evidenceStatus 为 null、version 0）+ `PUT /skills/{skillId}/self-level`（If-Match-Version 缺失 400；首次设置以 INSERT OR IGNORE 创建 user_skill（evidence_status 默认 NO_EVIDENCE），唯一键冲突按 409 处理；已有记录走乐观锁更新 version+1；selfLevel 0..5 由 `@Min/@Max` 校验，非法返回 400）。
+  - 三维度独立性由实现保证：self-level 更新不触碰 evidence_status 与 interview_performance_json；`reason` 字段接受但不持久化（user_skill 无对应列，schema 未定义存储）。
+  - Dashboard `weakKnowledgePoints` 替换占位空数组为真实聚合：`DashboardService` 注入 `ReviewService`，调用 `weakKnowledgePoints(null, null, null)`（全时段），响应映射复用 `WeakKnowledgePointResponse`；删除 `WeakKnowledgePointPlaceholder`。
+  - 前端：`api/skills` 三件套；新增 `/skills` 页（技能画像列表：自评/证据/面试表现三维度 Badge 独立展示，行内等级下拉 + 保存，编辑草稿仅作用于自评维度）；侧边栏新增“技能画像”入口（`/skills`）。
+  - e2e 夹具 `POST /api/e2e/jobs/{jobId}/seed-project-evidence` 新增可选 `skillName` body 参数（默认 "Redis" 保持 at-20 行为），供全量 E2E 用唯一技能名避免跨用例同名歧义。
+  - 集成测试：`SkillProfileIntegrationTest`（空列表 → 未评估投影 → 首次自评创建 + 版本语义 0 → 乐观锁更新 → 409/400/404 守卫 → 三维度独立）；`DashboardIntegrationTest` 新增弱点聚合用例（完整复盘链路后 dashboard 返回该知识点，weightedWeaknessCount=1）。
+  - E2E：新增 `frontend/e2e/p1-skills-profile.spec.ts`（JD 提取确认 Redis → 夹具造唯一命名技能 → 未评估展示 → UI 首次自评 3 → 持久化 → API 校验 NO_EVIDENCE 未被覆盖）。
+- 未完成：
+  - `POST /job-requirements/merge` 要求合并（契约存量最后一项，见总状态当前任务）。
+  - `interviewPerformance` 维度无生产写入路径，恒为 null（界面显示“未评估”）。
+  - 技能无生产创建路径：skill 行仅由 e2e 夹具/后续功能产生；页面空状态已说明。
+  - 证据状态目前是存储维度（默认 NO_EVIDENCE），未按 skill_evidence 关联自动推导（PRD 8.3 要求三维度独立，推导逻辑留待明确需求）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/src/main/java/com/jobhub/dashboard/{application/DashboardService,api/DashboardController}.java`、`backend/src/main/java/com/jobhub/testsupport/api/E2eReminderFixtureController.java`、`backend/src/test/java/com/jobhub/integration/DashboardIntegrationTest.java`、`frontend/src/app/routes.tsx`、`frontend/src/components/layout/Sidebar.tsx`。
+  - 新增：`backend/src/main/java/com/jobhub/skill/{domain/SkillProfile,infrastructure/SkillProfileMapper,application/SkillProfileService,api/SkillProfileResponse,api/SelfLevelUpdateRequest,api/SkillController}.java`。
+  - 新增：`backend/src/test/java/com/jobhub/integration/SkillProfileIntegrationTest.java`。
+  - 新增：`frontend/src/api/skills/{skillApi,useSkillQueries,useSkillMutations}.ts`、`frontend/src/features/skills/{SkillsPage.tsx,skillLabels.ts}`、`frontend/e2e/p1-skills-profile.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=SkillProfileIntegrationTest"` -> 2 tests，0 failures，0 errors。
+  - `cd backend && mvn test "-Dtest=DashboardIntegrationTest"` -> 4 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，58 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-skills-profile.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 14 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings/notifications/reopen/skills）。
+- 验证结果：
+  - 技能画像（未评估投影、首次自评创建、乐观锁、三维度独立）与 Dashboard 弱点聚合均有集成测试与浏览器级 E2E 覆盖。
+  - 本窗口 OpenAPI 变更为可空细化，非破坏性；未新增数据库迁移。
+- 已知问题：
+  - `user_skill` 表无 `deleted_at` 列，自评记录不可软删（技能删除属未来需求）。
+  - 全量 E2E 共享临时库，多用例可创建同名 "Redis" 技能——夹具已支持 `skillName` 参数，新用例应传唯一名称。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现要求合并：核对 OpenAPI `POST /job-requirements/merge` 请求/响应 schema 与 01 页面规格“合并同类候选要求”交互，实现 job 模块合并命令（合并后保留原始名称与来源，重复项不重复计数），补集成测试；前端如页面规格要求则在候选要求确认区提供合并入口。
+  - 或按用户指示进入其他 P1 功能。
+- 不要重复做：
+  - 不要重建 skill 模块、`/skills` 页或 Dashboard 弱点聚合。
+  - 不要让自评等级修改联动证据状态或面试表现；不要在无 user_skill 时伪造维度值。
+  - 不要提前实现 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-9
 

@@ -87,6 +87,45 @@ class DashboardIntegrationTest extends AbstractIntegrationTest {
 				.isEqualTo(interviewId);
 	}
 
+	@Test
+	void weakKnowledgePoints_aggregatedFromReviewQuestions() {
+		String jobId = createJob();
+		String appId = createApplication(jobId, null, null);
+		transition(appId, "0", "APPLIED", TestFixtures.newKey());
+		transition(appId, "1", "RESUME_PASSED", TestFixtures.newKey());
+		ResponseEntity<String> created = restTemplate.exchange(
+				url("/interviews"), HttpMethod.POST,
+				TestFixtures.httpWithHeaders(
+						"{\"applicationId\":\"" + appId + "\",\"roundName\":\"技术一面\",\"startsAt\":\"2999-09-10T10:00:00Z\",\"eventTimeZone\":\"Asia/Shanghai\"}",
+						"Idempotency-Key", TestFixtures.newKey()), String.class);
+		String interviewId = JsonProbe.str(created.getBody(), "id");
+		long interviewVersion = JsonProbe.lng(restTemplate.getForEntity(url("/interviews/" + interviewId), String.class).getBody(), "version");
+		restTemplate.exchange(url("/interviews/" + interviewId + "/complete"), HttpMethod.POST,
+				TestFixtures.httpWithHeaders("{\"result\":\"FAILED\"}", "Idempotency-Key", TestFixtures.newKey(),
+						"If-Match-Version", String.valueOf(interviewVersion)), String.class);
+
+		String reviewBody = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+				TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}",
+						"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String reviewId = JsonProbe.str(reviewBody, "id");
+		String knowledgePointId = JsonProbe.str(restTemplate.exchange(url("/knowledge-points"), HttpMethod.POST,
+				TestFixtures.httpWithHeaders("{\"name\":\"Dashboard 弱点\",\"category\":\"聚合\"}",
+						"Idempotency-Key", TestFixtures.newKey()), String.class).getBody(), "id");
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+				TestFixtures.httpWithHeaders("{\"content\":\"聚合断言问题\",\"answerStatus\":\"UNANSWERED\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+						"Idempotency-Key", TestFixtures.newKey()), String.class);
+
+		ResponseEntity<String> overview = restTemplate.exchange(
+				url("/dashboard"), HttpMethod.GET, TestFixtures.httpJson(""), String.class);
+
+		assertThat(overview.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.arraySize(overview.getBody(), "weakKnowledgePoints")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(overview.getBody(), "weakKnowledgePoints", 0, "knowledgePoint.name"))
+				.isEqualTo("Dashboard 弱点");
+		assertThat(JsonProbe.arrInt(overview.getBody(), "weakKnowledgePoints", 0, "questionCount")).isEqualTo(1);
+		assertThat(JsonProbe.arrDbl(overview.getBody(), "weakKnowledgePoints", 0, "weightedWeaknessCount")).isEqualTo(1.0);
+	}
+
 	/** 在 actionItems 数组中找到 sourceRef.id == appId 的项，返回其 title。 */
 	private String findActionItemTitle(String body, String appId) {
 		int size = JsonProbe.arraySize(body, "actionItems");
