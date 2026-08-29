@@ -28,6 +28,9 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM trash_item");
 		jdbc.execute("DELETE FROM data_export");
 		jdbc.execute("DELETE FROM match_report");
+		jdbc.execute("DELETE FROM ai_job_item");
+		jdbc.execute("DELETE FROM ai_job");
+		jdbc.execute("DELETE FROM ai_provider");
 		jdbc.execute("DELETE FROM channel_delivery");
 		jdbc.execute("DELETE FROM notification");
 		jdbc.execute("DELETE FROM notification_channel");

@@ -19,6 +19,7 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDateTime } from '@/features/jobs/statusLabels'
+import { AiProviderSection } from '@/features/settings/AiProviderSection'
 import { ImportRestoreSection } from '@/features/settings/ImportRestoreSection'
 import { NotificationChannelSection } from '@/features/settings/NotificationChannelSection'
 import { exportStatusLabel, exportStatusVariant } from '@/features/settings/settingsLabels'
@@ -210,6 +211,8 @@ export function SettingsPage() {
           ) : null}
         </div>
       </section>
+
+      <AiProviderSection />
 
       <NotificationChannelSection />
 

@@ -21,6 +21,12 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
+      command: 'node ./e2e/fake-ai-server.mjs',
+      url: 'http://127.0.0.1:18090/health',
+      timeout: 30_000,
+      reuseExistingServer: false,
+    },
+    {
       command: 'npm run dev -- --host 127.0.0.1 --port 15173',
       url: 'http://127.0.0.1:15173',
       timeout: 120_000,
