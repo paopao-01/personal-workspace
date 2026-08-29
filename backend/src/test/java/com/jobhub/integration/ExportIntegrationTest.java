@@ -1,0 +1,75 @@
+package com.jobhub.integration;
+
+import com.jobhub.integration.support.*;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.*;
+import static org.assertj.core.api.Assertions.assertThat;
+
+class ExportIntegrationTest extends AbstractIntegrationTest {
+
+	private static final String EXPORT_KEY = TestFixtures.newKey();
+
+	@Test
+	void AT24_exportContainsBusinessDataAndExcludesOperationalRecords() {
+		// 用固定的幂等键创建业务数据，用于断言导出不包含幂等记录
+		String job = restTemplate.exchange(url("/jobs"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders(TestFixtures.createJobBody("导出验证科技", "AT24 岗位"),
+				"Idempotency-Key", EXPORT_KEY), String.class).getBody();
+		String jobId = JsonProbe.str(job, "id");
+		String evidence = restTemplate.exchange(url("/evidence"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("""
+				{"type":"GIT_REPOSITORY","title":"AT24 证据","urlOrPath":"https://github.com/user/at24"}
+				""", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String evidenceId = JsonProbe.str(evidence, "id");
+
+		ResponseEntity<String> created = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"format\":\"JSON\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		assertThat(created.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+		assertThat(JsonProbe.str(created.getBody(), "status")).isEqualTo("SUCCEEDED");
+		assertThat(JsonProbe.str(created.getBody(), "downloadUrl"))
+			.isEqualTo("/api/data-exports/" + JsonProbe.str(created.getBody(), "id") + "/download");
+		String exportId = JsonProbe.str(created.getBody(), "id");
+
+		String detail = restTemplate.getForEntity(url("/data-exports/" + exportId), String.class).getBody();
+		assertThat(JsonProbe.str(detail, "status")).isEqualTo("SUCCEEDED");
+
+		ResponseEntity<String> download = restTemplate.getForEntity(
+			url("/data-exports/" + exportId + "/download"), String.class);
+		assertThat(download.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String payload = download.getBody();
+
+		// 导出包含业务数据及关联 ID
+		assertThat(payload).contains("导出验证科技");
+		assertThat(payload).contains(jobId);
+		assertThat(payload).contains("https://github.com/user/at24");
+		assertThat(payload).contains("job_posting");
+		assertThat(payload).contains("evidence");
+		assertThat(payload).contains(evidenceId);
+
+		// 导出排除运行记录与幂等数据
+		assertThat(payload).doesNotContain(EXPORT_KEY);
+		assertThat(payload).doesNotContain("\"idempotency_record\"");
+		assertThat(payload).doesNotContain("\"audit_log\"");
+		assertThat(payload).doesNotContain("\"trash_item\"");
+		assertThat(payload).doesNotContain("\"data_export\"");
+		assertThat(payload).doesNotContain("\"idempotency_key\"");
+	}
+
+	@Test
+	void AT24_exportRejectsNonJsonFormatAndHidesMissingFile() {
+		ResponseEntity<String> invalidFormat = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"format\":\"CSV\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		assertThat(invalidFormat.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(invalidFormat.getBody()).contains("VALIDATION_ERROR");
+
+		ResponseEntity<String> missingExport = restTemplate.getForEntity(
+			url("/data-exports/99999999-9999-9999-9999-999999999999"), String.class);
+		assertThat(missingExport.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+		ResponseEntity<String> missingFile = restTemplate.getForEntity(
+			url("/data-exports/99999999-9999-9999-9999-999999999999/download"), String.class);
+		assertThat(missingFile.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+	}
+}

@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：M4 进行中（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包聚合、P10 项目案例/证据引用 CRUD 和 AT-23 最近删除/恢复已完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20、AT-23 和 P10 项目/证据 CRUD）。
-- 当前里程碑：M4（面试准备包、项目案例、证据、导出、最近删除）PARTIAL；AT-20/AT-21/AT-23 已完成，AT-22 乐观锁由既有 VersionConflictIntegrationTest 与各模块 PUT 测试覆盖，完整 JSON 导出（AT-24）尚未实现。
-- 当前任务：AT-23 最近删除已完成；下一窗口建议实现 AT-24 JSON 导出（`POST /api/data-exports` + `GET /api/data-exports/{id}`，排除令牌、密钥、idempotency_record 和未确认 AI 内容），完成后 M4 收尾。
+- 项目阶段：M4 已完成（投递、面试、提醒、dashboard 主路径、复盘、薄弱点、学习任务闭环、面试准备包、P10 项目案例/证据 CRUD、AT-23 最近删除和 AT-24 JSON 导出全部完成；Playwright 已覆盖 AT-01、AT-09、AT-11、AT-15、AT-16、AT-18、AT-20、AT-23、AT-24 和 P10）。
+- 当前里程碑：M1~M4 全部 `DONE`；发布门槛 AT-01 至 AT-24 已全部实现并有自动化测试覆盖（AT-20~AT-24 属 M4，AT-21/AT-22 由准备包后端与乐观锁测试覆盖）。
+- 当前任务：AT-24 JSON 导出已完成，M4 收尾；下一窗口建议按 PRD 版本规划启动 P1 阶段（V0.2），优先候选：`/settings` 时区与默认提醒节点设置（`GET/PUT /api/settings`）、通知中心（`notification` 表已有）或简历定制前置——开始前先与用户确认 P1 优先级。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -51,7 +51,7 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 176 个 Java 文件，其中 evidence 模块 16 个、datamanagement 5 个：TrashItem/TrashMapper/TrashService/TrashItemResponse/TrashController）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 183 个 Java 文件，其中 evidence 模块 16 个、datamanagement 12 个：trash 5 个 + 导出 7 个）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
@@ -67,9 +67,58 @@
 | M1 | 工程骨架、Flyway、错误响应、OpenAPI 对齐、岗位 CRUD、JD 要求与差距清单 | `DONE` | 确认技术栈与启动命令 | AT-01 至 AT-04 通过 |
 | M2 | 投递状态机、下一步行动、面试与提醒 | `DONE` | M1 完成 | AT-05 至 AT-14 通过 |
 | M3 | 复盘、问题、知识点、薄弱点、学习任务 | `DONE` | M2 完成 | AT-15 至 AT-19 通过 |
-| M4 | 面试准备包、项目案例、证据、导出、最近删除 | `PARTIAL` | M3 完成 | AT-20 至 AT-24 通过 |
+| M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-6
+
+- 目标：在 `dev` 分支实现 AT-24 JSON 导出，M4 收尾；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 扩展：新增 `GET /data-exports/{exportId}/download`（返回导出 JSON 文件，404 走 NotFound）；`DataExport.downloadUrl` 从 `format: uri` 调整为 `uri-reference`（相对 API 路径 `/api/data-exports/{exportId}/download`），为非破坏性细化；其余导出契约不变。
+  - 新增 datamanagement 导出四层：`POST /api/data-exports`（Idempotency-Key，202 返回任务）、`GET /api/data-exports/{exportId}`、`GET /api/data-exports/{exportId}/download`。`ExportCreateRequest.format` 用 `@Pattern("JSON")` 校验，非法格式返回 `400 VALIDATION_ERROR`。
+  - P0 在创建请求内同步完成导出：QUEUED → RUNNING → SUCCEEDED（写文件）或 FAILED（记录 failureReason），状态落 `data_export` 表。
+  - `ExportDataMapper` 覆盖 23 张业务表（岗位/要求/匹配、投递/状态日志、面试/清单/提醒、复盘/问题、知识点、任务/来源、技能/别名/自评/证据关联、项目/证据/关联、notification），导出内容含业务数据、软删行和关联 ID。
+  - AT-24 排除规则：不导出 `user_profile`、`user_setting`、`audit_log`、`idempotency_record`、`data_export`、`trash_item`；`application_status_log` 显式排除 `idempotency_key` 列（唯一含幂等键的业务表）。
+  - 导出目录可配置：`jobhub.export-dir`（默认 `./data/exports`，测试 profile 指向 `./target/exports`）。
+  - 前端 `api/settings` 新增 exportApi + `useCreateExport`；`/settings` 页新增"数据导出"区块：创建前展示数据范围与不包含项（页面规格 P11 要求），创建后显示状态 Badge、创建时间、下载链接或失败原因。
+  - 新增 `frontend/e2e/at-24-data-export.spec.ts`：API 造岗位 → 真实 UI 创建导出 → 断言数据范围/排除项文案 → 下载文件 → 断言包含业务数据且不含幂等记录/审计日志。
+- 未完成：
+  - `/settings` 的时区、默认提醒节点区块（`GET/PUT /api/settings`）尚未实现，属 P1 候选。
+  - 导出任务无历史列表端点，页面仅展示本次创建的导出；刷新后不再显示旧导出。
+  - 导出为同步完成，无真正异步队列；超大数据量时请求耗时随数据增长（本地单用户可接受）。
+  - P1/V0.2 的导入、简历定制、通知中心均未开始。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`（download 端点 + downloadUrl 细化）、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/src/main/resources/application.yml`（jobhub.export-dir）、`backend/src/test/resources/application-test.yml`。
+  - 新增：`backend/src/main/java/com/jobhub/datamanagement/{domain/DataExport,infrastructure/DataExportMapper,infrastructure/ExportDataMapper,application/ExportService,api/ExportCreateRequest,api/DataExportResponse,api/ExportController}.java`。
+  - 修改：`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`（新增 data_export 清理）。
+  - 新增：`backend/src/test/java/com/jobhub/integration/ExportIntegrationTest.java`。
+  - 新增：`frontend/src/api/settings/{exportApi,useExportMutations}.ts`；修改：`frontend/src/features/settings/{SettingsPage.tsx,settingsLabels.ts}`。
+  - 新增：`frontend/e2e/at-24-data-export.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ExportIntegrationTest"` -> 2 tests，0 failures，0 errors。
+  - `cd backend && mvn test` -> BUILD SUCCESS，50 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/at-24-data-export.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 10 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10），runner 自然返回。
+- 验证结果：
+  - AT-24 后端与浏览器路径均已覆盖：导出含业务数据及关联 ID，不含幂等记录/审计日志/回收站。
+  - M4 完成，里程碑表已更新为 `DONE`；AT-01 至 AT-24 全部有自动化覆盖。
+  - 本窗口 OpenAPI 变更为新增 download 端点与 downloadUrl 格式细化，非破坏性。
+  - 本窗口未新增数据库迁移；V1 既有 `data_export` 表可支撑本切片。
+- 已知问题：
+  - `data_export.download_path` 保存服务端绝对/相对文件路径，仅由服务端写入；下载端点按 id 读取对应文件，路径不接受客户端输入。
+  - 导出文件包含软删除的业务行（数据归用户所有），如需"仅导出有效数据"需另立需求。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 与用户确认 P1（V0.2）优先级后启动：候选为 `/settings` 时区与默认提醒节点（契约已有 `GET/PUT /api/settings`）、通知中心（V1 已有 `notification` 表）、P05 投递卡片时间线等 P0 遗留增强；先核对对应契约与页面规格，再按既有切片流程（OpenAPI → 后端 → 前端 → 测试）实现。
+- 不要重复做：
+  - 不要重建 datamanagement 导出/trash 模块或 `/settings` 页已有区块。
+  - 不要把 `user_profile`/`user_setting`/审计/幂等/回收站数据加入导出，除非用户明确要求并更新 AT-24。
+  - 不要提前接入 AI、邮件、系统推送、第三方日历、云同步、多租户或附件上传。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-5
 
