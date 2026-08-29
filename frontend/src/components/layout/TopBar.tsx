@@ -1,10 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { useNotifications } from '@/api/notifications/useNotificationQueries'
+import { useBrowserNotifications } from '@/api/notifications/useBrowserNotifications'
 import { Button } from '@/components/ui/Button'
 
 export function TopBar() {
   const navigate = useNavigate()
   const { data: notifications } = useNotifications()
+  useBrowserNotifications(notifications)
   const unreadCount = (notifications ?? []).filter((item) => !item.readAt).length
 
   return (

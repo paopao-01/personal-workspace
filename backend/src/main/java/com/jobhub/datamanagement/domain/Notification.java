@@ -11,6 +11,7 @@ public class Notification {
 	private String content;
 	private String readAt;
 	private String createdAt;
+	private java.util.List<ChannelDelivery> deliveries = java.util.List.of();
 
 	public static Notification create(String id, String reminderId, String title, String content, String now) {
 		Notification notification = new Notification();
@@ -34,4 +35,8 @@ public class Notification {
 	public void setReadAt(String readAt) { this.readAt = readAt; }
 	public String getCreatedAt() { return createdAt; }
 	public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
+	public java.util.List<ChannelDelivery> getDeliveries() { return deliveries == null ? java.util.List.of() : deliveries; }
+	public void setDeliveries(java.util.List<ChannelDelivery> deliveries) {
+		this.deliveries = deliveries == null ? java.util.List.of() : deliveries;
+	}
 }
