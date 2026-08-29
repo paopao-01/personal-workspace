@@ -11,6 +11,7 @@ import com.jobhub.interview.domain.InterviewScheduleStatus;
 import com.jobhub.review.domain.*;
 import com.jobhub.review.infrastructure.QuestionMapper;
 import com.jobhub.review.infrastructure.ReviewMapper;
+import com.jobhub.review.infrastructure.WeakKnowledgePointRow;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
@@ -107,6 +108,53 @@ public class ReviewService {
 		return hydrateQuestion(requireQuestion(questionMapper.selectById(question.getId()), question.getId()));
 	}
 
+	@Transactional
+	public InterviewQuestion updateQuestion(String questionId, long expectedVersion, String content,
+			AnswerStatus answerStatus, String type, List<String> knowledgePointIds, String myAnswer,
+			String referenceAnswer, Integer difficulty, String errorReason, String improvementPlan) {
+		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);
+		String now = time.now();
+		question.update(content.trim(), answerStatus, blankToNull(type), blankToNull(myAnswer),
+			blankToNull(referenceAnswer), difficulty, blankToNull(errorReason), blankToNull(improvementPlan), now);
+		VersionCheck.requireAffected(questionMapper.updateQuestion(question, expectedVersion), question.getVersion());
+		questionMapper.deleteKnowledgeForQuestion(questionId);
+		if (knowledgePointIds != null) {
+			for (String knowledgePointId : knowledgePointIds) {
+				if (knowledgePointId != null && !knowledgePointId.isBlank()) {
+					requireKnowledgePoint(knowledgePointId);
+					questionMapper.insertKnowledge(questionId, knowledgePointId, now);
+				}
+			}
+		}
+		reviewMapper.bumpVersion(question.getReviewId(), now);
+		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
+	}
+
+	public List<KnowledgePoint> listKnowledgePoints(String query) {
+		return questionMapper.listKnowledgePoints(blankToNull(query));
+	}
+
+	@Transactional
+	public KnowledgePoint createKnowledgePoint(String name, String category) {
+		String normalizedName = normalizeName(name);
+		KnowledgePoint existing = questionMapper.selectKnowledgePointByNormalizedName(normalizedName);
+		if (existing != null) {
+			return existing;
+		}
+		String id = ids.newId();
+		questionMapper.insertKnowledgePoint(id, name.trim(), normalizedName, blankToNull(category), time.now());
+		return requireKnowledgePoint(id);
+	}
+
+	public List<WeakKnowledgePoint> weakKnowledgePoints(String from, String to, String jobId) {
+		String normalizedFrom = blankToNull(from);
+		String normalizedTo = blankToNull(to);
+		String normalizedJobId = blankToNull(jobId);
+		return questionMapper.selectWeakKnowledgePoints(normalizedFrom, normalizedTo, normalizedJobId).stream()
+			.map(row -> toWeakKnowledgePoint(row, normalizedFrom, normalizedTo, normalizedJobId))
+			.toList();
+	}
+
 	private InterviewReview hydrate(InterviewReview review) {
 		List<InterviewQuestion> questions = questionMapper.selectByReview(review.getId()).stream()
 			.map(this::hydrateQuestion)
@@ -118,6 +166,22 @@ public class ReviewService {
 	private InterviewQuestion hydrateQuestion(InterviewQuestion question) {
 		question.setKnowledgePoints(questionMapper.selectKnowledgePoints(question.getId()));
 		return question;
+	}
+
+	private WeakKnowledgePoint toWeakKnowledgePoint(WeakKnowledgePointRow row, String from, String to, String jobId) {
+		KnowledgePoint knowledgePoint = new KnowledgePoint(row.getKnowledgePointId(), row.getName(), row.getCategory());
+		List<InterviewQuestion> questions = questionMapper
+			.selectWeakQuestions(row.getKnowledgePointId(), from, to, jobId)
+			.stream()
+			.map(this::hydrateQuestion)
+			.toList();
+		return new WeakKnowledgePoint(knowledgePoint, row.getWeightedWeaknessCount(), row.getQuestionCount(), questions);
+	}
+
+	private KnowledgePoint requireKnowledgePoint(String id) {
+		KnowledgePoint knowledgePoint = questionMapper.selectKnowledgePointById(id);
+		VersionCheck.requireFound(knowledgePoint, "KnowledgePoint", id);
+		return knowledgePoint;
 	}
 
 	private InterviewReview requireReview(InterviewReview review, String type, String id) {
@@ -132,5 +196,13 @@ public class ReviewService {
 
 	private String blankToNull(String value) {
 		return value == null || value.isBlank() ? null : value.trim();
+	}
+
+	private String normalizeName(String value) {
+		String normalized = blankToNull(value);
+		if (normalized == null) {
+			throw new BusinessRuleException("Knowledge point name is required");
+		}
+		return normalized.toLowerCase();
 	}
 }

@@ -1,11 +1,16 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   completeReview,
+  createKnowledgePoint,
   createReviewQuestion,
   saveReviewDraft,
+  updateReviewQuestion,
   type InterviewQuestion,
   type InterviewReview,
+  type KnowledgePoint,
+  type KnowledgePointCreateRequest,
   type QuestionCreateRequest,
+  type QuestionUpdateRequest,
   type ReviewUpsertRequest,
 } from '@/api/reviews/reviewApi'
 
@@ -23,6 +28,34 @@ export function useSaveReviewDraft() {
       queryClient.invalidateQueries({
         queryKey: ['reviews', 'interview', review.interviewId],
       })
+    },
+  })
+}
+
+export function useUpdateReviewQuestion() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    InterviewQuestion,
+    Error,
+    { questionId: string; interviewId: string; version: number; body: QuestionUpdateRequest }
+  >({
+    mutationFn: ({ questionId, version, body }) =>
+      updateReviewQuestion(questionId, version, body),
+    onSuccess: (_question, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['reviews', 'interview', variables.interviewId],
+      })
+      queryClient.invalidateQueries({ queryKey: ['knowledge-points', 'weak'] })
+    },
+  })
+}
+
+export function useCreateKnowledgePoint() {
+  const queryClient = useQueryClient()
+  return useMutation<KnowledgePoint, Error, KnowledgePointCreateRequest>({
+    mutationFn: (body) => createKnowledgePoint(body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-points'] })
     },
   })
 }

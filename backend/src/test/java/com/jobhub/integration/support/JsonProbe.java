@@ -55,6 +55,20 @@ public final class JsonProbe {
 		return fieldNode == null ? null : fieldNode.asLong();
 	}
 
+	public static Integer arrInt(String json, String arrayPath, int index, String field) {
+		JsonNode el = arrayElement(json, arrayPath, index);
+		if (el == null) return null;
+		JsonNode fieldNode = drill(el, field);
+		return fieldNode == null ? null : fieldNode.asInt();
+	}
+
+	public static Double arrDbl(String json, String arrayPath, int index, String field) {
+		JsonNode el = arrayElement(json, arrayPath, index);
+		if (el == null) return null;
+		JsonNode fieldNode = drill(el, field);
+		return fieldNode == null ? null : fieldNode.asDouble();
+	}
+
 	/** 取数组元素某下标节点。 */
 	private static JsonNode arrayElement(String json, String arrayPath, int index) {
 		JsonNode arr = node(json, arrayPath);
@@ -69,7 +83,7 @@ public final class JsonProbe {
 		JsonNode cur = start;
 		for (String seg : path.split("\\.")) {
 			if (cur == null) return null;
-			cur = cur.get(seg);
+			cur = cur.isArray() && seg.chars().allMatch(Character::isDigit) ? cur.get(Integer.parseInt(seg)) : cur.get(seg);
 		}
 		return cur;
 	}
@@ -83,7 +97,7 @@ public final class JsonProbe {
 			JsonNode cur = root;
 			for (String seg : path.split("\\.")) {
 				if (cur == null) return null;
-				cur = cur.get(seg);
+				cur = cur.isArray() && seg.chars().allMatch(Character::isDigit) ? cur.get(Integer.parseInt(seg)) : cur.get(seg);
 			}
 			return cur;
 		} catch (Exception ex) {

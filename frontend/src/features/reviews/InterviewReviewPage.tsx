@@ -4,8 +4,10 @@ import { isApiError, isNetworkError } from '@/api/errors'
 import { useInterview } from '@/api/interviews/useInterviewQueries'
 import {
   useCompleteReview,
+  useCreateKnowledgePoint,
   useCreateReviewQuestion,
   useSaveReviewDraft,
+  useUpdateReviewQuestion,
 } from '@/api/reviews/useReviewMutations'
 import { useInterviewReview } from '@/api/reviews/useReviewQueries'
 import type { AnswerStatus } from '@/api/reviews/reviewApi'
@@ -14,7 +16,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { Field, Select, Textarea } from '@/components/ui/Form'
+import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import {
   formatInterviewTime,
@@ -32,10 +34,13 @@ export function InterviewReviewPage() {
   const saveDraft = useSaveReviewDraft()
   const createQuestion = useCreateReviewQuestion()
   const completeReview = useCompleteReview()
+  const createKnowledgePoint = useCreateKnowledgePoint()
+  const updateQuestion = useUpdateReviewQuestion()
   const review = reviewQuery.data
   const [interviewResult, setInterviewResult] = useState<'PENDING' | 'PASSED' | 'FAILED' | ''>('')
   const [questionContent, setQuestionContent] = useState('')
   const [answerStatus, setAnswerStatus] = useState<AnswerStatus>('UNANSWERED')
+  const [knowledgePointName, setKnowledgePointName] = useState('')
   const [noQuestionsRecorded, setNoQuestionsRecorded] = useState<boolean | null>(null)
   const [overallFeeling, setOverallFeeling] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +64,12 @@ export function InterviewReviewPage() {
   const interview = interviewQuery.data
   const cannotReview = interview.scheduleStatus !== 'COMPLETED'
   const isCompletedReview = review?.status === 'COMPLETED'
-  const pending = saveDraft.isPending || createQuestion.isPending || completeReview.isPending
+  const pending =
+    saveDraft.isPending ||
+    createQuestion.isPending ||
+    completeReview.isPending ||
+    createKnowledgePoint.isPending ||
+    updateQuestion.isPending
   const selectedInterviewResult = interviewResult || review?.interviewResult || 'FAILED'
   const selectedNoQuestionsRecorded = noQuestionsRecorded ?? review?.noQuestionsRecorded ?? false
   const selectedOverallFeeling = overallFeeling ?? review?.overallFeeling ?? ''
@@ -94,15 +104,56 @@ export function InterviewReviewPage() {
         },
       })
       if (content) {
+        const knowledgePointIds = []
+        const trimmedKnowledgePointName = knowledgePointName.trim()
+        if (trimmedKnowledgePointName) {
+          const knowledgePoint = await createKnowledgePoint.mutateAsync({
+            name: trimmedKnowledgePointName,
+          })
+          knowledgePointIds.push(knowledgePoint.id)
+        }
         await createQuestion.mutateAsync({
           reviewId: saved.id,
           interviewId: interview.id,
-          body: { content, answerStatus },
+          body: { content, answerStatus, knowledgePointIds },
         })
         setQuestionContent('')
+        setKnowledgePointName('')
       }
       await reviewQuery.refetch()
       pushToast('快速复盘已保存')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const changeQuestionAnswerStatus = async (
+    questionId: string,
+    version: number,
+    nextAnswerStatus: AnswerStatus,
+  ) => {
+    const question = review?.questions?.find((item) => item.id === questionId)
+    if (!question) return
+    setActionError(null)
+    try {
+      await updateQuestion.mutateAsync({
+        questionId,
+        interviewId: interview.id,
+        version,
+        body: {
+          content: question.content,
+          answerStatus: nextAnswerStatus,
+          type: question.type ?? undefined,
+          knowledgePointIds: question.knowledgePoints?.map((point) => point.id) ?? [],
+          myAnswer: question.myAnswer ?? undefined,
+          referenceAnswer: question.referenceAnswer ?? undefined,
+          difficulty: question.difficulty ?? undefined,
+          errorReason: question.errorReason ?? undefined,
+          improvementPlan: question.improvementPlan ?? undefined,
+        },
+      })
+      await reviewQuery.refetch()
+      pushToast('回答状态已更新')
     } catch (caught) {
       reportError(caught as Error)
     }
@@ -218,6 +269,15 @@ export function InterviewReviewPage() {
                 aria-invalid={Boolean(error)}
               />
             </Field>
+            <Field label="关联知识点">
+              <Input
+                value={knowledgePointName}
+                onChange={(event) => setKnowledgePointName(event.target.value)}
+                maxLength={100}
+                placeholder="例如 Redis 缓存一致性"
+                disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
+              />
+            </Field>
             <label className="decision-radio" style={{ marginBottom: 16 }}>
               <input
                 type="checkbox"
@@ -270,7 +330,31 @@ export function InterviewReviewPage() {
                 <div className="requirement-row" key={question.id}>
                   <div className="requirement-main">
                     <span className="requirement-raw">{question.content}</span>
-                    <span className="muted">{answerStatusLabel[question.answerStatus]}</span>
+                    <span className="muted">
+                      {question.knowledgePoints?.length
+                        ? question.knowledgePoints.map((point) => point.name).join('、')
+                        : '未关联知识点'}
+                    </span>
+                  </div>
+                  <div className="requirement-actions">
+                    <Select
+                      value={question.answerStatus}
+                      onChange={(event) =>
+                        changeQuestionAnswerStatus(
+                          question.id,
+                          question.version,
+                          event.target.value as AnswerStatus,
+                        )
+                      }
+                      disabled={pending}
+                      aria-label="更新回答状态"
+                    >
+                      <option value="UNANSWERED">{answerStatusLabel.UNANSWERED}</option>
+                      <option value="PARTIALLY_ANSWERED">
+                        {answerStatusLabel.PARTIALLY_ANSWERED}
+                      </option>
+                      <option value="FULLY_ANSWERED">{answerStatusLabel.FULLY_ANSWERED}</option>
+                    </Select>
                   </div>
                 </div>
               ))}
