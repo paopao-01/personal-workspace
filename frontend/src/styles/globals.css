@@ -1068,3 +1068,73 @@ button {
 .flex-grow {
   flex: 1;
 }
+
+.preparation-list,
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preparation-item,
+.plain-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+}
+
+.preparation-item h3,
+.plain-block h3 {
+  margin: 8px 0 6px;
+  font-size: 16px;
+}
+
+.plain-block p {
+  margin: 6px 0;
+}
+
+.preparation-reasons {
+  margin: 8px 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}
+
+.source-ref-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-ref-list a,
+.source-ref-list span {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.source-ref-list a:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.checklist-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklist-readonly li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}

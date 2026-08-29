@@ -5,6 +5,7 @@ type Schemas = components['schemas']
 export type LearningTask = Schemas['LearningTask']
 export type PageTask = Schemas['PageTask']
 export type TaskStatus = Schemas['TaskStatus']
+export type TaskPriority = NonNullable<LearningTask['priority']>
 export type TaskCreateRequest = Schemas['TaskCreateRequest']
 export type TaskUpdateRequest = Schemas['TaskUpdateRequest']
 export type TaskTransitionRequest = Schemas['TaskTransitionRequest']

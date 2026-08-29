@@ -1,4 +1,4 @@
-import type { TaskStatus } from '@/api/tasks/taskApi'
+import type { TaskPriority, TaskStatus } from '@/api/tasks/taskApi'
 
 type BadgeVariant = 'neutral' | 'primary' | 'success' | 'warning' | 'info' | 'danger' | 'subtle'
 
@@ -14,4 +14,11 @@ export const taskStatusVariant: Record<TaskStatus, BadgeVariant> = {
   IN_PROGRESS: 'info',
   COMPLETED: 'success',
   ABANDONED: 'subtle',
+}
+
+export const taskPriorityLabel: Record<TaskPriority, string> = {
+  LOW: '低优先级',
+  MEDIUM: '中优先级',
+  HIGH: '高优先级',
+  URGENT: '紧急',
 }

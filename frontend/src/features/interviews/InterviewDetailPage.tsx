@@ -51,13 +51,22 @@ export function InterviewDetailPage() {
           <h1 className="page-title">{interview.roundName}</h1>
           <p className="page-subtitle">面试详情与提醒计划</p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate(`/applications/${interview.applicationId}`)}
-        >
-          返回投递
-        </Button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => navigate(`/interviews/${interview.id}/preparation`)}
+          >
+            打开准备包
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/applications/${interview.applicationId}`)}
+          >
+            返回投递
+          </Button>
+        </div>
       </div>
 
       {waitingForConfirmation ? (
