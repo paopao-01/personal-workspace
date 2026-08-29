@@ -16,6 +16,7 @@ tags:
   - name: Tasks
   - name: SkillsAndEvidence
   - name: DataManagement
+  - name: Notifications
 paths:
   /dashboard:
     get:
@@ -677,6 +678,22 @@ paths:
         '204': { description: 已永久删除 }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
 
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: 查询站内通知（最近 100 条，含未读；由到期提醒的调度生成）
+      responses:
+        '200': { description: 通知列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } }
+  /notifications/{notificationId}/read:
+    parameters: [ { $ref: '#/components/parameters/NotificationId' } ]
+    post:
+      tags: [Notifications]
+      summary: 标记通知已读（重复调用幂等，返回当前状态）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: 通知当前状态, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     IdempotencyKey:
@@ -709,6 +726,7 @@ components:
     EvidenceId: { name: evidenceId, in: path, required: true, schema: { type: string, format: uuid } }
     ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
+    NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
   responses:
     NotFound:
       description: 资源不存在或不可见
@@ -1292,6 +1310,16 @@ components:
         deletedAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         impactSummary: { type: array, items: { type: string } }
+    Notification:
+      type: object
+      required: [id, title, content, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        reminderId: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        content: { type: string }
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

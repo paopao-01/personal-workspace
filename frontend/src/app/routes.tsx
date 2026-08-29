@@ -14,6 +14,7 @@ import { WeakKnowledgePointsPage } from '@/features/reviews/WeakKnowledgePointsP
 import { TaskListPage } from '@/features/tasks/TaskListPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
+import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 
 export function AppRouter() {
   return (
@@ -40,6 +41,7 @@ export function AppRouter() {
         <Route path="/tasks" element={<TaskListPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>

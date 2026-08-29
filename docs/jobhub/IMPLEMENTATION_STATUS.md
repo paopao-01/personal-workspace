@@ -4,9 +4,9 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）第一切片已完成（设置页时区与默认提醒节点：`GET/PUT /api/settings` 落地、面试默认提醒接入用户配置、`/settings` 表单与全局时区显示）。P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前里程碑：P1/V0.2 `IN_PROGRESS`；已完成设置切片，候选后续切片：通知中心（需先补 `/notifications` 契约）、简历定制前置、P05 投递卡片时间线等 UI 增强。
-- 当前任务：P1 设置切片已完成；下一窗口建议实现通知中心（先在 OpenAPI 补 `GET /notifications`、`POST /notifications/{id}/read` 契约，V1 已有 `notification` 表），或与用户确认其他 P1 优先级。
+- 项目阶段：P1（V0.2）进行中，已完成两个切片：设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环（到期 PENDING 提醒由调度自动转 SENT 并生成站内通知，TopBar 未读角标 + `/notifications` 页可标记已读）。
+- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
+- 当前任务：下一窗口实现**复盘 reopen**（小切片）：OpenAPI 补 `POST /reviews/{reviewId}/reopen`（If-Match-Version，COMPLETED→DRAFT，保留问题与任务关联），ReviewService 支持已完成后恢复编辑，前端复盘页加“重新打开”动作，补集成测试与 E2E。其后可做 `/skills` 技能画像页 + Dashboard 弱点聚合 + 要求合并（契约存量清零）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-29。
 
@@ -51,7 +51,7 @@
 
 ## 3. 当前代码事实
 
-- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码约 189 个 Java 文件，其中 evidence 模块 16 个、datamanagement 18 个：trash 5 + 导出 7 + settings 6）。
+- `backend/` 已含完整 Spring Boot 工程结构与 job + application + dashboard + interview + review + task + evidence + datamanagement 模块业务代码（`com.jobhub` 主代码 198 个 Java 文件，其中 evidence 模块 16 个、datamanagement 23 个：trash 5 + 导出 7 + settings 6 + notification 5；interview 模块含提醒调度 4 个文件）。
 - `frontend/` 已生成完整骨架与岗位、投递、工作台和面试中心页面（Vite + React 19 + TS 5.6 + TanStack Query v5 + axios + react-router-dom v6）。`npm run lint`/`typecheck`/`build` 全绿（0 警告/0 错误），`npm run dev` 可启动（Vite 5173 + proxy `/api → 127.0.0.1:8080`）。application 三件套 API + P04 投递详情五区 + 创建表单 + P01 dashboard 行动识别，以及 P04/P05/P06 的创建、列表、提醒查询和专用状态操作均已实现。
 - **后端已通过 `mvn test`（当前受影响的 Dashboard + Interview 8 方法 BUILD SUCCESS，0 failures/0 errors；此前全套基线为 33 方法）**；已通过 `mvn spring-boot:run` 启动（Flyway V1 成功，Tomcat 监听 127.0.0.1:8080）。
 - 运行时 SQLite 数据库文件 `backend/data/jobhub.db` 由 Flyway 创建；禁止把 SQLite 数据库文件提交到仓库（`.gitignore` 已忽略）。
@@ -70,6 +70,51 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-29-8
+
+- 目标：P1 第二切片——提醒到期调度 + 通知中心闭环；验证无问题后合并回 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 扩展：新增 tag `Notifications`、`GET /notifications`（最近 100 条）、`POST /notifications/{notificationId}/read`（幂等）与 `Notification` schema（id、reminderId 可空、title、content、readAt 可空、createdAt）、参数 `NotificationId`。
+  - datamanagement 新增 Notification 四层：列表/按 id 查询/单次 `read_at` 转移标记已读；`NotificationService.markRead` 幂等（已读重复调用返回当前状态，不存在 404）。
+  - interview 模块新增到期调度：`ReminderMapper.selectDue`（PENDING 且 scheduled_at <= now，join 面试取轮次名，LIMIT 200）+ `markSent`（单次 PENDING→SENT 转移）；`ReminderDispatchService.dispatchDue()` 仅在转移成功时生成一条站内通知（`面试提醒：{轮次}` + 提醒节点文案），重复扫描不产生重复通知；`ReminderDispatchScheduler`（infrastructure）按 `jobhub.reminder-scan-delay-ms` 固定延迟扫描、启动后 1s 首扫（覆盖重启前累积到期提醒）；`SchedulerConfig` 开启 `@EnableScheduling`。
+  - 配置：默认扫描间隔 60s；新增 `application-e2e.yml`（1s 间隔/0.5s 首扫，供浏览器级断言）；test profile 置 1h（集成测试直调服务保证确定性）。均为环境变量可覆盖。
+  - 前端：`api/notifications` 三件套（查询 5s 轮询、标记已读局部更新缓存）；TopBar 新增"通知"入口与未读数角标；新增 `/notifications` 页（列表、未读/已读标记、逐条标记已读、空状态说明），路由已加，无侧边栏项（页面规格未定义通知独立导航）。
+  - `DatabaseCleaner` 新增 `notification` 表清理（在 interview_reminder 之前，FK 顺序正确）。
+  - 新增 `frontend/e2e/p1-notifications.spec.ts`：API 造岗位/投递/一场 10 分钟后开始的面试（三条默认提醒全部到期）→ 轮询 API 等待调度生成 3 条通知 → TopBar 角标显示 3 → 打开通知页标记第一条已读 → 未读角标同步为 2 → API 校验恰有一条已读。
+- 未完成：
+  - 全部已读按钮未做（留后续按需）。
+  - FAILED 提醒状态仍无生产路径（P0 无外部投递渠道，不会失败）；失败原因展示仅保留字段。
+  - 通知暂无删除/清理策略；列表固定最近 100 条。
+  - 复盘 reopen、`/skills` 技能画像、Dashboard 弱点聚合、要求合并等仍待后续窗口（见总状态当前任务）。
+- 修改文件：
+  - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`backend/src/main/resources/application.yml`、`backend/src/test/resources/application-test.yml`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`backend/src/main/java/com/jobhub/interview/infrastructure/ReminderMapper.java`、`frontend/src/app/routes.tsx`、`frontend/src/components/layout/TopBar.tsx`。
+  - 新增（backend）：`datamanagement/{domain/Notification,infrastructure/NotificationMapper,application/NotificationService,api/NotificationResponse,api/NotificationController}.java`；`interview/{infrastructure/DueReminderRow,infrastructure/ReminderDispatchScheduler,infrastructure/SchedulerConfig,application/ReminderDispatchService}.java`。
+  - 新增：`backend/src/main/resources/application-e2e.yml`、`backend/src/test/java/com/jobhub/integration/ReminderDispatchIntegrationTest.java`。
+  - 新增（frontend）：`src/api/notifications/{notificationApi,useNotificationQueries,useNotificationMutations}.ts`、`src/features/notifications/NotificationsPage.tsx`、`e2e/p1-notifications.spec.ts`。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ReminderDispatchIntegrationTest"` -> 2 tests，0 failures，0 errors（到期转移+去重+已读幂等；未来/取消提醒跳过）。
+  - `cd backend && mvn test` -> BUILD SUCCESS，54 tests，0 failures，0 errors。
+  - `cd frontend && npm run gen-types` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run typecheck` -> 通过；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-notifications.spec.ts --reporter=list` -> 1 passed。
+  - `cd frontend && npx playwright test --reporter=list` -> 12 tests passed（AT-01/09/11/15/16/18/20/23/24 + P10 + P1 settings + P1 notifications）。
+- 验证结果：
+  - 提醒到期→SENT→通知→已读的完整链路有集成测试与浏览器级 E2E 覆盖；去重与幂等语义（单次状态转移）已验证。
+  - 本窗口 OpenAPI 变更为新增端点与 schema，非破坏性；未新增数据库迁移（V1 `notification` 表支撑）。
+  - e2e 调度 1s 间隔下 E2E 稳定通过；test 调度 1h 避免后台任务干扰集成断言。
+- 已知问题：
+  - 通知生成时间文案使用提醒计划时间（UTC 字符串），前端展示时间用 `formatDateTime` 按用户时区渲染。
+  - E2E 共享临时库；`p1-notifications` 依赖 e2e profile 的 1s 调度间隔，本地复现需以 e2e 脚本启动后端。
+  - E2E 仍输出 React Router v7 future flag 警告与 Node `NO_COLOR`/`FORCE_COLOR` warning；不影响结果。
+  - `git status` 仍会显示用户级 `C:\Users\35433/.config/git/ignore` 权限 warning；不影响仓库内文件检查。
+- 下一窗口只做：
+  - 实现复盘 reopen：OpenAPI 补 `POST /reviews/{reviewId}/reopen`（Idempotency-Key + If-Match-Version；COMPLETED→DRAFT，保留问题与任务关联），ReviewService 加专用命令（仅 COMPLETED 可 reopen），前端快速复盘页加"重新打开"动作，补集成测试与 E2E。
+  - 或按用户指示调整 P1 优先级。
+- 不要重复做：
+  - 不要重建通知四层、调度器或 `/notifications` 页；不要为提醒引入邮件/浏览器推送等外部渠道。
+  - 不要把"全部已读"提前实现（除非用户要求）；不要追溯修改已生成通知。
+  - 不要通过普通 `PUT` 改写投递、面试、提醒、复盘或任务状态。
 
 ### 窗口 2026-08-29-7
 
