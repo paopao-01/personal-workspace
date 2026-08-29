@@ -10,7 +10,8 @@ import {
   useUpdateReviewQuestion,
 } from '@/api/reviews/useReviewMutations'
 import { useInterviewReview } from '@/api/reviews/useReviewQueries'
-import type { AnswerStatus } from '@/api/reviews/reviewApi'
+import type { AnswerStatus, InterviewQuestion } from '@/api/reviews/reviewApi'
+import { useCreateTaskFromQuestion } from '@/api/tasks/useTaskMutations'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -36,6 +37,7 @@ export function InterviewReviewPage() {
   const completeReview = useCompleteReview()
   const createKnowledgePoint = useCreateKnowledgePoint()
   const updateQuestion = useUpdateReviewQuestion()
+  const createTaskFromQuestion = useCreateTaskFromQuestion()
   const review = reviewQuery.data
   const [interviewResult, setInterviewResult] = useState<'PENDING' | 'PASSED' | 'FAILED' | ''>('')
   const [questionContent, setQuestionContent] = useState('')
@@ -43,6 +45,10 @@ export function InterviewReviewPage() {
   const [knowledgePointName, setKnowledgePointName] = useState('')
   const [noQuestionsRecorded, setNoQuestionsRecorded] = useState<boolean | null>(null)
   const [overallFeeling, setOverallFeeling] = useState<string | null>(null)
+  const [taskDraftQuestionId, setTaskDraftQuestionId] = useState<string | null>(null)
+  const [taskTitle, setTaskTitle] = useState('')
+  const [taskAcceptanceCriteria, setTaskAcceptanceCriteria] = useState('')
+  const [taskVerificationMethod, setTaskVerificationMethod] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -69,7 +75,8 @@ export function InterviewReviewPage() {
     createQuestion.isPending ||
     completeReview.isPending ||
     createKnowledgePoint.isPending ||
-    updateQuestion.isPending
+    updateQuestion.isPending ||
+    createTaskFromQuestion.isPending
   const selectedInterviewResult = interviewResult || review?.interviewResult || 'FAILED'
   const selectedNoQuestionsRecorded = noQuestionsRecorded ?? review?.noQuestionsRecorded ?? false
   const selectedOverallFeeling = overallFeeling ?? review?.overallFeeling ?? ''
@@ -174,6 +181,35 @@ export function InterviewReviewPage() {
       })
       await reviewQuery.refetch()
       pushToast('复盘已完成')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const openTaskDraft = (question: InterviewQuestion) => {
+    setTaskDraftQuestionId(question.id)
+    setTaskTitle(`补齐：${question.content.slice(0, 60)}`)
+    setTaskAcceptanceCriteria('能独立讲清核心思路、关键风险和一个项目例子。')
+    setTaskVerificationMethod('口述演练并记录验证结果')
+  }
+
+  const submitTaskFromQuestion = async (questionId: string) => {
+    setActionError(null)
+    try {
+      await createTaskFromQuestion.mutateAsync({
+        questionId,
+        body: {
+          mode: 'CREATE_NEW',
+          title: taskTitle,
+          acceptanceCriteria: taskAcceptanceCriteria,
+          verificationMethod: taskVerificationMethod,
+        },
+      })
+      setTaskDraftQuestionId(null)
+      setTaskTitle('')
+      setTaskAcceptanceCriteria('')
+      setTaskVerificationMethod('')
+      pushToast('学习任务已创建')
     } catch (caught) {
       reportError(caught as Error)
     }
@@ -327,7 +363,7 @@ export function InterviewReviewPage() {
           ) : (
             <div>
               {review?.questions?.map((question) => (
-                <div className="requirement-row" key={question.id}>
+                <div className="requirement-row" key={question.id} style={{ flexWrap: 'wrap' }}>
                   <div className="requirement-main">
                     <span className="requirement-raw">{question.content}</span>
                     <span className="muted">
@@ -355,7 +391,70 @@ export function InterviewReviewPage() {
                       </option>
                       <option value="FULLY_ANSWERED">{answerStatusLabel.FULLY_ANSWERED}</option>
                     </Select>
+                    {question.answerStatus !== 'FULLY_ANSWERED' ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        type="button"
+                        disabled={pending}
+                        onClick={() => openTaskDraft(question)}
+                      >
+                        创建学习任务
+                      </Button>
+                    ) : null}
                   </div>
+                  {taskDraftQuestionId === question.id ? (
+                    <div className="inline-edit" style={{ width: '100%' }}>
+                      <Field label="任务名称" required>
+                        <Input
+                          value={taskTitle}
+                          onChange={(event) => setTaskTitle(event.target.value)}
+                          maxLength={200}
+                        />
+                      </Field>
+                      <div className="form-row">
+                        <Field label="验收标准" required>
+                          <Textarea
+                            value={taskAcceptanceCriteria}
+                            onChange={(event) => setTaskAcceptanceCriteria(event.target.value)}
+                            rows={3}
+                            maxLength={5000}
+                          />
+                        </Field>
+                        <Field label="验证方式" required>
+                          <Textarea
+                            value={taskVerificationMethod}
+                            onChange={(event) => setTaskVerificationMethod(event.target.value)}
+                            rows={3}
+                            maxLength={1000}
+                          />
+                        </Field>
+                      </div>
+                      <div className="flex-row" style={{ justifyContent: 'flex-end' }}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() => setTaskDraftQuestionId(null)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          disabled={
+                            pending ||
+                            !taskTitle.trim() ||
+                            !taskAcceptanceCriteria.trim() ||
+                            !taskVerificationMethod.trim()
+                          }
+                          onClick={() => submitTaskFromQuestion(question.id)}
+                        >
+                          {createTaskFromQuestion.isPending ? '创建中…' : '确认创建'}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

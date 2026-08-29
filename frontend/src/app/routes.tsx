@@ -10,6 +10,7 @@ import { InterviewDetailPage } from '@/features/interviews/InterviewDetailPage'
 import { InterviewListPage } from '@/features/interviews/InterviewListPage'
 import { InterviewReviewPage } from '@/features/reviews/InterviewReviewPage'
 import { WeakKnowledgePointsPage } from '@/features/reviews/WeakKnowledgePointsPage'
+import { TaskListPage } from '@/features/tasks/TaskListPage'
 
 export function AppRouter() {
   return (
@@ -32,6 +33,7 @@ export function AppRouter() {
         <Route path="/interviews/:interviewId" element={<InterviewDetailPage />} />
         <Route path="/interviews/:interviewId/review" element={<InterviewReviewPage />} />
         <Route path="/knowledge-points/weak" element={<WeakKnowledgePointsPage />} />
+        <Route path="/tasks" element={<TaskListPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
