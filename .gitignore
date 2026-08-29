@@ -51,3 +51,4 @@ frontend/src/api/generated/
 
 # Claude / AI
 .claude/
+.zcode/
