@@ -193,10 +193,24 @@ export function ImportRestoreSection() {
         {result ? (
           <div className="success-banner" style={{ marginTop: 12, flexDirection: 'column', alignItems: 'stretch' }}>
             <span>
-              恢复完成：插入 {result.inserted} 行 · 重复跳过 {result.skippedIdentical} · 冲突跳过{' '}
+              恢复报告 {result.reportId}：{result.status === 'COMPLETED' ? '完成' : '完成但有跳过或失败'} · 插入 {result.inserted} 行 · 重复跳过 {result.skippedIdentical} · 冲突跳过{' '}
               {result.skippedConflict} · 缺少关联跳过 {result.skippedMissingParent} · 失败{' '}
               {result.failed}
             </span>
+            <span className="muted">数据包指纹：{result.packageFingerprint} · 恢复时间：{result.restoredAt}</span>
+            {result.rowResults.length > 0 ? (
+              <details style={{ marginTop: 8 }}>
+                <summary>查看逐行恢复动作（{result.rowResults.length}）</summary>
+                <div style={{ marginTop: 8, maxHeight: 260, overflow: 'auto' }}>
+                  {result.rowResults.map((row, index) => (
+                    <p className="muted" style={{ margin: '4px 0 0' }} key={`${row.tableName}-${row.rowId ?? index}-${row.action}`}>
+                      <Badge variant={row.action === 'INSERTED' ? 'success' : row.action === 'FAILED' ? 'danger' : 'warning'}>{row.action}</Badge>{' '}
+                      {row.tableName}{row.rowId ? ` / ${row.rowId}` : ''}：{row.detail ?? ''}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            ) : null}
             {result.issues.length > 0 ? (
               <div>
                 {result.issues.slice(0, 20).map((issue, index) => (

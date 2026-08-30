@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.datamanagement.api.ImportIssueResponse;
 import com.jobhub.datamanagement.api.ImportResultResponse;
+import com.jobhub.datamanagement.api.ImportRowResult;
 import com.jobhub.datamanagement.api.ImportValidationResponse;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -79,10 +80,11 @@ public class ImportService {
 		int duplicateIdentical,
 		int conflict,
 		int missingParent,
-		List<ImportIssueResponse> issues
+		List<ImportIssueResponse> issues,
+		List<ImportRowResult> rowResults
 	) { }
 
-	private record PackageData(String exportedAt, List<TablePlan> plans, int totalRows) { }
+	private record PackageData(String exportedAt, String packageFingerprint, List<TablePlan> plans, int totalRows) { }
 
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper = new ObjectMapper();
@@ -100,7 +102,7 @@ public class ImportService {
 			.toList();
 		List<ImportIssueResponse> issues = data.plans().stream().flatMap(plan -> plan.issues().stream()).toList();
 		boolean valid = issues.stream().noneMatch(issue -> ImportIssueResponse.TYPE_INVALID_PACKAGE.equals(issue.type()));
-		return new ImportValidationResponse(valid, data.exportedAt(), data.totalRows(), insertableRows, previews, issues);
+		return new ImportValidationResponse(valid, data.exportedAt(), data.packageFingerprint(), data.totalRows(), insertableRows, previews, issues);
 	}
 
 	@Transactional
@@ -108,6 +110,7 @@ public class ImportService {
 		PackageData data = computePlans(body);
 		Map<String, List<String>> columnWhitelist = loadColumnWhitelist();
 		List<ImportIssueResponse> issues = new ArrayList<>();
+		List<ImportRowResult> rowResults = new ArrayList<>();
 		List<ImportResultResponse.TableResult> results = new ArrayList<>();
 		int inserted = 0;
 		int skippedIdentical = 0;
@@ -116,6 +119,7 @@ public class ImportService {
 		int failed = 0;
 		for (TablePlan plan : data.plans()) {
 			issues.addAll(plan.issues());
+			rowResults.addAll(plan.rowResults().stream().filter(row -> !ImportRowResult.INSERTED.equals(row.action())).toList());
 			skippedIdentical += plan.duplicateIdentical();
 			skippedConflict += plan.conflict();
 			skippedMissingParent += plan.missingParent();
@@ -125,10 +129,13 @@ public class ImportService {
 				try {
 					insertRow(plan.tableName(), row, columnWhitelist.get(plan.tableName()));
 					tableInserted++;
+					rowResults.add(new ImportRowResult(plan.tableName(), rowKeyValue(plan.tableName(), row), ImportRowResult.INSERTED, "已插入缺失行"));
 				} catch (Exception ex) {
 					tableFailed++;
 					issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_ROW_FAILED, plan.tableName(),
 						rowKeyValue(plan.tableName(), row), "插入失败：" + ex.getMessage()));
+					rowResults.add(new ImportRowResult(plan.tableName(), rowKeyValue(plan.tableName(), row), ImportRowResult.FAILED,
+						"插入失败：" + ex.getMessage()));
 				}
 			}
 			inserted += tableInserted;
@@ -136,8 +143,10 @@ public class ImportService {
 			results.add(new ImportResultResponse.TableResult(plan.tableName(), tableInserted,
 				plan.duplicateIdentical(), plan.conflict(), plan.missingParent(), tableFailed));
 		}
-		return new ImportResultResponse(inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed,
-			results, issues);
+		String status = failed > 0 ? "COMPLETED_WITH_FAILURES" : (issues.isEmpty() ? "COMPLETED" : "COMPLETED_WITH_SKIPS");
+		return new ImportResultResponse(java.util.UUID.randomUUID().toString(), java.time.Instant.now().toString(),
+			data.packageFingerprint(), status, inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed,
+			results, issues, rowResults);
 	}
 
 	private PackageData computePlans(JsonNode body) {
@@ -165,9 +174,10 @@ public class ImportService {
 			if (!IMPORT_ORDER.contains(tableName)) {
 				JsonNode rowsNode = field.getValue();
 				int rows = rowsNode.isArray() ? rowsNode.size() : 0;
-				unknownTablePlans.add(new TablePlan(tableName, rows, List.of(), 0, 0, 0,
-					List.of(new ImportIssueResponse(ImportIssueResponse.TYPE_UNKNOWN_TABLE, tableName, null,
-						"表不在可导入范围内（排除表或未知表），已跳过 " + rows + " 行"))));
+			unknownTablePlans.add(new TablePlan(tableName, rows, List.of(), 0, 0, 0,
+				List.of(new ImportIssueResponse(ImportIssueResponse.TYPE_UNKNOWN_TABLE, tableName, null,
+					"表不在可导入范围内（排除表或未知表），已跳过 " + rows + " 行")),
+				java.util.stream.IntStream.range(0, rows).mapToObj(i -> new ImportRowResult(tableName, String.valueOf(i), ImportRowResult.UNKNOWN_TABLE, "未知表行已跳过")).toList()));
 			}
 		}
 		for (String tableName : IMPORT_ORDER) {
@@ -179,13 +189,14 @@ public class ImportService {
 		}
 		plans.addAll(unknownTablePlans);
 		totalRows = plans.stream().mapToInt(TablePlan::packageRows).sum();
-		return new PackageData(exportedAt, plans, totalRows);
+		return new PackageData(exportedAt, fingerprint(body), plans, totalRows);
 	}
 
 	private TablePlan buildPlan(String tableName, JsonNode rowsNode, Map<String, Map<String, Object>> dbRows,
 			Map<String, Set<String>> availableIds) {
 		List<String> keyColumns = keyColumns(tableName);
 		List<ImportIssueResponse> issues = new ArrayList<>();
+		List<ImportRowResult> rowResults = new ArrayList<>();
 		List<Map<String, Object>> toInsert = new ArrayList<>();
 		int packageRows = 0;
 		int duplicateIdentical = 0;
@@ -195,12 +206,14 @@ public class ImportService {
 		if (!rowsNode.isArray()) {
 			issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_INVALID_PACKAGE, tableName, null,
 				"表数据必须是行数组"));
-			return new TablePlan(tableName, 0, List.of(), 0, 0, 0, issues);
+			return new TablePlan(tableName, 0, List.of(), 0, 0, 0, issues,
+				List.of(new ImportRowResult(tableName, null, ImportRowResult.INVALID_PACKAGE, "表数据必须是行数组")));
 		}
 		for (JsonNode rowNode : rowsNode) {
 			if (!rowNode.isObject()) {
 				issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_INVALID_PACKAGE, tableName, null,
 					"行必须是对象"));
+				rowResults.add(new ImportRowResult(tableName, null, ImportRowResult.INVALID_PACKAGE, "行必须是对象"));
 				continue;
 			}
 			packageRows++;
@@ -209,22 +222,26 @@ public class ImportService {
 			if (keyValue == null) {
 				issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_INVALID_PACKAGE, tableName, null,
 					"行缺少主键列 " + keyColumns));
+				rowResults.add(new ImportRowResult(tableName, null, ImportRowResult.INVALID_PACKAGE, "行缺少主键列 " + keyColumns));
 				continue;
 			}
 			if (!seenKeys.add(keyValue)) {
 				conflict++;
 				issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_CONFLICT, tableName, keyValue,
 					"数据包内存在重复主键，仅保留首行，其余跳过"));
+				rowResults.add(new ImportRowResult(tableName, keyValue, ImportRowResult.CONFLICT, "数据包内重复主键，已跳过"));
 				continue;
 			}
 			Map<String, Object> existing = dbRows.get(keyValue);
 			if (existing != null) {
 				if (rowsEqual(tableName, row, existing)) {
 					duplicateIdentical++;
+					rowResults.add(new ImportRowResult(tableName, keyValue, ImportRowResult.DUPLICATE_IDENTICAL, "同键且内容一致，已跳过"));
 				} else {
 					conflict++;
 					issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_CONFLICT, tableName, keyValue,
 						"同键行已存在且内容不同，恢复时保留数据库现状"));
+					rowResults.add(new ImportRowResult(tableName, keyValue, ImportRowResult.CONFLICT, "同键内容不同，保留数据库现状"));
 				}
 				continue;
 			}
@@ -233,11 +250,24 @@ public class ImportService {
 				missingParent++;
 				issues.add(new ImportIssueResponse(ImportIssueResponse.TYPE_MISSING_PARENT, tableName, keyValue,
 					"外键父行缺失：" + missingFk));
+				rowResults.add(new ImportRowResult(tableName, keyValue, ImportRowResult.MISSING_PARENT, "外键父行缺失：" + missingFk));
 				continue;
 			}
 			toInsert.add(row);
 		}
-		return new TablePlan(tableName, packageRows, toInsert, duplicateIdentical, conflict, missingParent, issues);
+		return new TablePlan(tableName, packageRows, toInsert, duplicateIdentical, conflict, missingParent, issues, rowResults);
+	}
+
+	private String fingerprint(JsonNode body) {
+		try {
+			var digest = java.security.MessageDigest.getInstance("SHA-256");
+			byte[] hash = digest.digest(body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			StringBuilder result = new StringBuilder();
+			for (byte value : hash) result.append(String.format("%02x", value));
+			return result.toString();
+		} catch (java.security.NoSuchAlgorithmException ex) {
+			throw new IllegalStateException("无法生成数据包指纹", ex);
+		}
 	}
 
 	private String findMissingParent(String tableName, Map<String, Object> row, Map<String, Set<String>> availableIds) {

@@ -1723,12 +1723,13 @@ components:
         detail: { type: string }
     ImportValidationReport:
       type: object
-      required: [valid, exportedAt, totalRows, insertableRows, tablePreviews, issues]
+      required: [valid, exportedAt, packageFingerprint, totalRows, insertableRows, tablePreviews, issues]
       properties:
         valid:
           type: boolean
           description: 数据包可解析且至少包含一行数据；冲突与缺父级不影响 valid（恢复时跳过）
         exportedAt: { type: string, format: date-time, nullable: true }
+        packageFingerprint: { type: string, description: 数据包内容 SHA-256 指纹 }
         totalRows: { type: integer }
         insertableRows: { type: integer }
         tablePreviews: { type: array, items: { $ref: '#/components/schemas/ImportTablePreview' } }
@@ -1745,8 +1746,12 @@ components:
         failed: { type: integer }
     ImportResultReport:
       type: object
-      required: [inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed, tableResults, issues]
+      required: [reportId, restoredAt, packageFingerprint, status, inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed, tableResults, issues, rowResults]
       properties:
+        reportId: { type: string, format: uuid }
+        restoredAt: { type: string, format: date-time }
+        packageFingerprint: { type: string }
+        status: { type: string, enum: [COMPLETED, COMPLETED_WITH_SKIPS, COMPLETED_WITH_FAILURES] }
         inserted: { type: integer }
         skippedIdentical: { type: integer }
         skippedConflict: { type: integer }
@@ -1754,6 +1759,15 @@ components:
         failed: { type: integer }
         tableResults: { type: array, items: { $ref: '#/components/schemas/ImportTableResult' } }
         issues: { type: array, items: { $ref: '#/components/schemas/ImportIssue' } }
+        rowResults: { type: array, items: { $ref: '#/components/schemas/ImportRowResult' } }
+    ImportRowResult:
+      type: object
+      required: [action]
+      properties:
+        tableName: { type: string }
+        rowId: { type: string, nullable: true }
+        action: { type: string, enum: [INSERTED, DUPLICATE_IDENTICAL, CONFLICT, MISSING_PARENT, FAILED, INVALID_PACKAGE, UNKNOWN_TABLE] }
+        detail: { type: string, nullable: true }
     TrashItem:
       type: object
       required: [id, resourceType, resourceId, deletedAt, expiresAt]

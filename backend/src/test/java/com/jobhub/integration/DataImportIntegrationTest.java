@@ -67,6 +67,11 @@ class DataImportIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.lng(restored.getBody(), "inserted")).isEqualTo((long) totalRows);
 		assertThat(JsonProbe.lng(restored.getBody(), "failed")).isEqualTo(0);
 		assertThat(JsonProbe.lng(restored.getBody(), "skippedConflict")).isEqualTo(0);
+		assertThat(JsonProbe.str(restored.getBody(), "reportId")).isNotBlank();
+		assertThat(JsonProbe.str(restored.getBody(), "packageFingerprint")).hasSize(64);
+		assertThat(JsonProbe.str(restored.getBody(), "status")).isEqualTo("COMPLETED");
+		assertThat(JsonProbe.arraySize(restored.getBody(), "rowResults")).isEqualTo(totalRows);
+		assertThat(JsonProbe.arrStr(restored.getBody(), "rowResults", 0, "action")).isEqualTo("INSERTED");
 
 		// 导入后的岗位可通过业务接口读取（含关联链路）
 		ResponseEntity<String> importedJob = restTemplate.getForEntity(url("/jobs/" + newJobId), String.class);

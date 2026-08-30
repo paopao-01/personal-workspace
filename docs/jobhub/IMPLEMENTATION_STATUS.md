@@ -7,7 +7,7 @@
 - 项目阶段：P1（V0.2）进行中，已完成十一个切片：AI 基础设施与 JD 结构化提取（V7/V8 迁移新增 ai_provider/ai_job/ai_job_item，可切换供应商，候选逐项确认）；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移 + 渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）；CSV 导出（V6 迁移放宽 data_export.format，ZIP 打包按表拆分 CSV）；AI 基础设施 + JD 结构化提取（可切换供应商）。
 - 里程碑说明：V0.2 清单中除「AI 异步分析和候选变更确认」「简历定制草稿」「复杂恢复报告与完整附件证据库」「多实例提醒协调与失败重试」外均已实现；AI 两项需用户明确同意接入 AI 后启动。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：下一窗口开发简历定制草稿（PRD 9.4，基于本窗口完成的 AI 基础设施；用户已明确同意接入 AI 并要求供应商可切换——已满足）。后续候选：复杂恢复报告/附件证据库（依赖附件体系）。
+- 当前任务：P1 复杂恢复报告已完成；下一候选为完整附件证据库（需单独设计本地文件引用与生命周期）。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-30。
 
@@ -105,6 +105,20 @@
 - 验证结果：`mvn clean test` 通过（77 tests, 0 failures, 0 errors）；前端 `npm run typecheck`、`npm run lint`、`npm run build` 通过。
 - 修改文件：OpenAPI、数据库设计、V9 迁移、AI 后端服务/处理器/API/Mapper、前端 AI API/hooks/岗位详情与草稿区、单元测试。
 - 下一步：复杂恢复报告与完整附件证据库；多实例提醒协调与更完整失败重试策略；AI 问题分类/回答质量分析/任务建议。
+
+### 窗口 2026-08-30-02
+
+- 目标：完成 P1 复杂恢复报告（PRD 9.5）并验证后合并主分支。
+- 状态：**DONE**。
+- 已完成：
+  - 扩展恢复预检报告，新增数据包 SHA-256 指纹，便于确认预览和实际恢复针对同一份数据。
+  - 扩展恢复结果报告，新增报告 ID、恢复时间、整体状态（完成/有跳过/有失败）和逐行动作明细。
+  - 逐行记录 `INSERTED`、`DUPLICATE_IDENTICAL`、`CONFLICT`、`MISSING_PARENT`、`FAILED`、`INVALID_PACKAGE`、`UNKNOWN_TABLE`，保留用户事实优先和只插入缺失行语义。
+  - 设置页展示报告元数据和可展开的逐行恢复动作；OpenAPI、前端生成类型和后端模型同步更新。
+  - 导入集成测试新增报告 ID、指纹、状态和逐行插入动作断言。
+- 验证结果：`mvn clean test` 通过（78 tests, 0 failures, 0 errors）；前端 `npm run typecheck`、`npm run lint`、`npm run build` 通过。
+- 修改文件：ImportService、导入响应模型、逐行结果模型、DataImportIntegrationTest、OpenAPI、ImportRestoreSection、状态记录。
+- 下一步：完整附件证据库；多实例提醒协调与更完整失败重试策略；AI 问题分类/回答质量分析/任务建议。
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
   - 新增：`backend/src/main/resources/db/migration/V7__create_ai_infrastructure.sql`、`V8__add_ai_job_item_sort_order.sql`、`backend/src/main/java/com/jobhub/ai/**`（domain 8 + infrastructure 3 + application 8 + api 7 个文件）、`backend/src/test/java/com/jobhub/integration/AiIntegrationTest.java`、`frontend/src/api/ai/{aiApi,useAiQueries}.ts`、`frontend/src/features/settings/AiProviderSection.tsx`、`frontend/src/features/jobs/AiExtractionSection.tsx`、`frontend/e2e/{fake-ai-server.mjs,p1-ai-extraction.spec.ts}`。

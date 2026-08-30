@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 public record ImportValidationResponse(
 	boolean valid,
 	String exportedAt,
+	String packageFingerprint,
 	int totalRows,
 	int insertableRows,
 	java.util.List<TablePreview> tablePreviews,
