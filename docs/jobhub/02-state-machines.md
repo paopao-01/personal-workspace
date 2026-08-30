@@ -153,6 +153,12 @@ FAILED ──regenerate──> CANCELED + 新建 PENDING
 
 默认分类候选值为 `TECHNICAL`、`PROJECT_EXPERIENCE`、`SYSTEM_DESIGN`、`BEHAVIORAL`、`DOMAIN`、`OTHER`，人工编辑仍可使用既有自定义类型。
 
+### 6.5 AI 回答质量分析候选
+
+回答质量分析使用独立异步任务，只有“我的回答”非空的问题可以发起。输入只包含问题内容、用户回答与现有参考答案快照；输出只产生一个 `PROPOSED` 候选，包含总体评价、建议回答状态、参考答案、错误原因和改进方案。
+
+采纳必须携带问题当前版本，并且只更新 `answer_status`、`reference_answer`、`error_reason` 和 `improvement_plan`，递增问题及复盘版本。问题内容、问题类型、用户原回答、难度和知识点不得被 AI 采纳操作修改。失败、取消、拒绝或版本冲突均不得改变问题记录；重新分析不得覆盖已采纳结果。
+
 ### 6.1 复盘状态
 
 ```text

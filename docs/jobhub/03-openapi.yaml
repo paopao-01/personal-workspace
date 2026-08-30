@@ -961,11 +961,27 @@ paths:
         '202': { description: 任务已入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /interview-questions/{questionId}/ai-answer-analysis:
+    parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
+    post:
+      tags: [Ai]
+      summary: 为面试回答创建 AI 质量分析任务
+      description: 只快照问题、用户回答与现有参考答案并生成可编辑候选；不会自动修改任何问题字段。我的回答为空时返回 422。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '202': { description: 任务已入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /interview-questions/{questionId}/ai-jobs:
     parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
     get:
       tags: [Ai]
-      summary: 查询面试问题的 AI 分类任务历史
+      summary: 按类型查询面试问题的 AI 任务历史
+      parameters:
+        - name: jobType
+          in: query
+          required: false
+          schema: { type: string, enum: [QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS], default: QUESTION_CLASSIFICATION }
       responses:
         '200': { description: 任务列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiJob' } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1008,7 +1024,7 @@ paths:
     post:
       tags: [Ai]
       summary: 采纳 AI 候选条目（可携带编辑后的内容）
-      description: JD 提取条目会创建 source_type=AI 的 PENDING 岗位要求；问题分类条目需要携带问题当前版本，采纳后才更新问题类型。
+      description: JD 提取条目会创建 source_type=AI 的 PENDING 岗位要求；问题分类和回答质量分析条目需要携带问题当前版本，采纳后只更新各自声明的字段。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersionOptional' } ]
       requestBody:
         required: false
@@ -1972,11 +1988,15 @@ components:
       type: object
       required: [type, rawText]
       properties:
-        type: { type: string, enum: [MUST, BONUS, DRAFT, TECHNICAL, PROJECT_EXPERIENCE, SYSTEM_DESIGN, BEHAVIORAL, DOMAIN, OTHER] }
+        type: { type: string, enum: [MUST, BONUS, DRAFT, TECHNICAL, PROJECT_EXPERIENCE, SYSTEM_DESIGN, BEHAVIORAL, DOMAIN, OTHER, ANSWER_QUALITY] }
         rawText: { type: string, maxLength: 2000 }
         normalizedName: { type: string, maxLength: 200 }
         proficiencyText: { type: string, nullable: true, maxLength: 500 }
         rationale: { type: string, nullable: true, maxLength: 1000, description: 候选分类或分析理由；仅作为候选说明保存 }
+        answerStatus: { $ref: '#/components/schemas/AnswerStatus' }
+        referenceAnswer: { type: string, nullable: true, maxLength: 20000 }
+        errorReason: { type: string, nullable: true, maxLength: 5000 }
+        improvementPlan: { type: string, nullable: true, maxLength: 5000 }
     AiJobItem:
       type: object
       required: [id, aiJobId, payload, status, createdAt]
@@ -1996,7 +2016,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }

@@ -1,12 +1,14 @@
 package com.jobhub.ai.domain;
 
+import com.jobhub.review.domain.AnswerStatus;
 import java.util.List;
 
 /**
  * AI 候选条目载荷。不同任务类型复用同一可编辑 JSON 结构；所有条目都必须经过人工采纳。
  */
 public record AiItemPayload(String type, String rawText, String normalizedName, String proficiencyText,
-		String rationale) {
+		String rationale, AnswerStatus answerStatus, String referenceAnswer, String errorReason,
+		String improvementPlan) {
 	public static final int MAX_ITEMS = 20;
 
 	public static List<AiItemPayload> parseList(String outputJson) {

@@ -4,12 +4,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十六个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试；AI 面试问题分类。
-- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 问题分类/回答质量分析/任务建议，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
-- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26、AT-17A 已覆盖。
-- 当前任务：AI 面试问题分类已完成；下一窗口只做 AI 回答质量分析或任务建议中的一个可验证垂直切片，优先回答质量分析；`ai_provider` 删除端点仍按需保留。
+- 项目阶段：P1（V0.2）进行中，已完成十七个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试；AI 面试问题分类；AI 回答质量分析。
+- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 学习任务建议，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
+- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26、AT-17A、AT-17B 已覆盖。
+- 当前任务：AI 回答质量分析已完成；下一窗口只做 AI 学习任务建议候选的可验证垂直切片；`ai_provider` 删除端点仍按需保留。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-30（窗口 2026-08-30-05）。
+- 最后更新：2026-08-30（窗口 2026-08-30-06）。
 
 ## 2. 已完成内容
 
@@ -209,6 +209,38 @@
   - 优先实现 AI 回答质量分析：先定义只读输入快照、质量维度和候选改进建议的 OpenAPI/验收契约，再复用 AI 异步任务与人工确认基础设施；不自动修改回答、参考答案或问题状态。
 - 不要重复做：
   - 不要重新修改 V11 提醒租约或 V12 分类迁移；不要把分类候选直接写成用户事实；不要增加文件上传、读取、扫描或下载。
+
+### 窗口 2026-08-30-06
+
+- 目标：完成 P1 AI 回答质量分析垂直切片：异步任务、可编辑候选、人工采纳/拒绝和问题版本保护。
+- 状态：**DONE**。
+- 已完成：
+  - 先更新 OpenAPI、状态机、数据库设计、页面规格、技术实施说明和 AT-17B；新增回答分析任务创建端点，并让问题 AI 历史按任务类型筛选。
+  - 新增 Flyway `V13__allow_answer_quality_analysis_ai_jobs.sql`，允许 `ANSWER_QUALITY_ANALYSIS`，不修改 V1~V12。
+  - 新增 `ANSWER_QUALITY_ANALYSIS_V1` 处理器：输入只快照问题、用户原回答和现有参考答案；输出一个含总体评价、建议回答状态、参考答案、错误原因和改进方案的可编辑候选。
+  - “我的回答”为空时拒绝创建任务；候选保持 `PROPOSED`，失败、取消、拒绝和重新分析均不改问题主记录。
+  - 采纳必须携带问题当前版本，并使用字段级更新只写 `answer_status`、`reference_answer`、`error_reason`、`improvement_plan`；问题内容、类型、我的回答、难度和知识点保持不变，同时递增问题及复盘版本。
+  - 复盘页新增回答质量分析区，支持按题发起、轮询、失败提示、重新分析、编辑候选、采纳和拒绝；分类与回答分析使用独立查询键，互不覆盖。
+  - 集成测试覆盖空回答、候选不自动写入、任务历史隔离、编辑后采纳、字段保留、旧版本冲突和拒绝；浏览器 E2E 覆盖页面编辑并采纳主路径。
+- 未完成：
+  - AI 学习任务建议仍待下一窗口；`ai_provider` 删除端点仍按需保留。
+  - 本窗口不自动创建学习任务，不修改用户原回答，不扩展文件处理、通知或外部同步。
+- 修改文件：
+  - 规格：`docs/jobhub/01-page-spec.md`、`02-state-machines.md`、`03-openapi.yaml`、`04-database-design.md`、`05-acceptance-test-cases.md`、`06-technical-implementation.md`、本文件。
+  - 后端：`V13__allow_answer_quality_analysis_ai_jobs.sql`、`AnswerQualityAnalysisHandler`、AI 任务服务/控制器/载荷、复盘问题字段级更新、`AiIntegrationTest`。
+  - 前端：AI API/hooks、`AnswerQualityAnalysisSection`、复盘页、分类查询隔离、假 AI 供应商、`p1-ai-answer-quality.spec.ts`。
+- 已运行验证：
+  - `mvn -Dtest=AiIntegrationTest test`（隔离 SQLite 库）：5 tests，0 failures，0 errors；Flyway V1→V13 通过。
+  - `mvn test`（隔离 SQLite 库，正确设置 `jobhub.export-dir`）：85 tests，0 failures，0 errors。
+  - `npm run gen-types`、`npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+  - `npm run e2e -- e2e/p1-ai-answer-quality.spec.ts --reporter=list`：1 passed；Windows 下测试完成后 Playwright 子进程回收仍需手动终止，三个测试端口均已关闭。
+- 已知问题：
+  - `backend/target` 在当前 Windows 环境被外部进程占用，本窗口使用临时隔离构建目录完成验证，结束前已恢复 `pom.xml` 并删除临时目录。
+  - E2E 仍输出既有 React Router future flag 和 Node `NO_COLOR` warning，不影响断言。
+- 下一窗口只做：
+  - AI 学习任务建议候选：先定义输入范围、候选字段和人工确认契约，再复用现有 AI 任务基础设施；只在用户确认后创建学习任务及来源关联。
+- 不要重复做：
+  - 不要修改 V12/V13；不要让 AI 自动覆盖问题、回答或自动创建学习任务；不要增加附件读取、上传、扫描或下载。
 
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。

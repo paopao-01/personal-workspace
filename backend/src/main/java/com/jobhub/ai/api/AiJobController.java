@@ -31,9 +31,15 @@ public class AiJobController {
 		return ResponseEntity.status(202).body(AiJobResponse.from(service.createQuestionClassification(questionId)));
 	}
 
+	@PostMapping("/interview-questions/{questionId}/ai-answer-analysis")
+	public ResponseEntity<AiJobResponse> createAnswerQualityAnalysis(@PathVariable String questionId) {
+		return ResponseEntity.status(202).body(AiJobResponse.from(service.createAnswerQualityAnalysis(questionId)));
+	}
+
 	@GetMapping("/interview-questions/{questionId}/ai-jobs")
-	public List<AiJobResponse> listQuestionClassifications(@PathVariable String questionId) {
-		return service.listQuestionClassifications(questionId).stream().map(AiJobResponse::from).toList();
+	public List<AiJobResponse> listQuestionJobs(@PathVariable String questionId,
+			@RequestParam(defaultValue = "QUESTION_CLASSIFICATION") AiJobType jobType) {
+		return service.listQuestionJobs(questionId, jobType).stream().map(AiJobResponse::from).toList();
 	}
 
 	@GetMapping("/ai-jobs/{aiJobId}")

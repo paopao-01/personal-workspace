@@ -56,7 +56,8 @@ public class JdExtractionHandler implements AiTaskHandler {
 				? truncate(payload.rawText().trim(), 50)
 				: payload.normalizedName().trim();
 			valid.add(new AiItemPayload(payload.type(), payload.rawText().trim(), normalizedName,
-				payload.proficiencyText() == null ? null : payload.proficiencyText().trim(), null));
+				payload.proficiencyText() == null ? null : payload.proficiencyText().trim(), null,
+				null, null, null, null));
 			if (valid.size() >= AiItemPayload.MAX_ITEMS) {
 				break;
 			}

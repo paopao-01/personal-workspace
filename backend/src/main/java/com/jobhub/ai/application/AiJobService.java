@@ -92,14 +92,42 @@ public class AiJobService {
 	}
 
 	@Transactional
+	public AiJob createAnswerQualityAnalysis(String questionId) {
+		InterviewQuestion question = questionMapper.selectById(questionId);
+		VersionCheck.requireFound(question, "InterviewQuestion", questionId);
+		if (question.getMyAnswer() == null || question.getMyAnswer().isBlank()) {
+			throw new BusinessRuleException("请先填写我的回答，再发起回答质量分析");
+		}
+		AiProvider provider = requireActiveProvider();
+		String now = time.now();
+		AiJob aiJob = new AiJob();
+		aiJob.setId(ids.newId());
+		aiJob.setJobType(AiJobType.ANSWER_QUALITY_ANALYSIS);
+		aiJob.setObjectId(questionId);
+		aiJob.setObjectVersion(question.getVersion());
+		aiJob.setStatus(AiJobStatus.QUEUED);
+		aiJob.setProviderId(provider.getId());
+		aiJob.setProviderType(provider.getProviderType().name());
+		aiJob.setModel(provider.getModel());
+		aiJob.setPromptVersion(promptVersion(AiJobType.ANSWER_QUALITY_ANALYSIS));
+		aiJob.setAttemptCount(0);
+		aiJob.setInputSnapshot(serializeAnswerSnapshot(question));
+		aiJob.setCreatedAt(now);
+		aiJob.setUpdatedAt(now);
+		aiJobMapper.insert(aiJob);
+		submitAfterCommit(aiJob.getId());
+		return requireJob(aiJob.getId());
+	}
+
+	@Transactional
 	public AiJob create(AiJobType jobType, String objectId) {
 		return create(jobType, objectId, null);
 	}
 
 	@Transactional
 	public AiJob create(AiJobType jobType, String objectId, String sourceText) {
-		if (jobType == AiJobType.QUESTION_CLASSIFICATION) {
-			throw new BusinessRuleException("问题分类必须通过面试问题专用接口创建");
+		if (isQuestionJobType(jobType)) {
+			throw new BusinessRuleException("面试问题 AI 任务必须通过问题专用接口创建");
 		}
 		Job job = jobMapper.selectById(objectId);
 		VersionCheck.requireFound(job, "Job", objectId);
@@ -160,8 +188,15 @@ public class AiJobService {
 	}
 
 	public List<AiJob> listQuestionClassifications(String questionId) {
+		return listQuestionJobs(questionId, AiJobType.QUESTION_CLASSIFICATION);
+	}
+
+	public List<AiJob> listQuestionJobs(String questionId, AiJobType jobType) {
 		VersionCheck.requireFound(questionMapper.selectById(questionId), "InterviewQuestion", questionId);
-		return listByObject(AiJobType.QUESTION_CLASSIFICATION, questionId);
+		if (!isQuestionJobType(jobType)) {
+			throw new BusinessRuleException("不支持的问题 AI 任务类型");
+		}
+		return listByObject(jobType, questionId);
 	}
 
 	@Transactional
@@ -220,6 +255,20 @@ public class AiJobService {
 			}
 			return itemMapper.selectById(itemId);
 		}
+		if (itemJob.getJobType() == AiJobType.ANSWER_QUALITY_ANALYSIS) {
+			if (questionVersion == null) {
+				throw new BusinessRuleException("采纳回答质量分析时必须携带问题当前版本");
+			}
+			validateAnswerAnalysis(payload);
+			reviewService.applyAiAnswerAnalysis(itemJob.getObjectId(), questionVersion, payload.answerStatus(),
+				payload.referenceAnswer(), payload.errorReason(), payload.improvementPlan());
+			String editedJson = editedPayload == null ? null : serialize(editedPayload);
+			if (itemMapper.markAccepted(itemId, editedJson, null, now) == 0) {
+				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+					"条目状态已变化");
+			}
+			return itemMapper.selectById(itemId);
+		}
 		var requirement = requirementService.createAiCandidate(requireJobOfItem(item), payload.type(),
 				payload.rawText(), payload.normalizedName(), payload.proficiencyText());
 		String editedJson = editedPayload == null ? null : serialize(editedPayload);
@@ -258,7 +307,11 @@ public class AiJobService {
 			edited.rawText() == null || edited.rawText().isBlank() ? base.rawText() : edited.rawText(),
 			edited.normalizedName() == null || edited.normalizedName().isBlank() ? base.normalizedName() : edited.normalizedName(),
 			edited.proficiencyText() == null ? base.proficiencyText() : edited.proficiencyText(),
-			edited.rationale() == null ? base.rationale() : edited.rationale());
+			edited.rationale() == null ? base.rationale() : edited.rationale(),
+			edited.answerStatus() == null ? base.answerStatus() : edited.answerStatus(),
+			edited.referenceAnswer() == null ? base.referenceAnswer() : edited.referenceAnswer(),
+			edited.errorReason() == null ? base.errorReason() : edited.errorReason(),
+			edited.improvementPlan() == null ? base.improvementPlan() : edited.improvementPlan());
 	}
 
 	private AiProvider requireActiveProvider() {
@@ -276,6 +329,28 @@ public class AiJobService {
 			throw new BusinessRuleException("问题分类候选值无效");
 		}
 	}
+
+	private void validateAnswerAnalysis(AiItemPayload payload) {
+		if (!"ANSWER_QUALITY".equals(payload.type()) || payload.answerStatus() == null) {
+			throw new BusinessRuleException("回答质量分析候选值无效");
+		}
+	}
+
+	private boolean isQuestionJobType(AiJobType jobType) {
+		return jobType == AiJobType.QUESTION_CLASSIFICATION
+			|| jobType == AiJobType.ANSWER_QUALITY_ANALYSIS;
+	}
+
+	private String serializeAnswerSnapshot(InterviewQuestion question) {
+		try {
+			return JSON.writeValueAsString(new AnswerAnalysisSnapshot(question.getContent(), question.getMyAnswer(),
+				question.getReferenceAnswer()));
+		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+			throw new BusinessRuleException("回答分析输入快照序列化失败：" + ex.getMessage());
+		}
+	}
+
+	private record AnswerAnalysisSnapshot(String question, String myAnswer, String referenceAnswer) { }
 
 	private String requireJobOfItem(AiJobItem item) {
 		AiJob job = aiJobMapper.selectById(item.getAiJobId());

@@ -163,6 +163,19 @@ public class ReviewService {
 		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
 	}
 
+	/** Applies explicitly accepted AI feedback without changing the question or the user's original answer. */
+	@Transactional
+	public InterviewQuestion applyAiAnswerAnalysis(String questionId, long expectedVersion, AnswerStatus answerStatus,
+			String referenceAnswer, String errorReason, String improvementPlan) {
+		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);
+		String now = time.now();
+		VersionCheck.requireAffected(questionMapper.updateAnswerAnalysis(questionId, answerStatus.name(),
+			blankToNull(referenceAnswer), blankToNull(errorReason), blankToNull(improvementPlan), expectedVersion, now),
+			question.getVersion());
+		reviewMapper.bumpVersion(question.getReviewId(), now);
+		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
+	}
+
 	@Transactional
 	public void deleteQuestion(String questionId, long expectedVersion) {
 		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);

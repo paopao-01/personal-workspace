@@ -16,6 +16,19 @@ const QUESTION_CLASSIFICATION = [
   },
 ]
 
+const ANSWER_QUALITY_ANALYSIS = [
+  {
+    type: 'ANSWER_QUALITY',
+    rawText: '覆盖了基本机制，但缺少场景取舍。',
+    normalizedName: '回答质量分析',
+    answerStatus: 'PARTIALLY_ANSWERED',
+    referenceAnswer: '先说明机制，再比较适用场景、风险和恢复策略。',
+    errorReason: '缺少边界条件和方案取舍。',
+    improvementPlan: '按机制、场景、取舍、案例四步重新组织回答。',
+    rationale: '原回答只描述了基本操作。',
+  },
+]
+
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200).end('ok')
@@ -33,9 +46,12 @@ const server = createServer((req, res) => {
         res.end(JSON.stringify({ error: { message: 'model required' } }))
         return
       }
-      const content = JSON.stringify(body).includes('PROJECT_EXPERIENCE')
-        ? QUESTION_CLASSIFICATION
-        : CANDIDATES
+      const requestText = JSON.stringify(body)
+      const content = requestText.includes('ANSWER_QUALITY')
+        ? ANSWER_QUALITY_ANALYSIS
+        : requestText.includes('PROJECT_EXPERIENCE')
+          ? QUESTION_CLASSIFICATION
+          : CANDIDATES
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(content) } }] }))
     })

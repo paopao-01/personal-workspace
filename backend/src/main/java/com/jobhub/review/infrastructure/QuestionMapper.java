@@ -67,6 +67,21 @@ public interface QuestionMapper {
 	int updateType(@Param("id") String id, @Param("type") String type, @Param("expectedVersion") long expectedVersion,
 			@Param("now") String now);
 
+	@Update("""
+		UPDATE interview_question
+		SET answer_status=#{answerStatus},
+		    reference_answer=#{referenceAnswer},
+		    error_reason=#{errorReason},
+		    improvement_plan=#{improvementPlan},
+		    updated_at=#{now},
+		    version=version+1
+		WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL
+		""")
+	int updateAnswerAnalysis(@Param("id") String id, @Param("answerStatus") String answerStatus,
+			@Param("referenceAnswer") String referenceAnswer, @Param("errorReason") String errorReason,
+			@Param("improvementPlan") String improvementPlan, @Param("expectedVersion") long expectedVersion,
+			@Param("now") String now);
+
 	@Select("""
 		SELECT k.id AS knowledge_point_id,
 		       k.name,

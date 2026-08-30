@@ -31,6 +31,10 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		[
 		  {"type":"TECHNICAL","rawText":"Redis 持久化机制如何选择？","normalizedName":"技术基础","rationale":"问题要求解释具体技术机制。"}
 		]""";
+	private static final String ANSWER_QUALITY_JSON = """
+		[
+		  {"type":"ANSWER_QUALITY","rawText":"覆盖了核心概念，但缺少故障场景与取舍说明。","normalizedName":"回答质量分析","answerStatus":"PARTIALLY_ANSWERED","referenceAnswer":"先说明机制，再比较适用场景、风险和恢复策略。","errorReason":"缺少方案取舍和边界条件。","improvementPlan":"按机制、场景、取舍、案例四步重新组织回答。","rationale":"原回答只提到了机制名称。"}
+		]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -41,7 +45,9 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
 			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String candidates = request.contains("PROJECT_EXPERIENCE") ? QUESTION_CLASSIFICATION_JSON : CANDIDATES_JSON;
+			String candidates = request.contains("ANSWER_QUALITY")
+				? ANSWER_QUALITY_JSON
+				: request.contains("PROJECT_EXPERIENCE") ? QUESTION_CLASSIFICATION_JSON : CANDIDATES_JSON;
 			String contentJson = CONTENT_JSON.writeValueAsString(candidates);
 			byte[] body = ("{\"choices\":[{\"message\":{\"content\":" + contentJson + "}}]}")
 					.getBytes(StandardCharsets.UTF_8);
@@ -84,6 +90,11 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 
 	private String createQuestionClassification(String questionId) {
 		return restTemplate.exchange(url("/interview-questions/" + questionId + "/ai-classification"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+	}
+
+	private String createAnswerQualityAnalysis(String questionId) {
+		return restTemplate.exchange(url("/interview-questions/" + questionId + "/ai-answer-analysis"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
 	}
 
@@ -263,6 +274,84 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.str(rejected, "status")).isEqualTo("REJECTED");
 		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody(),
 			"questions.0.type")).isEqualTo("SYSTEM_DESIGN");
+	}
+
+	@Test
+	void P1_answerQualityAnalysisIsEditableAndPreservesUserFacts() throws Exception {
+		String baseUrl = "http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1";
+		createActiveProvider(baseUrl);
+		String interviewId = createCompletedInterview();
+		String review = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String reviewId = JsonProbe.str(review, "id");
+		String knowledgePointId = JsonProbe.str(restTemplate.exchange(url("/knowledge-points"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"name\":\"AI 回答分析知识点\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class).getBody(), "id");
+		String question = restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存一致性如何处理？\",\"answerStatus\":\"UNANSWERED\",\"type\":\"自定义类型\",\"knowledgePointIds\":[\""
+				+ knowledgePointId + "\"]}", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String questionId = JsonProbe.str(question, "id");
+
+		ResponseEntity<String> missingAnswer = restTemplate.exchange(
+			url("/interview-questions/" + questionId + "/ai-answer-analysis"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
+		assertThat(missingAnswer.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+
+		String detailedQuestion = restTemplate.exchange(url("/interview-questions/" + questionId), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存一致性如何处理？\",\"answerStatus\":\"UNANSWERED\",\"type\":\"自定义类型\","
+				+ "\"myAnswer\":\"我会先更新数据库，再删除缓存。\",\"referenceAnswer\":\"旧参考答案\",\"difficulty\":4,"
+				+ "\"errorReason\":\"旧错误原因\",\"improvementPlan\":\"旧改进方案\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class).getBody();
+		assertThat(JsonProbe.intVal(detailedQuestion, "version")).isEqualTo(1);
+
+		String aiJob = createAnswerQualityAnalysis(questionId);
+		assertThat(JsonProbe.str(aiJob, "jobType")).isEqualTo("ANSWER_QUALITY_ANALYSIS");
+		assertThat(JsonProbe.str(aiJob, "promptVersion")).isEqualTo("ANSWER_QUALITY_ANALYSIS_V1");
+		String finished = waitForTerminal(JsonProbe.str(aiJob, "id"));
+		assertThat(JsonProbe.str(finished, "status")).isEqualTo("SUCCEEDED");
+		assertThat(JsonProbe.str(finished, "items.0.payload.type")).isEqualTo("ANSWER_QUALITY");
+		assertThat(JsonProbe.str(finished, "items.0.payload.answerStatus")).isEqualTo("PARTIALLY_ANSWERED");
+
+		String classificationHistory = restTemplate.getForEntity(
+			url("/interview-questions/" + questionId + "/ai-jobs?jobType=QUESTION_CLASSIFICATION"), String.class).getBody();
+		String analysisHistory = restTemplate.getForEntity(
+			url("/interview-questions/" + questionId + "/ai-jobs?jobType=ANSWER_QUALITY_ANALYSIS"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(classificationHistory, "")).isZero();
+		assertThat(JsonProbe.arraySize(analysisHistory, "")).isEqualTo(1);
+
+		String itemId = JsonProbe.str(finished, "items.0.id");
+		String accepted = restTemplate.exchange(url("/ai-job-items/" + itemId + "/accept"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"payload\":{\"type\":\"ANSWER_QUALITY\",\"rawText\":\"用户编辑后的评价\","
+				+ "\"normalizedName\":\"回答质量分析\",\"answerStatus\":\"FULLY_ANSWERED\",\"referenceAnswer\":\"编辑后的参考答案\","
+				+ "\"errorReason\":\"编辑后的错误原因\",\"improvementPlan\":\"编辑后的改进方案\"}}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "1"), String.class).getBody();
+		assertThat(JsonProbe.str(accepted, "status")).isEqualTo("ACCEPTED");
+
+		String afterAccept = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		assertThat(JsonProbe.str(afterAccept, "questions.0.content")).isEqualTo("缓存一致性如何处理？");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.type")).isEqualTo("自定义类型");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.myAnswer")).isEqualTo("我会先更新数据库，再删除缓存。");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.answerStatus")).isEqualTo("FULLY_ANSWERED");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.referenceAnswer")).isEqualTo("编辑后的参考答案");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.errorReason")).isEqualTo("编辑后的错误原因");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.improvementPlan")).isEqualTo("编辑后的改进方案");
+		assertThat(JsonProbe.intVal(afterAccept, "questions.0.difficulty")).isEqualTo(4);
+		assertThat(JsonProbe.str(afterAccept, "questions.0.knowledgePoints.0.id")).isEqualTo(knowledgePointId);
+		assertThat(JsonProbe.intVal(afterAccept, "questions.0.version")).isEqualTo(2);
+
+		String secondJob = createAnswerQualityAnalysis(questionId);
+		String secondFinished = waitForTerminal(JsonProbe.str(secondJob, "id"));
+		String secondItemId = JsonProbe.str(secondFinished, "items.0.id");
+		ResponseEntity<String> stale = restTemplate.exchange(url("/ai-job-items/" + secondItemId + "/accept"),
+			HttpMethod.POST, TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", "1"), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		String rejected = restTemplate.exchange(url("/ai-job-items/" + secondItemId + "/reject"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		assertThat(JsonProbe.str(rejected, "status")).isEqualTo("REJECTED");
+		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class)
+			.getBody(), "questions.0.referenceAnswer")).isEqualTo("编辑后的参考答案");
 	}
 
 	@Test

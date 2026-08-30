@@ -62,8 +62,24 @@ export async function createQuestionClassification(questionId: string): Promise<
   return res.data
 }
 
-export async function listAiJobsByQuestion(questionId: string): Promise<AiJob[]> {
-  const res = await apiClient.get<AiJob[]>(`/interview-questions/${questionId}/ai-jobs`)
+export async function createAnswerQualityAnalysis(questionId: string): Promise<AiJob> {
+  const res = await apiClient.post<AiJob>(
+    `/interview-questions/${questionId}/ai-answer-analysis`,
+    {},
+    { headers: idem() },
+  )
+  return res.data
+}
+
+export type QuestionAiJobType = 'QUESTION_CLASSIFICATION' | 'ANSWER_QUALITY_ANALYSIS'
+
+export async function listAiJobsByQuestion(
+  questionId: string,
+  jobType: QuestionAiJobType,
+): Promise<AiJob[]> {
+  const res = await apiClient.get<AiJob[]>(`/interview-questions/${questionId}/ai-jobs`, {
+    params: { jobType },
+  })
   return res.data
 }
 

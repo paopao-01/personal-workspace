@@ -32,7 +32,7 @@ interface Props {
 }
 
 export function QuestionClassificationSection({ question, disabled, onChanged }: Props) {
-  const historyQuery = useAiJobsByQuestion(question.id)
+  const historyQuery = useAiJobsByQuestion(question.id, 'QUESTION_CLASSIFICATION')
   const create = useCreateQuestionClassification()
   const accept = useAcceptAiJobItem()
   const reject = useRejectAiJobItem()

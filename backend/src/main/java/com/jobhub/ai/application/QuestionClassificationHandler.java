@@ -52,7 +52,8 @@ public class QuestionClassificationHandler implements AiTaskHandler {
 			payload.normalizedName() == null || payload.normalizedName().isBlank()
 				? payload.type() : payload.normalizedName().trim(),
 			null,
-			payload.rationale() == null ? null : payload.rationale().trim()));
+			payload.rationale() == null ? null : payload.rationale().trim(),
+			null, null, null, null));
 	}
 
 	private boolean isCategory(String value) {

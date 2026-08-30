@@ -3,6 +3,7 @@ import {
   acceptAiJobItem,
   activateAiProvider,
   cancelAiJob,
+  createAnswerQualityAnalysis,
   createAiJob,
   createQuestionClassification,
   createAiProvider,
@@ -20,6 +21,7 @@ import {
   type AiProvider,
   type AiProviderTestResult,
   type AiProviderUpsertRequest,
+  type QuestionAiJobType,
 } from '@/api/ai/aiApi'
 
 export function useAiProviders() {
@@ -49,10 +51,10 @@ export function useSingleAiJob(aiJobId: string | undefined) {
   })
 }
 
-export function useAiJobsByQuestion(questionId: string | undefined) {
+export function useAiJobsByQuestion(questionId: string | undefined, jobType: QuestionAiJobType) {
   return useQuery<AiJob[]>({
-    queryKey: ['ai-jobs', 'question', questionId],
-    queryFn: () => listAiJobsByQuestion(questionId!),
+    queryKey: ['ai-jobs', 'question', questionId, jobType],
+    queryFn: () => listAiJobsByQuestion(questionId!, jobType),
     enabled: Boolean(questionId),
   })
 }
@@ -137,6 +139,18 @@ export function useCreateQuestionClassification() {
     mutationFn: createQuestionClassification,
     onSuccess: (job) => {
       queryClient.invalidateQueries({ queryKey: ['ai-jobs', 'question', job.objectId] })
+    },
+  })
+}
+
+export function useCreateAnswerQualityAnalysis() {
+  const queryClient = useQueryClient()
+  return useMutation<AiJob, Error, string>({
+    mutationFn: createAnswerQualityAnalysis,
+    onSuccess: (job) => {
+      queryClient.invalidateQueries({
+        queryKey: ['ai-jobs', 'question', job.objectId, 'ANSWER_QUALITY_ANALYSIS'],
+      })
     },
   })
 }
