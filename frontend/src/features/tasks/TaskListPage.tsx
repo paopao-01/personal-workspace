@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { isApiError, isNetworkError } from '@/api/errors'
 import { useCreateTask, useTransitionTask, useUpdateTask } from '@/api/tasks/useTaskMutations'
 import { useTasks } from '@/api/tasks/useTaskQueries'
+import { useKnowledgePoints } from '@/api/reviews/useReviewQueries'
 import type { LearningTask, TaskPriority, TaskSourceType, TaskStatus } from '@/api/tasks/taskApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
@@ -31,7 +33,15 @@ export function TaskListPage() {
 	const [sourceType, setSourceType] = useState<TaskSourceType | ''>('')
   const [dueBefore, setDueBefore] = useState('')
   const [jobId, setJobId] = useState('')
+  const [interviewId, setInterviewId] = useState('')
+  const [knowledgePointId, setKnowledgePointId] = useState('')
   const [title, setTitle] = useState('')
+  const [type, setType] = useState('')
+  const [estimatedMinutes, setEstimatedMinutes] = useState('')
+  const [learningGoal, setLearningGoal] = useState('')
+  const [outputUrl, setOutputUrl] = useState('')
+  const [selectedKnowledgePointIds, setSelectedKnowledgePointIds] = useState<string[]>([])
+  const [relatedQuestionIds, setRelatedQuestionIds] = useState('')
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('')
   const [verificationMethod, setVerificationMethod] = useState('')
   const [priority, setPriority] = useState<TaskPriority>('MEDIUM')
@@ -39,7 +49,8 @@ export function TaskListPage() {
   const [relatedJobIds, setRelatedJobIds] = useState('')
   const [verificationDrafts, setVerificationDrafts] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
-	const tasksQuery = useTasks({ page: 1, pageSize: 50, status: status || undefined, sourceType: sourceType || undefined, dueBefore: dueBefore || undefined, jobId: jobId || undefined })
+	const tasksQuery = useTasks({ page: 1, pageSize: 50, status: status || undefined, sourceType: sourceType || undefined, dueBefore: dueBefore || undefined, jobId: jobId || undefined, interviewId: interviewId || undefined, knowledgePointId: knowledgePointId || undefined })
+	const knowledgePointsQuery = useKnowledgePoints('')
   const createTask = useCreateTask()
   const transitionTask = useTransitionTask()
   const updateTask = useUpdateTask()
@@ -68,18 +79,30 @@ export function TaskListPage() {
     try {
       await createTask.mutateAsync({
         title,
+        type: type.trim() || undefined,
         priority,
+        estimatedMinutes: estimatedMinutes ? Number(estimatedMinutes) : undefined,
         dueAt: dueAt || undefined,
+        learningGoal: learningGoal.trim() || undefined,
         relatedJobIds: relatedJobIds.split(',').map((id) => id.trim()).filter(Boolean),
+        relatedQuestionIds: relatedQuestionIds.split(',').map((id) => id.trim()).filter(Boolean),
+        knowledgePointIds: selectedKnowledgePointIds,
         acceptanceCriteria: acceptanceCriteria.trim() || undefined,
         verificationMethod: verificationMethod.trim() || undefined,
+        outputUrl: outputUrl.trim() || undefined,
       })
       setTitle('')
+      setType('')
+      setEstimatedMinutes('')
+      setLearningGoal('')
       setAcceptanceCriteria('')
       setVerificationMethod('')
+      setOutputUrl('')
       setPriority('MEDIUM')
       setDueAt('')
       setRelatedJobIds('')
+      setRelatedQuestionIds('')
+      setSelectedKnowledgePointIds([])
       pushToast('学习任务已创建')
     } catch (caught) {
       reportError(caught as Error)
@@ -138,6 +161,10 @@ export function TaskListPage() {
               />
             </Field>
             <div className="form-row">
+              <Field label="任务类型"><Input value={type} onChange={(event) => setType(event.target.value)} maxLength={100} placeholder="如：知识点巩固" /></Field>
+              <Field label="预计耗时（分钟）"><Input type="number" min={1} value={estimatedMinutes} onChange={(event) => setEstimatedMinutes(event.target.value)} /></Field>
+            </div>
+            <div className="form-row">
               <Field label="优先级">
                 <Select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>
                   <option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="URGENT">紧急</option>
@@ -149,7 +176,18 @@ export function TaskListPage() {
               <Field label="关联岗位 ID" hint="多个 ID 用逗号分隔">
                 <Input value={relatedJobIds} onChange={(event) => setRelatedJobIds(event.target.value)} maxLength={5000} />
               </Field>
+              <Field label="关联面试问题 ID" hint="多个 ID 用逗号分隔">
+                <Input value={relatedQuestionIds} onChange={(event) => setRelatedQuestionIds(event.target.value)} maxLength={5000} />
+              </Field>
             </div>
+            <Field label="关联知识点">
+              {knowledgePointsQuery.data?.length ? (
+                <div className="evidence-picker" role="group" aria-label="关联知识点">
+                  {knowledgePointsQuery.data.map((point) => <label key={point.id} className="evidence-picker-item"><input type="checkbox" checked={selectedKnowledgePointIds.includes(point.id)} onChange={() => setSelectedKnowledgePointIds((prev) => prev.includes(point.id) ? prev.filter((id) => id !== point.id) : [...prev, point.id])} />{point.name}</label>)}
+                </div>
+              ) : <span className="form-hint">暂无知识点，可从复盘问题中创建。</span>}
+            </Field>
+            <Field label="学习目标"><Textarea rows={3} value={learningGoal} onChange={(event) => setLearningGoal(event.target.value)} maxLength={5000} /></Field>
             <div className="form-row">
               <Field label="验收标准">
                 <Textarea
@@ -159,6 +197,7 @@ export function TaskListPage() {
                   maxLength={5000}
                 />
               </Field>
+              <Field label="产出物链接"><Input value={outputUrl} onChange={(event) => setOutputUrl(event.target.value)} maxLength={2000} /></Field>
               <Field label="验证方式">
                 <Textarea
                   value={verificationMethod}
@@ -201,6 +240,11 @@ export function TaskListPage() {
           </div>
           <Input type="datetime-local" value={dueBefore} onChange={(event) => setDueBefore(event.target.value)} aria-label="截止时间筛选" />
           <Input value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="关联岗位 ID" aria-label="关联岗位筛选" />
+          <Input value={interviewId} onChange={(event) => setInterviewId(event.target.value)} placeholder="关联面试 ID" aria-label="关联面试筛选" />
+          <Select value={knowledgePointId} onChange={(event) => setKnowledgePointId(event.target.value)} aria-label="按知识点筛选">
+            <option value="">全部知识点</option>
+            {(knowledgePointsQuery.data ?? []).map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
+          </Select>
           </div>
         </div>
         <div className="card-body">
@@ -211,7 +255,7 @@ export function TaskListPage() {
               {tasks.map((task) => (
                 <div className="requirement-row" key={task.id}>
                   <div className="requirement-main">
-                    <span className="requirement-raw">{task.title}</span>
+                    <Link className="requirement-raw" to={`/tasks/${task.id}`}>{task.title}</Link>
                     <div className="requirement-meta">
                       <Badge variant={taskStatusVariant[task.status]}>
                         {taskStatusLabel[task.status]}

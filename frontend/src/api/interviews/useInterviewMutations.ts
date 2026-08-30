@@ -7,6 +7,7 @@ import {
   markInterviewNoShow,
   rescheduleInterview,
   retryReminder,
+  updateChecklistItem,
   type Interview,
   type InterviewCompleteRequest,
   type InterviewCreateRequest,
@@ -27,6 +28,9 @@ function invalidateInterviewViews(
   queryClient.invalidateQueries({ queryKey: ['interviews', 'list'] })
   queryClient.invalidateQueries({
     queryKey: ['interviews', interview.id, 'reminders'],
+  })
+  queryClient.invalidateQueries({
+    queryKey: ['interviews', interview.id, 'preparation'],
   })
   queryClient.invalidateQueries({
     queryKey: ['applications', interview.applicationId],
@@ -89,6 +93,15 @@ export function useRetryReminder(interviewId: string | undefined) {
         queryKey: ['interviews', interviewId, 'reminders'],
       })
     },
+  })
+}
+
+export function useUpdateChecklistItem() {
+  const queryClient = useQueryClient()
+  return useMutation<Interview, Error, { interviewId: string; itemId: string; version: number; completed: boolean }>({
+    mutationFn: ({ interviewId, itemId, version, completed }) =>
+      updateChecklistItem(interviewId, itemId, version, { completed }),
+    onSuccess: (interview) => invalidateInterviewViews(queryClient, interview),
   })
 }
 

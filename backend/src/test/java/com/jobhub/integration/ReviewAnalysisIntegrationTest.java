@@ -79,6 +79,12 @@ class ReviewAnalysisIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.lng(byJob, "reviewCount")).isEqualTo(1L);
 		assertThat(JsonProbe.lng(byJob, "questionStats.totalCount")).isEqualTo(2L);
 		assertThat(JsonProbe.arraySize(byJob, "knowledgePointStats")).isEqualTo(2);
+
+		String compared = restTemplate.getForEntity(url("/reviews/analysis?from=2026-09-15&compareFrom=2026-09-01&compareTo=2026-09-14"), String.class).getBody();
+		assertThat(JsonProbe.str(compared, "weakPointComparison.compareTimeRange.from")).isEqualTo("2026-09-01");
+		assertThat(JsonProbe.str(compared, "weakPointComparison.compareTimeRange.to")).isEqualTo("2026-09-14");
+		assertThat(compared).contains("项目表达");
+		assertThat(JsonProbe.arraySize(compared, "weakPointComparison.items")).isGreaterThanOrEqualTo(1);
 	}
 
 	@Test

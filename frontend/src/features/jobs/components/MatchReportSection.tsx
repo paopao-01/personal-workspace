@@ -1,16 +1,18 @@
 import { isApiError, isNetworkError } from '@/api/errors'
 import {
   useGenerateMatchReport,
+  useMatchReportHistory,
   useLatestMatchReport,
 } from '@/api/jobs/useMatchReportQueries'
 import type { MatchReport } from '@/api/jobs/matchReportApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { Select } from '@/components/ui/Form'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDateTime, gapStatusLabel } from '@/features/jobs/statusLabels'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 const suggestionLabels: Record<string, string> = {
   STRONG_MATCH: '匹配度高',
@@ -34,6 +36,8 @@ function scoreLabel(numerator: number, denominator: number): string {
 export function MatchReportSection({ jobId }: { jobId: string }) {
   const reportQuery = useLatestMatchReport(jobId)
   const generateMutation = useGenerateMatchReport()
+  const historyQuery = useMatchReportHistory(jobId)
+  const [compareId, setCompareId] = useState('')
   const report: MatchReport | undefined = useMemo(() => reportQuery.data, [reportQuery.data])
 
   const reportError = (caught: Error) => {
@@ -136,6 +140,33 @@ export function MatchReportSection({ jobId }: { jobId: string }) {
                 </div>
               ))}
             </div>
+            {historyQuery.data && historyQuery.data.length > 1 ? (
+              <div className="plain-block" style={{ marginTop: 12 }}>
+                <h3>历史快照与对比</h3>
+                <Select aria-label="选择匹配报告快照" value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+                  <option value="">选择一个历史快照进行对比</option>
+                  {historyQuery.data.filter((item) => item.id !== report.id).map((item) => (
+                    <option key={item.id} value={item.id}>{formatDateTime(item.generatedAt)} · {suggestionLabels[item.suggestion.type] ?? item.suggestion.type}</option>
+                  ))}
+                </Select>
+                {compareId ? (() => {
+                  const previous = historyQuery.data.find((item) => item.id === compareId)
+                  if (!previous) return null
+                  const ids = new Set([...previous.requirements.map((item) => item.requirementId), ...report.requirements.map((item) => item.requirementId)])
+                  const changes = [...ids].map((id) => {
+                    const before = previous.requirements.find((item) => item.requirementId === id)
+                    const after = report.requirements.find((item) => item.requirementId === id)
+                    return { id, name: after?.normalizedName ?? before?.normalizedName ?? '未命名要求', before: before?.status ?? '—', after: after?.status ?? '—' }
+                  }).filter((item) => item.before !== item.after)
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <p className="muted">{formatDateTime(previous.generatedAt)} → {formatDateTime(report.generatedAt)}，建议：{suggestionLabels[previous.suggestion.type] ?? previous.suggestion.type} → {suggestionLabels[report.suggestion.type] ?? report.suggestion.type}</p>
+                      {changes.length === 0 ? <p className="muted">要求状态没有变化。</p> : changes.map((change) => <p key={change.id} style={{ margin: '4px 0' }}>{change.name}：{gapStatusLabel[change.before as keyof typeof gapStatusLabel] ?? change.before} → {gapStatusLabel[change.after as keyof typeof gapStatusLabel] ?? change.after}</p>)}
+                    </div>
+                  )
+                })() : null}
+              </div>
+            ) : null}
           </>
         )}
       </div>

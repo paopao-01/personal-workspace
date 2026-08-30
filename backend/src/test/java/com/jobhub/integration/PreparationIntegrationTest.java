@@ -67,6 +67,34 @@ class PreparationIntegrationTest extends AbstractIntegrationTest {
 		assertThat(body).doesNotContain("能力分");
 	}
 
+	@Test
+	void P1_checklistCanBeCompletedWithInterviewVersionAndRejectsStaleUpdate() {
+		String jobId = createJobWithOneConfirmedRequirement();
+		String applicationId = createInterviewingApplication(jobId);
+		String interviewId = createInterview(applicationId, "技术一面", "2026-09-10T10:00:00Z");
+		String preparation = restTemplate.getForEntity(url("/interviews/" + interviewId + "/preparation"), String.class).getBody();
+		String itemId = JsonProbe.arrStr(preparation, "checklist", 0, "id");
+		long version = JsonProbe.lng(preparation, "interview.version");
+
+		ResponseEntity<String> completed = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/checklist/" + itemId), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"completed\":true}", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(version)), String.class);
+		assertThat(completed.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.lng(completed.getBody(), "version")).isEqualTo(version + 1);
+
+		String after = restTemplate.getForEntity(url("/interviews/" + interviewId + "/preparation"), String.class).getBody();
+		assertThat(JsonProbe.str(after, "checklist.0.completed")).isEqualTo("true");
+
+		ResponseEntity<String> stale = restTemplate.exchange(
+			url("/interviews/" + interviewId + "/checklist/" + itemId), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"completed\":false}", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(version)), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		String stillCompleted = restTemplate.getForEntity(url("/interviews/" + interviewId + "/preparation"), String.class).getBody();
+		assertThat(JsonProbe.str(stillCompleted, "checklist.0.completed")).isEqualTo("true");
+	}
+
 	private String createJobWithOneConfirmedRequirement() {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("准备包科技", "Java 后端工程师")), String.class).getBody(), "id");

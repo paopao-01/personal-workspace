@@ -40,6 +40,13 @@ public class InterviewService {
     public List<InterviewListItem> listItems(String from,String to,InterviewScheduleStatus scheduleStatus,ApplicationStatus applicationStatus,InterviewMode mode){return interviewMapper.selectListItems(from==null?"0000-01-01T00:00:00Z":normalizeInstant(from),to==null?"9999-12-31T23:59:59Z":normalizeInstant(to),scheduleStatus,applicationStatus,mode);}
     public List<Interview> byApplication(String appId){return interviewMapper.selectByApplication(appId);}
     @Transactional public Interview update(String id,long expected,InterviewUpdateRequest v){Interview i=get(id);i.updateMeta(v.roundName(),v.mode(),v.meetingUrlOrAddress(),v.contact(),v.notes(),v.result(),time.now());int n=interviewMapper.updateMeta(i,expected);VersionCheck.requireAffected(n,i.getVersion());VersionCheck.requireAffected(interviewMapper.bumpVersion(id,expected),i.getVersion());if(v.preparationChecklist()!=null){checklistMapper.deleteByInterview(id);saveChecklist(id,v.preparationChecklist(),time.now());}return get(id);}
+    @Transactional public Interview updateChecklistItem(String interviewId, long expectedVersion, String itemId, boolean completed){
+        Interview interview=get(interviewId);
+        VersionCheck.requireFound(checklistMapper.selectById(itemId, interviewId), "ChecklistItem", itemId);
+        checklistMapper.updateCompleted(itemId, interviewId, completed, time.now());
+        VersionCheck.requireAffected(interviewMapper.bumpVersion(interviewId, expectedVersion), interview.getVersion());
+        return get(interviewId);
+    }
     @Transactional public Interview complete(String id,long expected,InterviewResult result){Interview i=get(id);i.complete(result,time.now());persistState(i,expected);reminderMapper.cancelOpen(id,time.now());return get(id);}
     @Transactional public Interview cancel(String id,long expected){Interview i=get(id);i.cancel(time.now());persistState(i,expected);reminderMapper.cancelOpen(id,time.now());return get(id);}
     @Transactional public Interview noShow(String id,long expected){Interview i=get(id);i.noShow(time.now());persistState(i,expected);reminderMapper.cancelOpen(id,time.now());return get(id);}
