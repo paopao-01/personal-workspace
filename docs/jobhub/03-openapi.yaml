@@ -885,7 +885,7 @@ paths:
   /ai-jobs:
     post:
       tags: [Ai]
-      summary: 创建 AI 异步任务（当前支持 JD_EXTRACTION）
+      summary: 创建 AI 异步任务（JD_EXTRACTION 或 RESUME_DRAFT）
       description: |
         任务入队后由后台执行器调用激活供应商完成；重新生成即再创建新任务，
         既有任务的候选条目与确认状态不受影响（PRD 9.2：重新生成不得覆盖已确认内容）。
@@ -1856,13 +1856,14 @@ components:
       type: object
       required: [jobType, objectId]
       properties:
-        jobType: { type: string, enum: [JD_EXTRACTION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT] }
         objectId: { type: string, format: uuid }
+        sourceText: { type: string, nullable: true, maxLength: 30000, description: RESUME_DRAFT 必填，用户已确认的简历原文 }
     AiItemPayload:
       type: object
       required: [type, rawText]
       properties:
-        type: { type: string, enum: [MUST, BONUS] }
+        type: { type: string, enum: [MUST, BONUS, DRAFT] }
         rawText: { type: string, maxLength: 2000 }
         normalizedName: { type: string, maxLength: 200 }
         proficiencyText: { type: string, nullable: true, maxLength: 500 }
@@ -1885,7 +1886,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }

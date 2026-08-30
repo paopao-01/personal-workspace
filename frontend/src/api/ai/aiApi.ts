@@ -8,7 +8,7 @@ export type AiProviderTestResult = Schemas['AiProviderTestResult']
 export type AiJob = Schemas['AiJob']
 export type AiJobItem = Schemas['AiJobItem']
 export type AiItemPayload = Schemas['AiItemPayload']
-export type AiJobType = 'JD_EXTRACTION'
+export type AiJobType = 'JD_EXTRACTION' | 'RESUME_DRAFT'
 
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
@@ -43,8 +43,8 @@ export async function testAiProvider(providerId: string): Promise<AiProviderTest
   return res.data
 }
 
-export async function createAiJob(jobType: AiJobType, objectId: string): Promise<AiJob> {
-  const res = await apiClient.post<AiJob>('/ai-jobs', { jobType, objectId }, { headers: idem() })
+export async function createAiJob(jobType: AiJobType, objectId: string, sourceText?: string): Promise<AiJob> {
+  const res = await apiClient.post<AiJob>('/ai-jobs', { jobType, objectId, sourceText }, { headers: idem() })
   return res.data
 }
 

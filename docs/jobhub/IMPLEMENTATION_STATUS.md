@@ -9,7 +9,7 @@
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
 - 当前任务：下一窗口开发简历定制草稿（PRD 9.4，基于本窗口完成的 AI 基础设施；用户已明确同意接入 AI 并要求供应商可切换——已满足）。后续候选：复杂恢复报告/附件证据库（依赖附件体系）。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-29。
+- 最后更新：2026-08-30。
 
 ## 2. 已完成内容
 
@@ -91,6 +91,20 @@
   - 简历定制草稿（PRD 9.4）为下一窗口任务，基于本切片基础设施新增 RESUME_DRAFT 处理器即可。
   - ai_provider 无删除端点（可编辑/停用由激活切换覆盖，删除按需补契约）。
   - AI 结果确认目前仅需求类条目；「回答质量分析、任务建议」等场景按需扩展 handler。
+
+### 窗口 2026-08-30-01
+
+- 目标：完成 P1 简历定制草稿（PRD 9.4）并验证后合并主分支。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 增加 `RESUME_DRAFT` 与 `sourceText`；AI 任务历史查询改为同时返回 JD 提取和简历草稿。
+  - Flyway V9 扩展 `ai_job.job_type`，重建依赖外键后的 `ai_job_item`，保留既有数据与排序字段。
+  - 新增简历草稿 handler：输入快照包含用户确认简历与岗位 JD；只生成一个可编辑 DRAFT，不允许新增未经确认的事实。
+  - 岗位详情页新增简历定制区，支持提交、轮询查看、编辑候选文本和复制；草稿不会进入岗位要求采纳流程，也不会覆盖原简历。
+  - 新增 `ResumeDraftHandlerTest`，覆盖 DRAFT 输出和事实约束提示词。
+- 验证结果：`mvn clean test` 通过（77 tests, 0 failures, 0 errors）；前端 `npm run typecheck`、`npm run lint`、`npm run build` 通过。
+- 修改文件：OpenAPI、数据库设计、V9 迁移、AI 后端服务/处理器/API/Mapper、前端 AI API/hooks/岗位详情与草稿区、单元测试。
+- 下一步：复杂恢复报告与完整附件证据库；多实例提醒协调与更完整失败重试策略；AI 问题分类/回答质量分析/任务建议。
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
   - 新增：`backend/src/main/resources/db/migration/V7__create_ai_infrastructure.sql`、`V8__add_ai_job_item_sort_order.sql`、`backend/src/main/java/com/jobhub/ai/**`（domain 8 + infrastructure 3 + application 8 + api 7 个文件）、`backend/src/test/java/com/jobhub/integration/AiIntegrationTest.java`、`frontend/src/api/ai/{aiApi,useAiQueries}.ts`、`frontend/src/features/settings/AiProviderSection.tsx`、`frontend/src/features/jobs/AiExtractionSection.tsx`、`frontend/e2e/{fake-ai-server.mjs,p1-ai-extraction.spec.ts}`。

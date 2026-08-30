@@ -5,5 +5,6 @@ import jakarta.validation.constraints.NotNull;
 
 public record AiJobCreateRequest(
 	@NotNull AiJobType jobType,
-	@NotNull String objectId
+	@NotNull String objectId,
+	String sourceText
 ) { }
