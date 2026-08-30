@@ -1,5 +1,31 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-08-30-10
+
+- 目标：承接上一窗口结果完成发布前回归，并修复全量浏览器回归中暴露的测试契约漂移；验证后合并到 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - 修正 AI 供应商删除 E2E：创建异步 AI 任务后等待其进入终态，再执行供应商切换，避免 SQLite 并发写入竞争造成偶发误报。
+  - 修正数据导入 E2E：重映射 `skill_alias.normalized_alias`，避免系统技能种子带来的真实唯一约束冲突。
+  - 修正技能画像 E2E：夹具创建了关联证据，断言从“未评估/无证据”同步为 `VALID/证据有效`，仍验证自评更新不覆盖证据维度。
+- 修改文件：
+  - `frontend/e2e/p1-ai-provider-delete.spec.ts`
+  - `frontend/e2e/p1-data-import.spec.ts`
+  - `frontend/e2e/p1-skills-profile.spec.ts`
+  - 本文件。
+- 已运行验证：
+  - `cd backend && mvn clean test`：90 tests，0 failures，0 errors；Flyway V1→V17 迁移成功。首次沙箱执行受 Windows 构建目录权限阻断，提升权限重跑通过。
+  - `cd frontend && npm run gen-types`：通过。
+  - `cd frontend && npm run typecheck`：通过。
+  - `cd frontend && npm run lint`：通过。
+  - `cd frontend && npm run build`：通过（Vite 仅输出既有 chunk size warning）。
+  - `cd frontend && npm run e2e -- e2e/p1-ai-provider-delete.spec.ts e2e/p1-data-import.spec.ts e2e/p1-skills-profile.spec.ts --reporter=list`：3 passed。
+  - `cd frontend && npm run e2e -- --reporter=list`：26 passed，0 failed。
+- 验证结果：发布前后端、OpenAPI 生成、静态检查和浏览器回归全部通过。
+- 已知问题：Playwright 仍输出既有 React Router v7 future flag 与 Node `NO_COLOR` warning，不影响断言；Git 可能输出用户级 ignore 文件权限 warning，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 P2/V0.3 产品切片；当前没有足够明确的 P2 OpenAPI 与验收契约，不自行扩展产品范围。
+- 不要重复做：不要修改 V1~V17；不要把测试夹具行为当作生产数据；不要放宽 AI 候选需人工采纳、供应商删除保护或附件引用安全规则。
+
 ### 窗口 2026-08-30-09
 
 - 目标：补齐 P0 审计遗留项并完成回归。

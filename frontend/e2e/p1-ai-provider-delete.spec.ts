@@ -58,6 +58,15 @@ test('P1 AI provider deletion requires an inactive unreferenced provider', async
     data: { jobType: 'JD_EXTRACTION', objectId: job.id },
   })
   expect(aiJobResponse.ok()).toBe(true)
+  const aiJob = (await aiJobResponse.json()) as { id: string; status: string }
+  for (let attempt = 0; attempt < 50 && (aiJob.status === 'QUEUED' || aiJob.status === 'RUNNING'); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const statusResponse = await request.get(`/api/ai-jobs/${aiJob.id}`)
+    expect(statusResponse.ok()).toBe(true)
+    aiJob.status = ((await statusResponse.json()) as { status: string }).status
+  }
+  expect(['SUCCEEDED', 'FAILED', 'CANCELED']).toContain(aiJob.status)
+
   const reactivateOriginal = await request.post(`/api/ai-providers/${active.id}/activate`, {
     headers: { 'Idempotency-Key': `e2e-provider-delete-reactivate-${crypto.randomUUID()}` },
   })
