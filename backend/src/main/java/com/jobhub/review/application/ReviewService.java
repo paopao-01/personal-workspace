@@ -64,11 +64,12 @@ public class ReviewService {
 		if (expectedVersion == null) {
 			throw new BusinessRuleException("If-Match-Version is required when updating an existing review");
 		}
-		if (existing.getStatus() == ReviewStatus.COMPLETED) {
-			throw new BusinessRuleException("Completed review must be reopened before saving a draft");
-		}
+		existing = hydrate(existing);
 		existing.updateDraft(result, Boolean.TRUE.equals(noQuestionsRecorded), blankToNull(overallFeeling),
 			blankToNull(interviewerFocus), blankToNull(jobInterest), blankToNull(projectExpressionRisk), now);
+		if (existing.getStatus() == ReviewStatus.COMPLETED) {
+			validateCompletionRequirements(existing);
+		}
 		VersionCheck.requireAffected(reviewMapper.updateDraft(existing, expectedVersion), existing.getVersion());
 		return hydrate(requireReview(reviewMapper.selectById(existing.getId()), "InterviewReview", existing.getId()));
 	}
@@ -79,16 +80,7 @@ public class ReviewService {
 		if (review.getStatus() != ReviewStatus.DRAFT) {
 			throw new BusinessRuleException("Only DRAFT review can be completed");
 		}
-		if (review.getInterviewResult() == null) {
-			throw new BusinessRuleException("Interview result is required before completing review");
-		}
-		if (!review.isNoQuestionsRecorded() && review.getQuestions().isEmpty()) {
-			throw new BusinessRuleException("Add at least one question or mark no questions recorded before completing review");
-		}
-		boolean hasQuestionWithoutAnswerStatus = review.getQuestions().stream().anyMatch(q -> q.getAnswerStatus() == null);
-		if (hasQuestionWithoutAnswerStatus) {
-			throw new BusinessRuleException("Every question must have answer status before completing review");
-		}
+		validateCompletionRequirements(review);
 		VersionCheck.requireAffected(reviewMapper.complete(reviewId, expectedVersion, time.now()), review.getVersion());
 		return hydrate(requireReview(reviewMapper.selectById(reviewId), "InterviewReview", reviewId));
 	}
@@ -112,9 +104,6 @@ public class ReviewService {
 	public InterviewQuestion addQuestion(String reviewId, String content, AnswerStatus answerStatus, String type,
 			List<String> knowledgePointIds) {
 		InterviewReview review = requireReview(reviewMapper.selectById(reviewId), "InterviewReview", reviewId);
-		if (review.getStatus() == ReviewStatus.COMPLETED) {
-			throw new BusinessRuleException("Completed review must be reopened before adding questions");
-		}
 		String now = time.now();
 		InterviewQuestion question = InterviewQuestion.create(ids.newId(), reviewId, content.trim(), answerStatus,
 			blankToNull(type), now);
@@ -179,9 +168,15 @@ public class ReviewService {
 	@Transactional
 	public void deleteQuestion(String questionId, long expectedVersion) {
 		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);
+		InterviewReview review = hydrate(requireReview(reviewMapper.selectById(question.getReviewId()), "InterviewReview", question.getReviewId()));
+		if (review.getStatus() == ReviewStatus.COMPLETED && !review.isNoQuestionsRecorded()
+				&& review.getQuestions().size() == 1) {
+			throw new BusinessRuleException("Reopen review or mark no questions recorded before deleting its last question");
+		}
 		long knowledgePointCount = questionMapper.selectKnowledgePoints(questionId).size();
 		String now = time.now();
 		VersionCheck.requireAffected(questionMapper.softDelete(questionId, expectedVersion, now), question.getVersion());
+		reviewMapper.bumpVersion(question.getReviewId(), now);
 		trashService.recordDeletion(TrashService.TYPE_INTERVIEW_QUESTION, questionId, question.getContent(),
 			List.of(knowledgePointCount + " 个知识点关联"), now);
 	}
@@ -310,6 +305,18 @@ public class ReviewService {
 			.toList();
 		review.setQuestions(questions);
 		return review;
+	}
+
+	private void validateCompletionRequirements(InterviewReview review) {
+		if (review.getInterviewResult() == null) {
+			throw new BusinessRuleException("Interview result is required before completing review");
+		}
+		if (!review.isNoQuestionsRecorded() && review.getQuestions().isEmpty()) {
+			throw new BusinessRuleException("Add at least one question or mark no questions recorded before completing review");
+		}
+		if (review.getQuestions().stream().anyMatch(q -> q.getAnswerStatus() == null)) {
+			throw new BusinessRuleException("Every question must have answer status before completing review");
+		}
 	}
 
 	private InterviewQuestion hydrateQuestion(InterviewQuestion question) {

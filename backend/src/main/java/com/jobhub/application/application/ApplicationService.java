@@ -12,6 +12,7 @@ import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
 import com.jobhub.job.domain.Job;
 import com.jobhub.job.infrastructure.JobMapper;
+import com.jobhub.interview.infrastructure.InterviewMapper;
 import com.jobhub.datamanagement.application.TrashService;
 import com.jobhub.common.error.BusinessRuleException;
 import org.springframework.stereotype.Service;
@@ -32,17 +33,19 @@ public class ApplicationService {
 	private final StatusLogMapper statusLogMapper;
 	private final AuditLogMapper auditLogMapper;
 	private final JobMapper jobMapper;
+	private final InterviewMapper interviewMapper;
 	private final IdGenerator idGenerator;
 	private final UtcTime utcTime;
 	private final TrashService trashService;
 
 	public ApplicationService(ApplicationMapper applicationMapper, StatusLogMapper statusLogMapper,
 							 AuditLogMapper auditLogMapper,
-								 JobMapper jobMapper, IdGenerator idGenerator, UtcTime utcTime, TrashService trashService) {
+								 JobMapper jobMapper, InterviewMapper interviewMapper, IdGenerator idGenerator, UtcTime utcTime, TrashService trashService) {
 		this.applicationMapper = applicationMapper;
 		this.statusLogMapper = statusLogMapper;
 		this.auditLogMapper = auditLogMapper;
 		this.jobMapper = jobMapper;
+		this.interviewMapper = interviewMapper;
 		this.idGenerator = idGenerator;
 		this.utcTime = utcTime;
 		this.trashService = trashService;
@@ -88,7 +91,6 @@ public class ApplicationService {
 		VersionCheck.requireFound(app, "Application", id);
 		Job job = jobMapper.selectById(app.getJobId());  // 可为 null（岗位被删除时）
 		List<StatusLogEntry> history = statusLogMapper.selectByApplication(id);
-		// interviews 本切片为空（面试模块未实现），由 api 层 ApplicationDetailResponse 填充空数组
 		return new ApplicationDetail(app, job, history);
 	}
 
@@ -125,7 +127,12 @@ public class ApplicationService {
 		VersionCheck.requireFound(app, "Application", id);
 
 		ApplicationStatus fromStatus = app.getStatus();
-		app.transition(cmd.targetStatus(), cmd.allowOfferWithoutCompletedInterview(), utcTime.now());
+		boolean completedInterviewExists = cmd.targetStatus() == ApplicationStatus.OFFER
+				&& app.getStatus() == ApplicationStatus.INTERVIEWING
+				&& interviewMapper.countCompletedByApplication(app.getId()) > 0;
+		boolean explicitOfferException = cmd.allowOfferWithoutCompletedInterview()
+				&& cmd.reason() != null && !cmd.reason().isBlank();
+		app.transition(cmd.targetStatus(), completedInterviewExists || explicitOfferException, utcTime.now());
 
 		int affected = applicationMapper.updateStatusAndPreviousByIdAndVersion(app, expectedVersion);
 		VersionCheck.requireAffected(affected, app.getVersion());

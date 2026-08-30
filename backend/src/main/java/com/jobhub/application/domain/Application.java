@@ -19,7 +19,7 @@ import java.util.Set;
  *   APPLIED / RESUME_PASSED / INTERVIEWING --reject--> REJECTED
  *
  * ON_HOLD 必须保存 previousActiveStatus，resume 时只能回到该状态；缺失则非法转换。
- * 进入 OFFER 前至少有一场 COMPLETED 面试，或 allowOfferWithoutCompletedInterview=true（本切片无面试模块，仅支持逃生舱）。
+ * 进入 OFFER 前至少有一场 COMPLETED 面试，或经过人工确认的例外。
  *
  * 每次状态转换由 ApplicationService 写入 application_status_log（不可覆盖历史）。
  */
@@ -109,7 +109,7 @@ public class Application {
 	 * @param target                            目标状态（transition 端点 targetStatus 驱动）
 	 * @param allowOfferWithoutCompletedInterview OFFER 逃生舱；本切片无面试模块，进 OFFER 必须为 true
 	 */
-	public Application transition(ApplicationStatus target, boolean allowOfferWithoutCompletedInterview, String now) {
+	public Application transition(ApplicationStatus target, boolean offerPreconditionSatisfied, String now) {
 		ApplicationStatus cur = this.status;
 
 		// ON_HOLD 特殊分支：resume 必须回到保存的 previousActiveStatus
@@ -129,11 +129,11 @@ public class Application {
 			return this;
 		}
 
-		// OFFER 前置：INTERVIEWING -> OFFER 需逃生舱（本切片无 COMPLETED 面试可查）
+		// OFFER 前置：INTERVIEWING -> OFFER 必须已有完成面试或人工确认例外
 		if (target == ApplicationStatus.OFFER && cur == ApplicationStatus.INTERVIEWING) {
-			if (!allowOfferWithoutCompletedInterview) {
+			if (!offerPreconditionSatisfied) {
 				throw new IllegalStateTransitionException(cur.name(), target.name(),
-						"OFFER requires at least one COMPLETED interview or allowOfferWithoutCompletedInterview=true");
+						"OFFER requires at least one COMPLETED interview or an explicit exception reason");
 			}
 		}
 

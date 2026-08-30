@@ -106,7 +106,17 @@ test('P1 review reopen keeps questions and allows continued editing', async ({ p
 
   await page.goto(`/interviews/${interview.id}/review`)
   await expect(page.getByRole('heading', { name: '快速复盘' })).toBeVisible()
-  await expect(page.getByText('复盘已完成。如需补充或修改问题')).toBeVisible()
+  await expect(page.getByText('复盘已完成，可以直接补充或修改')).toBeVisible()
+  await expect(page.locator('dd').filter({ hasText: /^已完成$/ }).last()).toBeVisible()
+
+  // 完成态可直接保存补充内容，并保持 COMPLETED。
+  await fillField(page, '整体感受', '完成后直接补充的感受')
+  const directEditResponse = page.waitForResponse((response) =>
+    response.url().includes(`/api/interviews/${interview.id}/review`) && response.request().method() === 'PUT',
+  )
+  await page.getByRole('button', { name: '保存复盘' }).click()
+  expect((await directEditResponse).ok()).toBe(true)
+  await expect(page.getByText('快速复盘已保存')).toBeVisible()
   await expect(page.locator('dd').filter({ hasText: /^已完成$/ }).last()).toBeVisible()
 
   // 重新打开：状态回草稿，编辑入口恢复
