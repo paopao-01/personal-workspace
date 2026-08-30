@@ -3,14 +3,14 @@ import { isApiError, isNetworkError } from '@/api/errors'
 import {
   useSkillProfiles,
 } from '@/api/skills/useSkillQueries'
-import { useUpdateSelfLevel } from '@/api/skills/useSkillMutations'
+import { useCreateSkill, useUpdateSelfLevel } from '@/api/skills/useSkillMutations'
 import type { SkillProfile } from '@/api/skills/skillApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { Select } from '@/components/ui/Form'
+import { Field, Input, Select } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import {
   evidenceStatusLabel,
@@ -22,7 +22,9 @@ const LEVEL_OPTIONS = [0, 1, 2, 3, 4, 5]
 export function SkillsPage() {
   const skillsQuery = useSkillProfiles()
   const updateSelfLevel = useUpdateSelfLevel()
+  const createSkill = useCreateSkill()
   const [error, setError] = useState<string | null>(null)
+  const [newSkillName, setNewSkillName] = useState('')
   // 每行独立的自评编辑草稿（仅自评维度，不影响证据状态与面试表现）
   const [drafts, setDrafts] = useState<Record<string, string>>({})
 
@@ -60,6 +62,19 @@ export function SkillsPage() {
     }
   }
 
+  const addSkill = async () => {
+    const name = newSkillName.trim()
+    if (!name) return
+    setError(null)
+    try {
+      await createSkill.mutateAsync({ name })
+      setNewSkillName('')
+      pushToast(`已添加技能「${name}」`)
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -76,6 +91,24 @@ export function SkillsPage() {
           <span>{error}</span>
         </div>
       ) : null}
+
+      <section className="card">
+        <div className="card-header">
+          <h2 className="card-title">添加技能</h2>
+        </div>
+        <div className="card-body">
+          <div className="flex-row" style={{ alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 260, flex: 1 }}>
+              <Field label="技能名称" hint="可添加未出现在岗位要求中的技能。">
+                <Input value={newSkillName} onChange={(event) => setNewSkillName(event.target.value)} maxLength={100} />
+              </Field>
+            </div>
+            <Button type="button" variant="primary" disabled={createSkill.isPending || !newSkillName.trim()} onClick={addSkill}>
+              {createSkill.isPending ? '添加中…' : '添加'}
+            </Button>
+          </div>
+        </div>
+      </section>
 
       <section className="card">
         <div className="card-header">
@@ -100,7 +133,7 @@ export function SkillsPage() {
                       <Badge variant={skill.evidenceStatus === 'VALID' ? 'success' : skill.evidenceStatus === 'WEAK' ? 'warning' : 'subtle'}>
                         证据：{evidenceStatusLabel(skill.evidenceStatus)}
                       </Badge>
-                      <Badge variant="subtle">面试表现：未评估</Badge>
+                      <Badge variant="subtle">面试表现：{skill.interviewPerformance ? '已记录' : '未评估'}</Badge>
                     </div>
                   </div>
                   <div className="requirement-actions">

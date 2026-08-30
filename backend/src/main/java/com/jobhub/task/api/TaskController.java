@@ -3,6 +3,7 @@ package com.jobhub.task.api;
 import com.jobhub.task.application.*;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskStatus;
+import com.jobhub.task.domain.TaskSourceType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -21,9 +22,20 @@ public class TaskController {
 
 	@GetMapping("/tasks")
 	public PageTaskResponse list(@RequestParam(required = false) TaskStatus status,
+			@RequestParam(required = false) String knowledgePointId,
+			@RequestParam(required = false) TaskSourceType sourceType,
+			@RequestParam(required = false) String dueAfter,
+			@RequestParam(required = false) String dueBefore,
+			@RequestParam(required = false) String jobId,
+			@RequestParam(required = false) String interviewId,
 			@RequestParam(defaultValue = "1") @Min(1) int page,
 			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize) {
-		return PageTaskResponse.from(service.list(new TaskListQuery(status, page, pageSize)));
+		return PageTaskResponse.from(service.list(new TaskListQuery(status, knowledgePointId, sourceType, dueAfter, dueBefore, jobId, interviewId, page, pageSize)));
+	}
+
+	@GetMapping("/tasks/{id}")
+	public LearningTaskResponse get(@PathVariable String id) {
+		return LearningTaskResponse.from(service.get(id));
 	}
 
 	@PostMapping("/tasks")

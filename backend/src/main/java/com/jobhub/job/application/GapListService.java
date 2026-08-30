@@ -16,8 +16,7 @@ import java.util.Map;
 /**
  * 差距清单服务。仅基于 CONFIRMED 要求生成结论（02-state-machines.md 2.2、AT-02）。
  *
- * P0 本切片简化：因 user_skill/evidence 在本切片尚未录入，所有 CONFIRMED 要求默认 INSUFFICIENT_INFO。
- * 若存在人工修正的 requirement_match（manual_override_reason + match_status），则使用修正值（AT-04）。
+	 * 人工修正优先于规则；否则只依据用户明确填写的自评和关联证据计算，资料不足保持 INSUFFICIENT_INFO。
  */
 @Service
 public class GapListService {
@@ -54,15 +53,30 @@ public class GapListService {
 			RequirementMatch match = byReqId.get(req.getId());
 			GapStatus status;
 			String reason = null;
+			List<GapEvidence> evidence = requirementMapper.selectActiveEvidence(req.getId());
 			if (match != null) {
 				status = match.getMatchStatus();
 				reason = match.getManualOverrideReason();
 			} else {
-				// 无 user_skill 资料时默认 INSUFFICIENT_INFO（AT-01 验收依据）
-				status = GapStatus.INSUFFICIENT_INFO;
+				status = calculate(req.getId());
 			}
-			items.add(new GapItem(req, status, reason));
+			items.add(new GapItem(req, status, evidence, reason));
 		}
 		return items;
+	}
+
+	private GapStatus calculate(String requirementId) {
+		List<RequirementSkillFact> facts = requirementMapper.selectSkillFacts(requirementId);
+		if (facts.isEmpty()) return GapStatus.INSUFFICIENT_INFO;
+		if (facts.stream().anyMatch(fact -> fact.getEvidenceCount() > 0)) {
+			return GapStatus.SATISFIED_WITH_EVIDENCE;
+		}
+		if (facts.stream().anyMatch(fact -> fact.getSelfLevel() != null && fact.getSelfLevel() > 0)) {
+			return GapStatus.SELF_REPORTED_NO_EVIDENCE;
+		}
+		if (facts.stream().allMatch(fact -> fact.getSelfLevel() != null && fact.getSelfLevel() == 0)) {
+			return GapStatus.NOT_MET;
+		}
+		return GapStatus.INSUFFICIENT_INFO;
 	}
 }

@@ -14,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * dashboard 行动识别集成测试（AT-09）。
  *
  * 覆盖：
- *   APPLIED 投递无 nextAction → actionItems 含补充行动提示（priority=2）
- *   INTERVIEWING 投递 nextActionDueAt 早于当前 → 逾期天数显示 + 优先级 1，排在补充行动之前
+ *   APPLIED 投递无 nextAction → actionItems 含补充行动提示（priority=3）
+ *   INTERVIEWING 投递 nextActionDueAt 早于当前 → 逾期天数显示 + 优先级 2，排在补充行动之前
  */
 class DashboardIntegrationTest extends AbstractIntegrationTest {
 
@@ -57,11 +57,11 @@ class DashboardIntegrationTest extends AbstractIntegrationTest {
 		String overdueTitle = findActionItemTitle(resp.getBody(), appId);
 		assertThat(overdueTitle).contains("逾期");
 
-		// 逾期项 priority=1，排在 priority=2 的补充行动之前
+		// 复盘行动占用 priority=1；逾期项 priority=2，排在 priority=3 的补充行动之前
 		Integer overduePriority = findActionItemPriority(resp.getBody(), appId);
 		Integer missingPriority = findActionItemPriority(resp.getBody(), missingId);
-		assertThat(overduePriority).isEqualTo(1);
-		assertThat(missingPriority).isEqualTo(2);
+		assertThat(overduePriority).isEqualTo(2);
+		assertThat(missingPriority).isEqualTo(3);
 		assertThat(overduePriority).isLessThan(missingPriority);
 	}
 
@@ -126,6 +126,30 @@ class DashboardIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrDbl(overview.getBody(), "weakKnowledgePoints", 0, "weightedWeaknessCount")).isEqualTo(1.0);
 	}
 
+	@Test
+	void p0_completedInterviewNeedingReviewAndDueTask_areActionItems() {
+		String jobId = createJob();
+		String appId = createApplication(jobId, null, null);
+		transition(appId, "0", "APPLIED", TestFixtures.newKey());
+		transition(appId, "1", "RESUME_PASSED", TestFixtures.newKey());
+		String interview = restTemplate.exchange(url("/interviews"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"applicationId\":\"" + appId + "\",\"roundName\":\"P0 一面\",\"startsAt\":\"2099-09-10T10:00:00Z\",\"eventTimeZone\":\"Asia/Shanghai\"}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String interviewId = JsonProbe.str(interview, "id");
+		long interviewVersion = JsonProbe.lng(interview, "version");
+		restTemplate.exchange(url("/interviews/" + interviewId + "/complete"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"result\":\"PASSED\"}", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(interviewVersion)), String.class);
+		String task = restTemplate.exchange(url("/tasks"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"title\":\"P0 到期任务\",\"dueAt\":\"2000-01-01T00:00:00Z\"}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String taskId = JsonProbe.str(task, "id");
+
+		String body = restTemplate.getForObject(url("/dashboard"), String.class);
+		assertThat(findActionType(body, interviewId)).isEqualTo("REVIEW_DUE");
+		assertThat(findActionType(body, taskId)).isEqualTo("TASK_DUE");
+	}
+
 	/** 在 actionItems 数组中找到 sourceRef.id == appId 的项，返回其 title。 */
 	private String findActionItemTitle(String body, String appId) {
 		int size = JsonProbe.arraySize(body, "actionItems");
@@ -144,6 +168,16 @@ class DashboardIntegrationTest extends AbstractIntegrationTest {
 			String refId = JsonProbe.arrStr(body, "actionItems", i, "sourceRef.id");
 			if (appId.equals(refId)) {
 				return JsonProbe.arrLng(body, "actionItems", i, "priority").intValue();
+			}
+		}
+		return null;
+	}
+
+	private String findActionType(String body, String id) {
+		int size = JsonProbe.arraySize(body, "actionItems");
+		for (int i = 0; i < size; i++) {
+			if (id.equals(JsonProbe.arrStr(body, "actionItems", i, "id"))) {
+				return JsonProbe.arrStr(body, "actionItems", i, "type");
 			}
 		}
 		return null;

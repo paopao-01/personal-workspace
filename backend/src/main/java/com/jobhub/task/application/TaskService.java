@@ -13,6 +13,7 @@ import com.jobhub.task.domain.TaskPriority;
 import com.jobhub.task.domain.TaskSourceType;
 import com.jobhub.task.domain.TaskStatus;
 import com.jobhub.task.infrastructure.TaskMapper;
+import com.jobhub.job.infrastructure.JobMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashSet;
@@ -23,22 +24,26 @@ import java.util.Set;
 public class TaskService {
 	private final TaskMapper taskMapper;
 	private final QuestionMapper questionMapper;
+	private final JobMapper jobMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
-	public TaskService(TaskMapper taskMapper, QuestionMapper questionMapper, IdGenerator ids, UtcTime time) {
+	public TaskService(TaskMapper taskMapper, QuestionMapper questionMapper, JobMapper jobMapper, IdGenerator ids, UtcTime time) {
 		this.taskMapper = taskMapper;
 		this.questionMapper = questionMapper;
+		this.jobMapper = jobMapper;
 		this.ids = ids;
 		this.time = time;
 	}
 
 	public TaskListResult list(TaskListQuery query) {
 		int offset = (query.page() - 1) * query.pageSize();
-		List<LearningTask> items = taskMapper.selectPage(query.status(), query.pageSize(), offset).stream()
+		List<LearningTask> items = taskMapper.selectPage(query.status(), query.knowledgePointId(), query.sourceType(),
+				query.dueAfter(), query.dueBefore(), query.jobId(), query.interviewId(), query.pageSize(), offset).stream()
 			.map(this::hydrate)
 			.toList();
-		return new TaskListResult(items, taskMapper.selectPageCount(query.status()), query.page(), query.pageSize());
+		return new TaskListResult(items, taskMapper.selectPageCount(query.status(), query.knowledgePointId(), query.sourceType(),
+				query.dueAfter(), query.dueBefore(), query.jobId(), query.interviewId()), query.page(), query.pageSize());
 	}
 
 	public LearningTask get(String id) {
@@ -112,10 +117,11 @@ public class TaskService {
 
 	private void replaceSources(String taskId, List<String> knowledgePointIds, List<String> jobIds,
 			List<String> questionIds, String now) {
-		if (!isEmpty(jobIds)) {
-			throw new BusinessRuleException("Related jobs are not supported by the current task source schema");
-		}
 		taskMapper.deleteSources(taskId);
+		for (String jobId : distinct(jobIds)) {
+			VersionCheck.requireFound(jobMapper.selectById(jobId), "Job", jobId);
+			insertSource(taskId, TaskSourceType.JOB, jobId, now);
+		}
 		for (String knowledgePointId : distinct(knowledgePointIds)) {
 			requireKnowledgePoint(knowledgePointId);
 			insertSource(taskId, TaskSourceType.KNOWLEDGE_POINT, knowledgePointId, now);
@@ -135,6 +141,7 @@ public class TaskService {
 
 	private LearningTask hydrate(LearningTask task) {
 		task.setKnowledgePoints(taskMapper.selectKnowledgePoints(task.getId()));
+		task.setSourceRefs(taskMapper.selectSourceRefs(task.getId()));
 		return task;
 	}
 

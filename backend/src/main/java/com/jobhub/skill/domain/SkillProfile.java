@@ -10,6 +10,7 @@ public class SkillProfile {
 	private String skillName;
 	private Integer selfLevel;
 	private String evidenceStatus;
+	private String interviewPerformanceJson;
 	private String userSkillId;
 	private long version;
 
@@ -21,6 +22,8 @@ public class SkillProfile {
 	public void setSelfLevel(Integer selfLevel) { this.selfLevel = selfLevel; }
 	public String getEvidenceStatus() { return evidenceStatus; }
 	public void setEvidenceStatus(String evidenceStatus) { this.evidenceStatus = evidenceStatus; }
+	public String getInterviewPerformanceJson() { return interviewPerformanceJson; }
+	public void setInterviewPerformanceJson(String interviewPerformanceJson) { this.interviewPerformanceJson = interviewPerformanceJson; }
 	public String getUserSkillId() { return userSkillId; }
 	public void setUserSkillId(String userSkillId) { this.userSkillId = userSkillId; }
 	public long getVersion() { return version; }

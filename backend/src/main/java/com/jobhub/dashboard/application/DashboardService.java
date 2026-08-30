@@ -11,6 +11,8 @@ import com.jobhub.interview.domain.InterviewScheduleStatus;
 import com.jobhub.interview.infrastructure.InterviewMapper;
 import com.jobhub.review.application.ReviewService;
 import com.jobhub.review.domain.WeakKnowledgePoint;
+import com.jobhub.task.domain.LearningTask;
+import com.jobhub.task.infrastructure.TaskMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -39,11 +41,16 @@ public class DashboardService {
 
 	/** ActionItem.type 枚举值（与 OpenAPI 对齐）。 */
 	public static final String TYPE_APPLICATION_ACTION_DUE = "APPLICATION_ACTION_DUE";
+	public static final String TYPE_REVIEW_DUE = "REVIEW_DUE";
+	public static final String TYPE_TASK_DUE = "TASK_DUE";
 
 	/** 逾期/缺失优先级（priority 越小越靠前）。 */
-	private static final int PRIORITY_OVERDUE = 1;
-	private static final int PRIORITY_MISSING = 2;
-	private static final int PRIORITY_NORMAL = 3;
+	private static final int PRIORITY_REVIEW_DUE = 1;
+	private static final int PRIORITY_OVERDUE = 2;
+	private static final int PRIORITY_MISSING = 3;
+	private static final int PRIORITY_TASK_OVERDUE = 4;
+	private static final int PRIORITY_TASK_DUE = 5;
+	private static final int PRIORITY_NORMAL = 6;
 
 	private static final int RECENT_JOBS_LIMIT = 10;
 	private static final int UPCOMING_INTERVIEWS_LIMIT = 5;
@@ -52,14 +59,16 @@ public class DashboardService {
 	private final JobMapper jobMapper;
 	private final InterviewMapper interviewMapper;
 	private final ReviewService reviewService;
+	private final TaskMapper taskMapper;
 	private final UtcTime utcTime;
 
 	public DashboardService(ApplicationMapper applicationMapper, JobMapper jobMapper,
-			InterviewMapper interviewMapper, ReviewService reviewService, UtcTime utcTime) {
+			InterviewMapper interviewMapper, ReviewService reviewService, TaskMapper taskMapper, UtcTime utcTime) {
 		this.applicationMapper = applicationMapper;
 		this.jobMapper = jobMapper;
 		this.interviewMapper = interviewMapper;
 		this.reviewService = reviewService;
+		this.taskMapper = taskMapper;
 		this.utcTime = utcTime;
 	}
 
@@ -78,7 +87,7 @@ public class DashboardService {
 			}
 		}
 		// recentJobs：复用 JobMapper.selectPage（按 updated_at DESC）
-		List<Job> recentJobs = jobMapper.selectPage(null, null, null, RECENT_JOBS_LIMIT, 0);
+		List<Job> recentJobs = jobMapper.selectPage(null, null, null, null, null, null, RECENT_JOBS_LIMIT, 0);
 		for (Job job : recentJobs) {
 			if (job.getDecisionStatus() == JobDecisionStatus.TO_APPLY && activeApps.stream()
 					.noneMatch(app -> app.getJobId().equals(job.getId()))) {
@@ -88,6 +97,19 @@ public class DashboardService {
 						null, PRIORITY_MISSING,
 						new SourceRef("JOB", job.getId(), job.getTitle())));
 			}
+		}
+		for (Interview interview : interviewMapper.selectCompletedNeedingReview()) {
+			actionItems.add(new ActionItem(interview.getId(), TYPE_REVIEW_DUE,
+					"完成「" + interview.getRoundName() + "」的面试复盘", interview.getStartsAt(), PRIORITY_REVIEW_DUE,
+					new SourceRef("INTERVIEW", interview.getId(), interview.getRoundName())));
+		}
+		String dueUntil = Instant.parse(now).plus(Duration.ofDays(7)).toString();
+		for (LearningTask task : taskMapper.selectDueForDashboard(dueUntil)) {
+			boolean overdue = task.getDueAt().compareTo(now) < 0;
+			actionItems.add(new ActionItem(task.getId(), TYPE_TASK_DUE,
+					(overdue ? "逾期学习任务：" : "即将到期学习任务：") + task.getTitle(), task.getDueAt(),
+					overdue ? PRIORITY_TASK_OVERDUE : PRIORITY_TASK_DUE,
+					new SourceRef("TASK", task.getId(), task.getTitle())));
 		}
 		// 逾期(1) > 缺失(2) > 一般(3)；同优先级按 dueAt 升序（null 靠后）
 		actionItems.sort(Comparator

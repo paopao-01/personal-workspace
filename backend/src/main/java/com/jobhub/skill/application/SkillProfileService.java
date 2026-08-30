@@ -34,6 +34,19 @@ public class SkillProfileService {
 	}
 
 	@Transactional
+	public SkillProfile create(String name, String category) {
+		String displayName = required(name, "Skill name is required");
+		String normalizedName = displayName.toLowerCase(java.util.Locale.ROOT);
+		if (skillProfileMapper.findActiveSkillIdByNameOrAlias(normalizedName) != null) {
+			throw new BusinessRuleException("A skill with the same name or alias already exists");
+		}
+		String id = ids.newId();
+		skillProfileMapper.insertSkill(id, displayName, normalizedName,
+				category == null || category.isBlank() ? null : category.trim(), time.now());
+		return requireSkillProfile(id);
+	}
+
+	@Transactional
 	public SkillProfile updateSelfLevel(String skillId, long expectedVersion, int selfLevel) {
 		SkillProfile profile = requireSkillProfile(skillId);
 		String now = time.now();
@@ -54,5 +67,10 @@ public class SkillProfileService {
 		SkillProfile profile = skillProfileMapper.selectBySkillId(skillId);
 		VersionCheck.requireFound(profile, "SkillProfile", skillId);
 		return profile;
+	}
+
+	private String required(String value, String message) {
+		if (value == null || value.isBlank()) throw new BusinessRuleException(message);
+		return value.trim();
 	}
 }

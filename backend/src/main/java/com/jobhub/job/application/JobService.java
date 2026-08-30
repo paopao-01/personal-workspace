@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class JobService {
@@ -47,11 +50,26 @@ public class JobService {
 	}
 
 	public JobListResult listJobs(JobListQuery query) {
-		long total = jobMapper.selectPageCount(query.query(), query.decisionStatus(), query.jobStatus());
+		long total = jobMapper.selectPageCount(query.query(), query.decisionStatus(), query.jobStatus(),
+				query.location(), query.source(), query.hasPendingRequirements());
 		int offset = (query.page() - 1) * query.pageSize();
-		List<Job> items = jobMapper.selectPage(query.query(), query.decisionStatus(), query.jobStatus(),
-				query.pageSize(), offset);
+		List<Job> jobs = jobMapper.selectPage(query.query(), query.decisionStatus(), query.jobStatus(),
+				query.location(), query.source(), query.hasPendingRequirements(), query.pageSize(), offset);
+		if (jobs.isEmpty()) return new JobListResult(List.of(), total, query.page(), query.pageSize());
+		Map<String, JobListMeta> metaByJobId = jobMapper.selectListMetaByIds(jobs.stream().map(Job::getId).toList())
+				.stream().collect(Collectors.toMap(JobListMeta::getJobId, Function.identity()));
+		List<JobListItem> items = jobs.stream().map(job -> toListItem(job, metaByJobId.get(job.getId()))).toList();
 		return new JobListResult(items, total, query.page(), query.pageSize());
+	}
+
+	private JobListItem toListItem(Job job, JobListMeta meta) {
+		if (meta == null) return new JobListItem(job, 0, 0, "暂无已确认要求", false);
+		String gapOverview = meta.getConfirmedRequirementCount() == 0 ? "暂无已确认要求"
+				: meta.getNotMetCount() > 0 ? meta.getNotMetCount() + " 项未满足"
+				: meta.getInsufficientInfoCount() > 0 ? meta.getInsufficientInfoCount() + " 项信息不足"
+				: "已确认要求待补充匹配资料";
+		return new JobListItem(job, meta.getConfirmedRequirementCount(), meta.getPendingRequirementCount(),
+				gapOverview, meta.isHasActiveApplication());
 	}
 
 	@Transactional
@@ -86,7 +104,7 @@ public class JobService {
 		// 与传入 cmd.jdRawText() 相同故 jdChanged 必为 false。改用更新前快照与 cmd 对比。
 		if (cmd.containsBasicInfo() && cmd.jdRawText() != null && originalJdChanged) {
 			requirementMapper.markAllPendingByJobId(id, utcTime.now());
-			matchMapper.deleteByJobId(id);
+			matchMapper.invalidateByJobId(id, utcTime.now());
 		}
 
 		return jobMapper.selectById(id);

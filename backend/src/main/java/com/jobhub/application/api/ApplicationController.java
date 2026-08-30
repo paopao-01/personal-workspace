@@ -84,6 +84,14 @@ public class ApplicationController {
 		return ResponseEntity.ok(ApplicationResponse.from(updated));
 	}
 
+	@DeleteMapping("/applications/{applicationId}")
+	public ResponseEntity<Void> delete(@PathVariable String applicationId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long ifMatchVersion) {
+		if (ifMatchVersion == null) return ResponseEntity.badRequest().build();
+		applicationService.delete(applicationId, ifMatchVersion);
+		return ResponseEntity.noContent().build();
+	}
+
 	@PostMapping("/applications/{applicationId}/transition")
 	public ResponseEntity<ApplicationResponse> transition(
 			@PathVariable String applicationId,

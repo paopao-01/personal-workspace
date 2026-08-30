@@ -9,6 +9,7 @@ import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
 import com.jobhub.datamanagement.application.SettingsService;
+import com.jobhub.datamanagement.application.TrashService;
 import com.jobhub.interview.domain.*;
 import com.jobhub.interview.infrastructure.*;
 import com.jobhub.interview.api.InterviewUpdateRequest;
@@ -22,8 +23,8 @@ import java.util.List;
 @Service
 public class InterviewService {
     private final InterviewMapper interviewMapper; private final ChecklistMapper checklistMapper; private final ReminderMapper reminderMapper;
-    private final ApplicationService applicationService; private final SettingsService settingsService; private final IdGenerator ids; private final UtcTime time;
-    public InterviewService(InterviewMapper im, ChecklistMapper cm, ReminderMapper rm, ApplicationService as, SettingsService ss, IdGenerator ids, UtcTime time){this.interviewMapper=im;this.checklistMapper=cm;this.reminderMapper=rm;this.applicationService=as;this.settingsService=ss;this.ids=ids;this.time=time;}
+    private final ApplicationService applicationService; private final SettingsService settingsService; private final TrashService trashService; private final IdGenerator ids; private final UtcTime time;
+    public InterviewService(InterviewMapper im, ChecklistMapper cm, ReminderMapper rm, ApplicationService as, SettingsService ss, TrashService ts, IdGenerator ids, UtcTime time){this.interviewMapper=im;this.checklistMapper=cm;this.reminderMapper=rm;this.applicationService=as;this.settingsService=ss;this.trashService=ts;this.ids=ids;this.time=time;}
 
     @Transactional
     public Interview create(String applicationId,String roundName,String startsAt,String zone,InterviewMode mode,String address,String contact,List<String> checklist,String notes){
@@ -43,6 +44,7 @@ public class InterviewService {
     @Transactional public Interview cancel(String id,long expected){Interview i=get(id);i.cancel(time.now());persistState(i,expected);reminderMapper.cancelOpen(id,time.now());return get(id);}
     @Transactional public Interview noShow(String id,long expected){Interview i=get(id);i.noShow(time.now());persistState(i,expected);reminderMapper.cancelOpen(id,time.now());return get(id);}
     @Transactional public Interview reschedule(String id,long expected,String startsAt,String zone){Interview i=get(id);i.reschedule(normalizeInstant(startsAt),zone,time.now());persistSchedule(i,expected);reminderMapper.cancelOpen(id,time.now());createDefaultReminders(id,i.getStartsAt(),time.now());return get(id);}
+    @Transactional public void delete(String id,long expected){Interview i=get(id);String now=time.now();VersionCheck.requireAffected(interviewMapper.softDelete(id,expected,now),i.getVersion());reminderMapper.cancelOpen(id,now);trashService.recordDeletion(TrashService.TYPE_INTERVIEW,id,i.getRoundName(),List.of("复盘与问题记录保留"),now);}
     public List<Reminder> reminders(String interviewId){get(interviewId);return reminderMapper.selectByInterview(interviewId);}
     @Transactional public Reminder createReminder(String interviewId,ReminderType type,String scheduledAt){get(interviewId);Reminder r=Reminder.create(ids.newId(),interviewId,type,normalizeInstant(scheduledAt),time.now());reminderMapper.insert(r);return r;}
     @Transactional public Reminder updateReminder(String id,long expected,String scheduledAt,Boolean enabled){Reminder r=reminderMapper.selectById(id);VersionCheck.requireFound(r,"Reminder",id);if(r.getStatus()==ReminderStatus.SENT)throw new BusinessRuleException("SENT reminder cannot be edited");r.update(scheduledAt==null?null:normalizeInstant(scheduledAt),enabled==null||enabled,time.now());VersionCheck.requireAffected(reminderMapper.update(r,expected),r.getVersion());return reminderMapper.selectById(id);}

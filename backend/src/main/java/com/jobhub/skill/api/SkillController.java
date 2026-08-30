@@ -4,6 +4,7 @@ import com.jobhub.skill.application.SkillProfileService;
 import com.jobhub.skill.domain.SkillProfile;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
@@ -19,6 +20,12 @@ public class SkillController {
 	@GetMapping("/skills/profile")
 	public List<SkillProfileResponse> profile() {
 		return service.list().stream().map(SkillProfileResponse::from).toList();
+	}
+
+	@PostMapping("/skills")
+	public ResponseEntity<SkillProfileResponse> create(@Valid @RequestBody SkillCreateRequest request) {
+		return ResponseEntity.status(HttpStatus.CREATED).body(SkillProfileResponse.from(
+				service.create(request.name(), request.category())));
 	}
 
 	@PutMapping("/skills/{skillId}/self-level")

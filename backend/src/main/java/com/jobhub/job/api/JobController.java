@@ -54,9 +54,12 @@ public class JobController {
 			@RequestParam(required = false) String query,
 			@RequestParam(required = false) JobDecisionStatus decisionStatus,
 			@RequestParam(required = false) JobStatus jobStatus,
+			@RequestParam(required = false) String location,
+			@RequestParam(required = false) String source,
+			@RequestParam(required = false) Boolean hasPendingRequirements,
 			@RequestParam(defaultValue = "1") @Min(1) int page,
 			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize) {
-		JobListResult result = jobService.listJobs(new JobListQuery(query, decisionStatus, jobStatus, page, pageSize));
+		JobListResult result = jobService.listJobs(new JobListQuery(query, decisionStatus, jobStatus, location, source, hasPendingRequirements, page, pageSize));
 		return PageJobResponse.from(result.items(), result.total(), page, pageSize);
 	}
 

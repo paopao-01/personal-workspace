@@ -3,6 +3,7 @@ package com.jobhub.job.infrastructure;
 import com.jobhub.job.domain.Job;
 import com.jobhub.job.domain.JobDecisionStatus;
 import com.jobhub.job.domain.JobStatus;
+import com.jobhub.job.application.JobListMeta;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -38,11 +39,16 @@ public interface JobMapper {
 			"<if test='jobStatus != null'>" +
 			"  AND status = #{jobStatus}" +
 			"</if>" +
+			"<if test='location != null and location != \"\"'>AND lower(location) LIKE '%' || lower(#{location}) || '%'</if>" +
+			"<if test='source != null and source != \"\"'>AND lower(source) LIKE '%' || lower(#{source}) || '%'</if>" +
+			"<if test='hasPendingRequirements != null'>AND (EXISTS (SELECT 1 FROM job_requirement r WHERE r.job_id=job_posting.id AND r.deleted_at IS NULL AND r.confirmation_status='PENDING')) = #{hasPendingRequirements}</if>" +
 			"ORDER BY updated_at DESC LIMIT #{pageSize} OFFSET #{offset}" +
 			"</script>")
 	List<Job> selectPage(@Param("query") String query,
 						 @Param("decisionStatus") JobDecisionStatus decisionStatus,
 						 @Param("jobStatus") JobStatus jobStatus,
+						 @Param("location") String location, @Param("source") String source,
+						 @Param("hasPendingRequirements") Boolean hasPendingRequirements,
 						 @Param("pageSize") int pageSize,
 						 @Param("offset") int offset);
 
@@ -57,10 +63,25 @@ public interface JobMapper {
 			"<if test='jobStatus != null'>" +
 			"  AND status = #{jobStatus}" +
 			"</if>" +
+			"<if test='location != null and location != \"\"'>AND lower(location) LIKE '%' || lower(#{location}) || '%'</if>" +
+			"<if test='source != null and source != \"\"'>AND lower(source) LIKE '%' || lower(#{source}) || '%'</if>" +
+			"<if test='hasPendingRequirements != null'>AND (EXISTS (SELECT 1 FROM job_requirement r WHERE r.job_id=job_posting.id AND r.deleted_at IS NULL AND r.confirmation_status='PENDING')) = #{hasPendingRequirements}</if>" +
 			"</script>")
 	long selectPageCount(@Param("query") String query,
 						@Param("decisionStatus") JobDecisionStatus decisionStatus,
-						@Param("jobStatus") JobStatus jobStatus);
+						@Param("jobStatus") JobStatus jobStatus, @Param("location") String location,
+						@Param("source") String source, @Param("hasPendingRequirements") Boolean hasPendingRequirements);
+
+	@Select("<script>SELECT j.id AS jobId, " +
+			"SUM(CASE WHEN r.confirmation_status='CONFIRMED' THEN 1 ELSE 0 END) AS confirmedRequirementCount, " +
+			"SUM(CASE WHEN r.confirmation_status='PENDING' THEN 1 ELSE 0 END) AS pendingRequirementCount, " +
+			"SUM(CASE WHEN m.invalidated_at IS NULL AND m.match_status='NOT_MET' THEN 1 ELSE 0 END) AS notMetCount, " +
+			"SUM(CASE WHEN m.invalidated_at IS NULL AND m.match_status='INSUFFICIENT_INFO' THEN 1 ELSE 0 END) AS insufficientInfoCount, " +
+			"EXISTS (SELECT 1 FROM application_record a WHERE a.job_id=j.id AND a.deleted_at IS NULL AND a.status IN ('DRAFT','APPLIED','RESUME_PASSED','INTERVIEWING','ON_HOLD')) AS hasActiveApplication " +
+			"FROM job_posting j LEFT JOIN job_requirement r ON r.job_id=j.id AND r.deleted_at IS NULL " +
+			"LEFT JOIN requirement_match m ON m.requirement_id=r.id WHERE j.id IN " +
+			"<foreach collection='ids' item='id' open='(' close=')' separator=','>#{id}</foreach> GROUP BY j.id</script>")
+	List<JobListMeta> selectListMetaByIds(@Param("ids") List<String> ids);
 
 	@Update("UPDATE job_posting SET company_name=#{job.companyName}, title=#{job.title}, jd_raw_text=#{job.jdRawText}, " +
 			"source=#{job.source, jdbcType=VARCHAR}, source_url=#{job.sourceUrl, jdbcType=VARCHAR}, " +

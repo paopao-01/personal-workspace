@@ -12,6 +12,8 @@ import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
 import com.jobhub.job.domain.Job;
 import com.jobhub.job.infrastructure.JobMapper;
+import com.jobhub.datamanagement.application.TrashService;
+import com.jobhub.common.error.BusinessRuleException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,16 +34,18 @@ public class ApplicationService {
 	private final JobMapper jobMapper;
 	private final IdGenerator idGenerator;
 	private final UtcTime utcTime;
+	private final TrashService trashService;
 
 	public ApplicationService(ApplicationMapper applicationMapper, StatusLogMapper statusLogMapper,
 							 AuditLogMapper auditLogMapper,
-								 JobMapper jobMapper, IdGenerator idGenerator, UtcTime utcTime) {
+								 JobMapper jobMapper, IdGenerator idGenerator, UtcTime utcTime, TrashService trashService) {
 		this.applicationMapper = applicationMapper;
 		this.statusLogMapper = statusLogMapper;
 		this.auditLogMapper = auditLogMapper;
 		this.jobMapper = jobMapper;
 		this.idGenerator = idGenerator;
 		this.utcTime = utcTime;
+		this.trashService = trashService;
 	}
 
 	@Transactional
@@ -141,6 +145,17 @@ public class ApplicationService {
 		Application app = applicationMapper.selectById(applicationId);
 		VersionCheck.requireFound(app, "Application", applicationId);
 		return statusLogMapper.selectByApplication(applicationId);
+	}
+
+	@Transactional
+	public void delete(String id, long expectedVersion) {
+		Application application = get(id);
+		if (applicationMapper.countActiveInterviews(id) > 0) {
+			throw new BusinessRuleException("Delete related interviews before deleting this application");
+		}
+		String now = utcTime.now();
+		VersionCheck.requireAffected(applicationMapper.softDelete(id, expectedVersion, now), application.getVersion());
+		trashService.recordDeletion(TrashService.TYPE_APPLICATION, id, application.getChannel() + " 投递记录", List.of("保留状态历史"), now);
 	}
 
 	/** 投递详情聚合值对象（service 层组装，避免 controller 跨层调用多个 mapper）。 */

@@ -38,6 +38,15 @@ paths:
         - name: jobStatus
           in: query
           schema: { $ref: '#/components/schemas/JobStatus' }
+        - name: location
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: source
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: hasPendingRequirements
+          in: query
+          schema: { type: boolean }
         - name: query
           in: query
           schema: { type: string, maxLength: 100 }
@@ -83,17 +92,6 @@ paths:
             schema: { $ref: '#/components/schemas/JobUpdateRequest' }
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
-        '409': { $ref: '#/components/responses/VersionConflict' }
-        '422': { $ref: '#/components/responses/BusinessRuleError' }
-    delete:
-      tags: [Ai]
-      summary: 永久删除未被任务引用的非激活供应商配置
-      description: 激活中的供应商必须先切换到其他供应商；已有 AI 任务引用的供应商为保留审计记录不能删除。删除不可恢复。
-      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
-      responses:
-        '204': { description: 已删除 }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
   /jobs/{jobId}/archive:
@@ -147,6 +145,17 @@ paths:
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/JobRequirement' } } } }
         '409': { $ref: '#/components/responses/VersionConflict' }
+    delete:
+      tags: [Jobs]
+      summary: 删除未确认的候选岗位要求
+      description: 仅允许删除 PENDING 或 IGNORED 候选；已确认要求应先恢复为待确认，避免静默丢失用户确认事实。
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      responses:
+        '204': { description: 已删除 }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /job-requirements/merge:
     post:
       tags: [Jobs]
@@ -233,6 +242,15 @@ paths:
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
         '409': { $ref: '#/components/responses/VersionConflict' }
+    delete:
+      tags: [Applications]
+      summary: 软删除无关联面试的投递记录
+      description: 已有关联面试时先删除面试，保留事实链和可恢复性。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已移入最近删除 }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /applications/{applicationId}/transition:
     parameters: [ { $ref: '#/components/parameters/ApplicationId' } ]
     post:
@@ -323,6 +341,14 @@ paths:
             schema: { $ref: '#/components/schemas/InterviewUpdateRequest' }
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+    delete:
+      tags: [Interviews]
+      summary: 软删除面试日程
+      description: 取消未发送提醒；复盘与问题保留，恢复日程后可继续访问。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已移入最近删除 }
+        '409': { $ref: '#/components/responses/VersionConflict' }
   /interviews/{interviewId}/complete:
     parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
     post:
@@ -560,6 +586,21 @@ paths:
         - name: knowledgePointId
           in: query
           schema: { type: string, format: uuid }
+        - name: sourceType
+          in: query
+          schema: { $ref: '#/components/schemas/TaskSourceType' }
+        - name: dueBefore
+          in: query
+          schema: { type: string, format: date-time }
+        - name: dueAfter
+          in: query
+          schema: { type: string, format: date-time }
+        - name: jobId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: interviewId
+          in: query
+          schema: { type: string, format: uuid }
       responses:
         '200': { description: 任务分页列表, content: { application/json: { schema: { $ref: '#/components/schemas/PageTask' } } } }
     post:
@@ -573,6 +614,12 @@ paths:
         '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
   /tasks/{taskId}:
     parameters: [ { $ref: '#/components/parameters/TaskId' } ]
+    get:
+      tags: [Tasks]
+      summary: 获取学习任务详情及来源
+      responses:
+        '200': { description: 任务详情, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [Tasks]
       summary: 更新任务内容、验收与验证信息
@@ -601,6 +648,17 @@ paths:
       summary: 获取技能画像
       responses:
         '200': { description: 技能画像, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SkillProfile' } } } } }
+  /skills:
+    post:
+      tags: [SkillsAndEvidence]
+      summary: 创建用户自定义技能
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SkillCreateRequest' } } }
+      responses:
+        '201': { description: 技能已创建, content: { application/json: { schema: { $ref: '#/components/schemas/SkillProfile' } } } }
+        '409': { $ref: '#/components/responses/BusinessRuleError' }
   /skills/{skillId}/self-level:
     parameters: [ { $ref: '#/components/parameters/SkillId' } ]
     put:
@@ -1173,6 +1231,7 @@ components:
     ReviewStatus: { type: string, enum: [NOT_STARTED, DRAFT, COMPLETED] }
     AnswerStatus: { type: string, enum: [FULLY_ANSWERED, PARTIALLY_ANSWERED, UNANSWERED] }
     TaskStatus: { type: string, enum: [TODO, IN_PROGRESS, COMPLETED, ABANDONED] }
+    TaskSourceType: { type: string, enum: [QUESTION, JOB, JOB_REQUIREMENT, SKILL, KNOWLEDGE_POINT, MANUAL] }
     EvidenceStatus: { type: string, enum: [NO_EVIDENCE, WEAK, VALID] }
     JobCreateRequest:
       type: object
@@ -1212,6 +1271,15 @@ components:
         version: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    JobListItem:
+      type: object
+      required: [job, confirmedRequirementCount, pendingRequirementCount, gapOverview, hasActiveApplication]
+      properties:
+        job: { $ref: '#/components/schemas/Job' }
+        confirmedRequirementCount: { type: integer }
+        pendingRequirementCount: { type: integer }
+        gapOverview: { type: string, description: 已确认要求的当前差距统计；无资料时明确说明信息不足。 }
+        hasActiveApplication: { type: boolean }
     JobRequirement:
       type: object
       required: [id, jobId, rawText, type, confirmationStatus, version]
@@ -1706,9 +1774,12 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         status: { $ref: '#/components/schemas/TaskStatus' }
+        type: { type: string, nullable: true }
         priority: { type: string, enum: [LOW, MEDIUM, HIGH, URGENT] }
+        estimatedMinutes: { type: integer, nullable: true, minimum: 1 }
         dueAt: { type: string, format: date-time, nullable: true }
         knowledgePoints: { type: array, items: { $ref: '#/components/schemas/KnowledgePoint' } }
+        sourceRefs: { type: array, items: { $ref: '#/components/schemas/SourceRef' } }
         learningGoal: { type: string, nullable: true }
         acceptanceCriteria: { type: string, nullable: true }
         verificationMethod: { type: string, nullable: true }
@@ -1731,6 +1802,12 @@ components:
       properties:
         selfLevel: { type: integer, minimum: 0, maximum: 5 }
         reason: { type: string, maxLength: 1000 }
+    SkillCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        category: { type: string, maxLength: 100 }
     EvidenceReference:
       type: object
       required: [id, type, title]
@@ -2068,7 +2145,7 @@ components:
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]
-      properties: { items: { type: array, items: { $ref: '#/components/schemas/Job' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/JobListItem' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }
     PageApplication:
       type: object
       required: [items, page, pageSize, total, totalPages]

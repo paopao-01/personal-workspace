@@ -9,7 +9,7 @@ import java.util.List;
 public record GapItemResponse(
 		JobRequirementResponse requirement,
 		GapStatus status,
-		List<Object> evidence,
+		List<GapEvidenceResponse> evidence,
 		String manualOverrideReason
 ) {
 	public static GapItemResponse from(GapItem item) {
@@ -17,8 +17,14 @@ public record GapItemResponse(
 		return new GapItemResponse(
 				JobRequirementResponse.from(req),
 				item.status(),
-				List.of(),
+				item.evidence().stream().map(GapEvidenceResponse::from).toList(),
 				item.manualOverrideReason()
 		);
+	}
+
+	public record GapEvidenceResponse(String id, String type, String title, String urlOrPath, boolean trashed) {
+		static GapEvidenceResponse from(com.jobhub.job.application.GapEvidence evidence) {
+			return new GapEvidenceResponse(evidence.getId(), evidence.getType(), evidence.getTitle(), evidence.getUrlOrPath(), false);
+		}
 	}
 }

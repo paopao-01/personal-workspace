@@ -4,6 +4,7 @@ import com.jobhub.review.domain.KnowledgePoint;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskSourceType;
 import com.jobhub.task.domain.TaskStatus;
+import com.jobhub.task.application.TaskSourceRef;
 import org.apache.ibatis.annotations.*;
 import java.util.List;
 
@@ -37,6 +38,12 @@ public interface TaskMapper {
 		FROM learning_task
 		WHERE deleted_at IS NULL
 		<if test='status != null'>AND status = #{status}</if>
+		<if test='knowledgePointId != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type='KNOWLEDGE_POINT' AND ts.source_id=#{knowledgePointId})</if>
+		<if test='sourceType != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type=#{sourceType})</if>
+		<if test='dueAfter != null'>AND due_at IS NOT NULL AND due_at &gt;= #{dueAfter}</if>
+		<if test='dueBefore != null'>AND due_at IS NOT NULL AND due_at &lt;= #{dueBefore}</if>
+		<if test='jobId != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type='JOB' AND ts.source_id=#{jobId})</if>
+		<if test='interviewId != null'>AND EXISTS (SELECT 1 FROM task_source ts JOIN interview_question q ON q.id=ts.source_id JOIN interview_review r ON r.id=q.review_id WHERE ts.task_id=learning_task.id AND ts.source_type='QUESTION' AND r.interview_id=#{interviewId})</if>
 		ORDER BY
 		  CASE
 		    WHEN due_at IS NOT NULL AND due_at != '' AND status IN ('TODO','IN_PROGRESS') THEN 0
@@ -49,8 +56,9 @@ public interface TaskMapper {
 		LIMIT #{pageSize} OFFSET #{offset}
 		</script>
 		""")
-	List<LearningTask> selectPage(@Param("status") TaskStatus status, @Param("pageSize") int pageSize,
-			@Param("offset") int offset);
+	List<LearningTask> selectPage(@Param("status") TaskStatus status, @Param("knowledgePointId") String knowledgePointId,
+			@Param("sourceType") TaskSourceType sourceType, @Param("dueAfter") String dueAfter, @Param("dueBefore") String dueBefore,
+			@Param("jobId") String jobId, @Param("interviewId") String interviewId, @Param("pageSize") int pageSize, @Param("offset") int offset);
 
 	@Select("""
 		<script>
@@ -58,9 +66,17 @@ public interface TaskMapper {
 		FROM learning_task
 		WHERE deleted_at IS NULL
 		<if test='status != null'>AND status = #{status}</if>
+		<if test='knowledgePointId != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type='KNOWLEDGE_POINT' AND ts.source_id=#{knowledgePointId})</if>
+		<if test='sourceType != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type=#{sourceType})</if>
+		<if test='dueAfter != null'>AND due_at IS NOT NULL AND due_at &gt;= #{dueAfter}</if>
+		<if test='dueBefore != null'>AND due_at IS NOT NULL AND due_at &lt;= #{dueBefore}</if>
+		<if test='jobId != null'>AND EXISTS (SELECT 1 FROM task_source ts WHERE ts.task_id=learning_task.id AND ts.source_type='JOB' AND ts.source_id=#{jobId})</if>
+		<if test='interviewId != null'>AND EXISTS (SELECT 1 FROM task_source ts JOIN interview_question q ON q.id=ts.source_id JOIN interview_review r ON r.id=q.review_id WHERE ts.task_id=learning_task.id AND ts.source_type='QUESTION' AND r.interview_id=#{interviewId})</if>
 		</script>
 		""")
-	long selectPageCount(@Param("status") TaskStatus status);
+	long selectPageCount(@Param("status") TaskStatus status, @Param("knowledgePointId") String knowledgePointId,
+			@Param("sourceType") TaskSourceType sourceType, @Param("dueAfter") String dueAfter, @Param("dueBefore") String dueBefore,
+			@Param("jobId") String jobId, @Param("interviewId") String interviewId);
 
 	@Update("""
 		UPDATE learning_task
@@ -116,4 +132,16 @@ public interface TaskMapper {
 		ORDER BY k.name
 		""")
 	List<KnowledgePoint> selectKnowledgePoints(@Param("taskId") String taskId);
+
+	@Select("SELECT ts.source_type AS type, COALESCE(ts.source_id, ts.task_id) AS id, COALESCE(j.title, r.raw_text, s.name, k.name, q.content, '手工创建') AS label " +
+			"FROM task_source ts LEFT JOIN job_posting j ON ts.source_type='JOB' AND j.id=ts.source_id " +
+			"LEFT JOIN job_requirement r ON ts.source_type='JOB_REQUIREMENT' AND r.id=ts.source_id " +
+			"LEFT JOIN skill s ON ts.source_type='SKILL' AND s.id=ts.source_id " +
+			"LEFT JOIN knowledge_point k ON ts.source_type='KNOWLEDGE_POINT' AND k.id=ts.source_id " +
+			"LEFT JOIN interview_question q ON ts.source_type='QUESTION' AND q.id=ts.source_id " +
+			"WHERE ts.task_id=#{taskId} ORDER BY ts.created_at")
+	List<TaskSourceRef> selectSourceRefs(@Param("taskId") String taskId);
+
+	@Select("SELECT id, title, task_type AS type, priority, estimated_minutes, due_at, learning_goal, acceptance_criteria, verification_method, verification_result, output_url, status, created_at, updated_at, completed_at, abandoned_at, deleted_at, version FROM learning_task WHERE deleted_at IS NULL AND status IN ('TODO','IN_PROGRESS') AND due_at IS NOT NULL AND due_at <= #{until} ORDER BY due_at")
+	List<LearningTask> selectDueForDashboard(@Param("until") String until);
 }

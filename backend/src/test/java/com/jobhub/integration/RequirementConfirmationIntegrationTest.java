@@ -17,8 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * AT-02/AT-03/AT-04 集成测试：候选要求确认、JD 修改回退、人工修正匹配状态。
  *
  * AT-02：PENDING 要求不进 gap-list，只含 CONFIRMED。
- * AT-03：修改 jdRawText 后要求全量回退 PENDING、requirement_match 清空、gap-list 失效。
- *        （本切片不实现"人工修正记录保留"——deleteByJobId 硬删除，known gap，留后续切片）
+ * AT-03：修改 jdRawText 后要求全量回退 PENDING、既有匹配结论失效但保留人工修正历史。
  * AT-04：manualMatchStatus=NOT_MET + reason 写入 requirement_match，原始 evidence_snapshot_json 跨 override 保留。
  */
 class RequirementConfirmationIntegrationTest extends AbstractIntegrationTest {
@@ -92,14 +91,16 @@ class RequirementConfirmationIntegrationTest extends AbstractIntegrationTest {
 		String gap2 = restTemplate.getForObject(url("/jobs/" + jobId + "/gap-list"), String.class);
 		assertThat(JsonProbe.arraySize(gap2, "")).isZero();
 
-		// DB：job_requirement 非 PENDING=0；requirement_match 行数=0（deleteByJobId 生效）
+		// DB：job_requirement 非 PENDING=0；历史匹配保留但被明确标记失效
 		Integer nonPending = jdbc.queryForObject(
 				"SELECT COUNT(*) FROM job_requirement WHERE job_id = ? AND confirmation_status <> 'PENDING'", Integer.class, jobId);
 		assertThat(nonPending).isZero();
 		Integer matchCount = jdbc.queryForObject(
 				"SELECT COUNT(*) FROM requirement_match WHERE requirement_id IN "
 						+ "(SELECT id FROM job_requirement WHERE job_id = ?)", Integer.class, jobId);
-		assertThat(matchCount).isZero();
+		assertThat(matchCount).isEqualTo(1);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM requirement_match WHERE requirement_id IN "
+				+ "(SELECT id FROM job_requirement WHERE job_id = ?) AND invalidated_at IS NOT NULL", Integer.class, jobId)).isEqualTo(1);
 	}
 
 	@Test

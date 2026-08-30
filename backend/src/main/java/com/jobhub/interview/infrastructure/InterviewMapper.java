@@ -15,6 +15,9 @@ public interface InterviewMapper {
     @Select("SELECT * FROM interview_schedule WHERE id=#{id} AND deleted_at IS NULL") Interview selectById(@Param("id") String id);
     @Select("SELECT * FROM interview_schedule WHERE application_id=#{applicationId} AND deleted_at IS NULL ORDER BY starts_at") List<Interview> selectByApplication(@Param("applicationId") String applicationId);
     @Select("SELECT * FROM interview_schedule WHERE deleted_at IS NULL AND starts_at >= #{from} AND starts_at <= #{to} AND (#{status} IS NULL OR schedule_status=#{status}) ORDER BY starts_at") List<Interview> selectUpcoming(@Param("from") String from, @Param("to") String to, @Param("status") InterviewScheduleStatus status);
+    @Select("SELECT i.* FROM interview_schedule i LEFT JOIN interview_review r ON r.interview_id=i.id AND r.deleted_at IS NULL " +
+            "WHERE i.deleted_at IS NULL AND i.schedule_status='COMPLETED' AND (r.id IS NULL OR r.review_status != 'COMPLETED') ORDER BY i.starts_at DESC")
+    List<Interview> selectCompletedNeedingReview();
     @Select("<script>" +
             "SELECT i.*, a.status AS application_status, a.job_id, j.company_name, j.title AS job_title " +
             "FROM interview_schedule i " +
@@ -34,4 +37,6 @@ public interface InterviewMapper {
     @Update("UPDATE interview_schedule SET starts_at=#{i.startsAt}, event_time_zone=#{i.eventTimeZone}, updated_at=#{i.updatedAt} WHERE id=#{i.id} AND version=#{expectedVersion} AND deleted_at IS NULL") int updateSchedule(@Param("i") Interview i, @Param("expectedVersion") long expectedVersion);
     @Update("UPDATE interview_schedule SET schedule_status=#{i.scheduleStatus}, result=#{i.result}, updated_at=#{i.updatedAt} WHERE id=#{i.id} AND version=#{expectedVersion} AND deleted_at IS NULL") int updateState(@Param("i") Interview i, @Param("expectedVersion") long expectedVersion);
     @Update("UPDATE interview_schedule SET version=version+1 WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL") int bumpVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
+    @Update("UPDATE interview_schedule SET deleted_at=#{now}, updated_at=#{now}, version=version+1 WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL") int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
+    @Update("UPDATE interview_schedule SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL") int restoreById(@Param("id") String id, @Param("now") String now);
 }

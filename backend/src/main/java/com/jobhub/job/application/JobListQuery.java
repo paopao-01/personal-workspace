@@ -7,6 +7,9 @@ public record JobListQuery(
 		String query,
 		JobDecisionStatus decisionStatus,
 		JobStatus jobStatus,
+		String location,
+		String source,
+		Boolean hasPendingRequirements,
 		int page,
 		int pageSize
 ) { }

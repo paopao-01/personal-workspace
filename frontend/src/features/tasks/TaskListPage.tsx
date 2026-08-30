@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { isApiError, isNetworkError } from '@/api/errors'
-import { useCreateTask, useTransitionTask } from '@/api/tasks/useTaskMutations'
+import { useCreateTask, useTransitionTask, useUpdateTask } from '@/api/tasks/useTaskMutations'
 import { useTasks } from '@/api/tasks/useTaskQueries'
-import type { LearningTask, TaskStatus } from '@/api/tasks/taskApi'
+import type { LearningTask, TaskPriority, TaskSourceType, TaskStatus } from '@/api/tasks/taskApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -28,16 +28,23 @@ const nextActions: Record<TaskStatus, Array<{ target: TaskStatus; label: string 
 
 export function TaskListPage() {
   const [status, setStatus] = useState<TaskStatus | ''>('')
+	const [sourceType, setSourceType] = useState<TaskSourceType | ''>('')
+  const [dueBefore, setDueBefore] = useState('')
+  const [jobId, setJobId] = useState('')
   const [title, setTitle] = useState('')
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('')
   const [verificationMethod, setVerificationMethod] = useState('')
+  const [priority, setPriority] = useState<TaskPriority>('MEDIUM')
+  const [dueAt, setDueAt] = useState('')
+  const [relatedJobIds, setRelatedJobIds] = useState('')
   const [verificationDrafts, setVerificationDrafts] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
-  const tasksQuery = useTasks({ page: 1, pageSize: 50, status: status || undefined })
+	const tasksQuery = useTasks({ page: 1, pageSize: 50, status: status || undefined, sourceType: sourceType || undefined, dueBefore: dueBefore || undefined, jobId: jobId || undefined })
   const createTask = useCreateTask()
   const transitionTask = useTransitionTask()
+  const updateTask = useUpdateTask()
 
-  const pending = createTask.isPending || transitionTask.isPending
+  const pending = createTask.isPending || transitionTask.isPending || updateTask.isPending
 
   if (tasksQuery.isLoading) {
     return <Spinner label="加载学习任务…" />
@@ -61,13 +68,18 @@ export function TaskListPage() {
     try {
       await createTask.mutateAsync({
         title,
-        priority: 'MEDIUM',
+        priority,
+        dueAt: dueAt || undefined,
+        relatedJobIds: relatedJobIds.split(',').map((id) => id.trim()).filter(Boolean),
         acceptanceCriteria: acceptanceCriteria.trim() || undefined,
         verificationMethod: verificationMethod.trim() || undefined,
       })
       setTitle('')
       setAcceptanceCriteria('')
       setVerificationMethod('')
+      setPriority('MEDIUM')
+      setDueAt('')
+      setRelatedJobIds('')
       pushToast('学习任务已创建')
     } catch (caught) {
       reportError(caught as Error)
@@ -126,6 +138,19 @@ export function TaskListPage() {
               />
             </Field>
             <div className="form-row">
+              <Field label="优先级">
+                <Select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>
+                  <option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="URGENT">紧急</option>
+                </Select>
+              </Field>
+              <Field label="截止时间">
+                <Input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
+              </Field>
+              <Field label="关联岗位 ID" hint="多个 ID 用逗号分隔">
+                <Input value={relatedJobIds} onChange={(event) => setRelatedJobIds(event.target.value)} maxLength={5000} />
+              </Field>
+            </div>
+            <div className="form-row">
               <Field label="验收标准">
                 <Textarea
                   value={acceptanceCriteria}
@@ -155,7 +180,8 @@ export function TaskListPage() {
       <section className="card">
         <div className="card-header">
           <h2 className="card-title">任务列表</h2>
-          <div style={{ width: 180 }}>
+          <div className="flex-row" style={{ gap: 8 }}>
+          <div style={{ width: 160 }}>
             <Select
               value={status}
               onChange={(event) => setStatus(event.target.value as TaskStatus | '')}
@@ -167,6 +193,14 @@ export function TaskListPage() {
               <option value="COMPLETED">{taskStatusLabel.COMPLETED}</option>
               <option value="ABANDONED">{taskStatusLabel.ABANDONED}</option>
             </Select>
+          </div>
+          <div style={{ width: 150 }}>
+			<Select value={sourceType} onChange={(event) => setSourceType(event.target.value as TaskSourceType | '')} aria-label="按来源筛选">
+              <option value="">全部来源</option><option value="QUESTION">面试问题</option><option value="JOB">岗位</option><option value="KNOWLEDGE_POINT">知识点</option><option value="MANUAL">手工</option>
+            </Select>
+          </div>
+          <Input type="datetime-local" value={dueBefore} onChange={(event) => setDueBefore(event.target.value)} aria-label="截止时间筛选" />
+          <Input value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="关联岗位 ID" aria-label="关联岗位筛选" />
           </div>
         </div>
         <div className="card-body">
@@ -188,6 +222,8 @@ export function TaskListPage() {
                         </Badge>
                       ))}
                     </div>
+                    <span className="muted">{task.dueAt ? `截止：${task.dueAt}` : '无截止时间'} · 优先级：{task.priority ?? 'MEDIUM'}</span>
+                    {task.sourceRefs?.length ? <span className="muted">来源：{task.sourceRefs.map((source) => source.label).join('、')}</span> : null}
                     {task.acceptanceCriteria ? (
                       <span className="muted">验收：{task.acceptanceCriteria}</span>
                     ) : null}

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { isApiError, isNetworkError } from '@/api/errors'
 import { useInterview } from '@/api/interviews/useInterviewQueries'
@@ -71,6 +71,28 @@ export function InterviewReviewPage() {
   const [taskVerificationMethod, setTaskVerificationMethod] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const lastAutoSaved = useRef('')
+
+  useEffect(() => {
+    if (!interviewQuery.data || !review || review.status === 'COMPLETED') return
+    if (overallFeeling === null && interviewerFocus === null && jobInterest === null && projectExpressRisk === null && interviewResult === '' && noQuestionsRecorded === null) return
+    const body = {
+      interviewResult: interviewResult || review.interviewResult || 'PENDING',
+      noQuestionsRecorded: noQuestionsRecorded ?? review.noQuestionsRecorded ?? false,
+      overallFeeling: overallFeeling?.trim() || undefined,
+      interviewerFocus: interviewerFocus?.trim() || undefined,
+      jobInterest: jobInterest?.trim() || undefined,
+      projectExpressRisk: projectExpressRisk?.trim() || undefined,
+    }
+    const fingerprint = JSON.stringify(body)
+    if (fingerprint === lastAutoSaved.current) return
+    const timer = window.setTimeout(() => {
+      saveDraft.mutate({ interviewId: interviewQuery.data.id, version: review.version, body }, {
+        onSuccess: () => { lastAutoSaved.current = fingerprint; reviewQuery.refetch() },
+      })
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [interviewQuery.data, review, interviewResult, noQuestionsRecorded, overallFeeling, interviewerFocus, jobInterest, projectExpressRisk, saveDraft, reviewQuery])
 
   if (interviewQuery.isLoading || reviewQuery.isLoading) {
     return <Spinner label="加载复盘…" />

@@ -93,6 +93,15 @@ public interface ApplicationMapper {
 			"WHERE id = #{id} AND version = #{expectedVersion} AND deleted_at IS NULL")
 	int bumpVersionByIdAndVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
 
+	@Select("SELECT COUNT(*) FROM interview_schedule WHERE application_id=#{applicationId} AND deleted_at IS NULL")
+	long countActiveInterviews(@Param("applicationId") String applicationId);
+
+	@Update("UPDATE application_record SET deleted_at=#{now}, updated_at=#{now}, version=version+1 WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int softDelete(@Param("id") String id, @Param("expectedVersion") long expectedVersion, @Param("now") String now);
+
+	@Update("UPDATE application_record SET deleted_at=NULL, updated_at=#{now} WHERE id=#{id} AND deleted_at IS NOT NULL")
+	int restoreById(@Param("id") String id, @Param("now") String now);
+
 	/** dashboard：所有活动投递（含 nextAction 状态），用于行动识别与 activeApplications。
 	 *  排序：缺失/逾期行动在前，便于 service 层生成 actionItems。 */
 	@Select("SELECT * FROM application_record WHERE deleted_at IS NULL " +

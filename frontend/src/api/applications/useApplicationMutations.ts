@@ -6,6 +6,7 @@ import {
   type ApplicationTransitionRequest,
   type ApplicationUpdateRequest,
   createApplication,
+  deleteApplication,
   transitionApplication,
   updateApplication,
 } from '@/api/applications/applicationApi'
@@ -81,6 +82,18 @@ export function useTransitionApplication() {
       qc.invalidateQueries({ queryKey: ['applications'] })
       // 状态/行动变化影响 dashboard 行动项
       qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
+export function useDeleteApplication() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { applicationId: string; version: number }>({
+    mutationFn: ({ applicationId, version }) => deleteApplication(applicationId, version),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['applications'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['trash'] })
     },
   })
 }

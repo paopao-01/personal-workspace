@@ -13,6 +13,7 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type Job = Schemas['Job']
 export type PageJob = Schemas['PageJob']
+export type JobListItem = Schemas['JobListItem']
 export type JobCreateRequest = Schemas['JobCreateRequest']
 export type JobUpdateRequest = Schemas['JobUpdateRequest']
 export type JobRequirement = Schemas['JobRequirement']
@@ -31,6 +32,9 @@ export interface JobListParams {
   pageSize?: number
   decisionStatus?: JobDecisionStatus | null
   jobStatus?: JobStatus | null
+  location?: string
+  source?: string
+  hasPendingRequirements?: boolean
   query?: string
 }
 
@@ -45,6 +49,9 @@ export async function listJobs(params: JobListParams): Promise<PageJob> {
       pageSize: params.pageSize,
       decisionStatus: params.decisionStatus ?? undefined,
       jobStatus: params.jobStatus ?? undefined,
+      location: params.location || undefined,
+      source: params.source || undefined,
+      hasPendingRequirements: params.hasPendingRequirements,
       query: params.query || undefined,
     },
   })
