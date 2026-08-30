@@ -47,6 +47,9 @@ public interface AiJobMapper {
 		"FROM ai_job WHERE object_id=#{objectId} ORDER BY created_at DESC, id LIMIT 50")
 	List<AiJob> selectByObjectAll(@Param("objectId") String objectId);
 
+	@Select("SELECT COUNT(*) FROM ai_job WHERE provider_id=#{providerId}")
+	long countByProvider(@Param("providerId") String providerId);
+
 	/** 单次转移：QUEUED -> RUNNING，返回受控行数用于并发守卫。 */
 	@Update("""
 		UPDATE ai_job SET status='RUNNING', started_at=COALESCE(started_at, #{now}), updated_at=#{now}

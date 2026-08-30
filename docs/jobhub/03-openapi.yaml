@@ -85,6 +85,17 @@ paths:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
         '409': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+    delete:
+      tags: [Ai]
+      summary: 永久删除未被任务引用的非激活供应商配置
+      description: 激活中的供应商必须先切换到其他供应商；已有 AI 任务引用的供应商为保留审计记录不能删除。删除不可恢复。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /jobs/{jobId}/archive:
     parameters: [ { $ref: '#/components/parameters/JobId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
     post:

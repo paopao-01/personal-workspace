@@ -187,6 +187,54 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void P1_providerDeleteProtectsActiveReferencesAndVersion() throws Exception {
+		ResponseEntity<String> activeResponse = restTemplate.exchange(url("/ai-providers"), HttpMethod.POST,
+			TestFixtures.httpJson("{\"providerType\":\"OPENAI_COMPATIBLE\",\"name\":\"激活供应商\",\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m1\",\"apiKey\":\"sk-active\"}"),
+			String.class);
+		String activeId = JsonProbe.str(activeResponse.getBody(), "id");
+		String activeVersion = JsonProbe.str(activeResponse.getBody(), "version");
+
+		ResponseEntity<String> removableResponse = restTemplate.exchange(url("/ai-providers"), HttpMethod.POST,
+			TestFixtures.httpJson("{\"providerType\":\"OPENAI_COMPATIBLE\",\"name\":\"待删除供应商\",\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m2\"}"),
+			String.class);
+		String removableId = JsonProbe.str(removableResponse.getBody(), "id");
+		String removableVersion = JsonProbe.str(removableResponse.getBody(), "version");
+		assertThat(JsonProbe.str(removableResponse.getBody(), "isActive")).isEqualTo("false");
+
+		ResponseEntity<String> stale = restTemplate.exchange(url("/ai-providers/" + removableId), HttpMethod.DELETE,
+			requestWithVersion(String.valueOf(Long.parseLong(removableVersion) + 1), ""), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+		ResponseEntity<String> deleted = restTemplate.exchange(url("/ai-providers/" + removableId), HttpMethod.DELETE,
+			requestWithVersion(removableVersion, ""), String.class);
+		assertThat(deleted.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+		assertThat(restTemplate.getForEntity(url("/ai-providers"), String.class).getBody()).doesNotContain(removableId);
+
+		ResponseEntity<String> referencedResponse = restTemplate.exchange(url("/ai-providers"), HttpMethod.POST,
+			TestFixtures.httpJson("{\"providerType\":\"OPENAI_COMPATIBLE\",\"name\":\"已引用供应商\",\"baseUrl\":\"http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1\",\"model\":\"fake-model\"}"),
+			String.class);
+		String referencedId = JsonProbe.str(referencedResponse.getBody(), "id");
+		restTemplate.exchange(url("/ai-providers/" + referencedId + "/activate"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
+		String jobId = createJob();
+		String extraction = createExtraction(jobId);
+		waitForTerminal(JsonProbe.str(extraction, "id"));
+		ResponseEntity<String> reactivate = restTemplate.exchange(url("/ai-providers/" + activeId + "/activate"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
+		assertThat(reactivate.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String referencedVersion = JsonProbe.str(restTemplate.getForEntity(url("/ai-providers/" + referencedId), String.class).getBody(), "version");
+		ResponseEntity<String> referencedDelete = restTemplate.exchange(url("/ai-providers/" + referencedId), HttpMethod.DELETE,
+			requestWithVersion(referencedVersion, ""), String.class);
+		assertThat(referencedDelete.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+
+		String currentActiveVersion = JsonProbe.str(restTemplate.getForEntity(url("/ai-providers/" + activeId), String.class).getBody(), "version");
+		ResponseEntity<String> activeDelete = restTemplate.exchange(url("/ai-providers/" + activeId), HttpMethod.DELETE,
+			requestWithVersion(currentActiveVersion, ""), String.class);
+		assertThat(activeDelete.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/ai-providers/" + activeId), String.class).getBody(), "isActive")).isEqualTo("true");
+	}
+
+	@Test
 	void P1_jdExtractionProducesCandidatesAndAcceptRejectCreatesRequirements() throws Exception {
 		String baseUrl = "http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1";
 		createActiveProvider(baseUrl);

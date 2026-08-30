@@ -8,6 +8,7 @@ import {
   createAiJob,
   createQuestionClassification,
   createAiProvider,
+  deleteAiProvider,
   getAiJob,
   listAiJobsByJob,
   listAiJobsByQuestion,
@@ -72,6 +73,14 @@ export function useUpdateAiProvider() {
   const queryClient = useQueryClient()
   return useMutation<AiProvider, Error, { providerId: string; version: number; body: AiProviderUpsertRequest }>({
     mutationFn: ({ providerId, version, body }) => updateAiProvider(providerId, version, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ai-providers'] }),
+  })
+}
+
+export function useDeleteAiProvider() {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, { providerId: string; version: number }>({
+    mutationFn: ({ providerId, version }) => deleteAiProvider(providerId, version),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ai-providers'] }),
   })
 }

@@ -33,6 +33,12 @@ export async function updateAiProvider(
   return res.data
 }
 
+export async function deleteAiProvider(providerId: string, version: number): Promise<void> {
+  await apiClient.delete(`/ai-providers/${providerId}`, {
+    headers: { ...idem(), 'If-Match-Version': String(version) },
+  })
+}
+
 export async function activateAiProvider(providerId: string): Promise<AiProvider> {
   const res = await apiClient.post<AiProvider>(`/ai-providers/${providerId}/activate`, {}, { headers: idem() })
   return res.data

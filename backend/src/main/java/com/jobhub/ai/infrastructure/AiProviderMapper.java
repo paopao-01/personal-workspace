@@ -48,4 +48,11 @@ public interface AiProviderMapper {
 		WHERE id=#{p.id}
 		""")
 	int updateActive(@Param("p") AiProvider provider);
+
+	@Delete("""
+		DELETE FROM ai_provider
+		WHERE id=#{id} AND version=#{expectedVersion} AND is_active=0
+		  AND NOT EXISTS (SELECT 1 FROM ai_job WHERE provider_id=#{id})
+		""")
+	int deleteByIdAndVersion(@Param("id") String id, @Param("expectedVersion") long expectedVersion);
 }

@@ -246,6 +246,20 @@ When 用户拒绝候选或使用旧版本采纳
 Then 分别返回 REJECTED 或版本冲突，且不创建任务
 ```
 
+### AT-17D AI 供应商删除保护配置与审计
+
+```gherkin
+Given 一个激活供应商 A、一个未激活且未被任务引用的供应商 B，以及一个已被 AI 任务引用的供应商 C
+When 用户携带 B 的当前 version 删除 B
+Then 返回 204 且供应商列表不再包含 B
+When 用户删除激活供应商 A
+Then 返回 422 BUSINESS_RULE_ERROR 且 A 仍为激活状态
+When 用户删除已被任务引用的供应商 C
+Then 返回 422 BUSINESS_RULE_ERROR 且 C 和关联任务保持不变
+When 用户使用旧 version 删除 B
+Then 返回 409 VERSION_CONFLICT 且不产生删除副作用
+```
+
 ### AT-18 从问题创建任务必须由用户确认
 
 ```gherkin
@@ -332,6 +346,6 @@ And JSON/CSV 导出包含 evidence_attachment 表，恢复时只插入缺失的�
 
 ## 8. 发布门槛
 
-- AT-01 至 AT-26 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-27 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

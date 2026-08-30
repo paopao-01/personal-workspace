@@ -3,6 +3,7 @@ import {
   useActivateAiProvider,
   useAiProviders,
   useCreateAiProvider,
+  useDeleteAiProvider,
   useTestAiProvider,
   useUpdateAiProvider,
 } from '@/api/ai/useAiQueries'
@@ -22,6 +23,7 @@ function errorMessage(caught: unknown) {
 function ProviderRow({ provider }: { provider: AiProvider }) {
   const activate = useActivateAiProvider()
   const update = useUpdateAiProvider()
+  const remove = useDeleteAiProvider()
   const test = useTestAiProvider()
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string | null; latencyMs: number | null } | null>(null)
   const [editing, setEditing] = useState(false)
@@ -69,6 +71,18 @@ function ProviderRow({ provider }: { provider: AiProvider }) {
     }
   }
 
+  const runDelete = async () => {
+    if (provider.isActive || !window.confirm(`确定永久删除供应商「${provider.name}」吗？此操作不可恢复。`)) {
+      return
+    }
+    try {
+      await remove.mutateAsync({ providerId: provider.id, version: provider.version })
+      pushToast('AI 供应商已删除')
+    } catch (caught) {
+      pushToast(errorMessage(caught), 'error')
+    }
+  }
+
   return (
     <div className="requirement-row" style={{ flexWrap: 'wrap' }}>
       <div className="requirement-main">
@@ -99,6 +113,16 @@ function ProviderRow({ provider }: { provider: AiProvider }) {
         </Button>
         <Button size="sm" variant="ghost" type="button" onClick={() => setEditing((value) => !value)}>
           {editing ? '收起' : '编辑'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          type="button"
+          disabled={provider.isActive || remove.isPending}
+          title={provider.isActive ? '请先切换到其他供应商' : '永久删除此供应商配置'}
+          onClick={runDelete}
+        >
+          {remove.isPending ? '删除中…' : '删除'}
         </Button>
       </div>
       {editing ? (

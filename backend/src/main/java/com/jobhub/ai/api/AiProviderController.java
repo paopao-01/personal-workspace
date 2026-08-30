@@ -46,6 +46,16 @@ public class AiProviderController {
 				request.name(), request.baseUrl(), request.model(), request.apiKey())));
 	}
 
+	@DeleteMapping("/ai-providers/{providerId}")
+	public ResponseEntity<Void> delete(@PathVariable String providerId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long version) {
+		if (version == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		service.delete(providerId, version);
+		return ResponseEntity.noContent().build();
+	}
+
 	@PostMapping("/ai-providers/{providerId}/activate")
 	public AiProviderResponse activate(@PathVariable String providerId) {
 		return AiProviderResponse.from(service.activate(providerId));

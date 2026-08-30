@@ -2,6 +2,7 @@ package com.jobhub.ai.application;
 
 import com.jobhub.ai.domain.AiProvider;
 import com.jobhub.ai.domain.ProviderType;
+import com.jobhub.ai.infrastructure.AiJobMapper;
 import com.jobhub.ai.infrastructure.AiProviderMapper;
 import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.error.VersionConflictException;
@@ -20,13 +21,15 @@ import java.util.List;
 @Service
 public class AiProviderService {
 	private final AiProviderMapper providerMapper;
+	private final AiJobMapper aiJobMapper;
 	private final AiClientFactory clientFactory;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
-	public AiProviderService(AiProviderMapper providerMapper, AiClientFactory clientFactory, IdGenerator ids,
+	public AiProviderService(AiProviderMapper providerMapper, AiJobMapper aiJobMapper, AiClientFactory clientFactory, IdGenerator ids,
 			UtcTime time) {
 		this.providerMapper = providerMapper;
+		this.aiJobMapper = aiJobMapper;
 		this.clientFactory = clientFactory;
 		this.ids = ids;
 		this.time = time;
@@ -76,6 +79,22 @@ public class AiProviderService {
 		provider.activate(now);
 		providerMapper.updateActive(provider);
 		return requireProvider(id);
+	}
+
+	/** 永久删除未激活且未被 AI 任务引用的供应商配置。 */
+	@Transactional
+	public void delete(String id, long expectedVersion) {
+		AiProvider provider = requireProvider(id);
+		if (provider.getVersion() != expectedVersion) {
+			throw new VersionConflictException(provider.getVersion());
+		}
+		if (provider.isActive()) {
+			throw new BusinessRuleException("激活中的供应商不能删除，请先切换到其他供应商");
+		}
+		if (aiJobMapper.countByProvider(id) > 0) {
+			throw new BusinessRuleException("已有 AI 任务引用该供应商，不能删除，以保留任务审计记录");
+		}
+		VersionCheck.requireAffected(providerMapper.deleteByIdAndVersion(id, expectedVersion), provider.getVersion());
 	}
 
 	/** 连通性测试：发送最小补全请求，返回延迟与结果说明。 */
