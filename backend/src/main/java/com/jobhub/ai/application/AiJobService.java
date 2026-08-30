@@ -60,13 +60,18 @@ public class AiJobService {
 
 	@Transactional
 	public AiJob create(AiJobType jobType, String objectId) {
-		if (jobType != AiJobType.JD_EXTRACTION) {
-			throw new BusinessRuleException("暂不支持的任务类型：" + jobType);
-		}
+		return create(jobType, objectId, null);
+	}
+
+	@Transactional
+	public AiJob create(AiJobType jobType, String objectId, String sourceText) {
 		Job job = jobMapper.selectById(objectId);
 		VersionCheck.requireFound(job, "Job", objectId);
-		if (job.getJdRawText() == null || job.getJdRawText().isBlank()) {
+		if (jobType == AiJobType.JD_EXTRACTION && (job.getJdRawText() == null || job.getJdRawText().isBlank())) {
 			throw new BusinessRuleException("岗位缺少 JD 原文，无法执行 AI 提取");
+		}
+		if (jobType == AiJobType.RESUME_DRAFT && (sourceText == null || sourceText.isBlank())) {
+			throw new BusinessRuleException("请先提供已确认的简历原文");
 		}
 		AiProvider provider = providerMapper.selectActive();
 		if (provider == null) {
@@ -84,7 +89,9 @@ public class AiJobService {
 		aiJob.setModel(provider.getModel());
 		aiJob.setPromptVersion(promptVersion(jobType));
 		aiJob.setAttemptCount(0);
-		aiJob.setInputSnapshot(job.getJdRawText());
+		aiJob.setInputSnapshot(jobType == AiJobType.RESUME_DRAFT
+			? "USER_CONFIRMED_RESUME:\n" + sourceText.trim() + "\n\nJOB_DESCRIPTION:\n" + job.getJdRawText()
+			: job.getJdRawText());
 		aiJob.setCreatedAt(now);
 		aiJob.setUpdatedAt(now);
 		aiJobMapper.insert(aiJob);
@@ -113,6 +120,10 @@ public class AiJobService {
 
 	public List<AiJob> listByObject(AiJobType jobType, String objectId) {
 		return aiJobMapper.selectByObject(jobType.name(), objectId).stream().map(this::hydrate).toList();
+	}
+
+	public List<AiJob> listByObject(String objectId) {
+		return aiJobMapper.selectByObjectAll(objectId).stream().map(this::hydrate).toList();
 	}
 
 	@Transactional
@@ -147,6 +158,10 @@ public class AiJobService {
 	@Transactional
 	public AiJobItem acceptItem(String itemId, AiItemPayload editedPayload) {
 		AiJobItem item = requireItem(itemId);
+		AiJob itemJob = aiJobMapper.selectById(item.getAiJobId());
+		if (itemJob != null && itemJob.getJobType() == AiJobType.RESUME_DRAFT) {
+			throw new BusinessRuleException("简历草稿只能人工编辑，不能采纳为岗位要求");
+		}
 		if (item.getStatus() != AiJobItemStatus.PROPOSED) {
 			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"仅 PROPOSED 条目可采纳");

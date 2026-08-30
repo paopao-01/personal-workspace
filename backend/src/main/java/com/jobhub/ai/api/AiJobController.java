@@ -23,7 +23,7 @@ public class AiJobController {
 	@PostMapping("/ai-jobs")
 	public ResponseEntity<AiJobResponse> create(@Valid @RequestBody AiJobCreateRequest request) {
 		return ResponseEntity.status(202)
-			.body(AiJobResponse.from(service.create(request.jobType(), request.objectId())));
+			.body(AiJobResponse.from(service.create(request.jobType(), request.objectId(), request.sourceText())));
 	}
 
 	@GetMapping("/ai-jobs/{aiJobId}")
@@ -33,7 +33,7 @@ public class AiJobController {
 
 	@GetMapping("/jobs/{jobId}/ai-jobs")
 	public List<AiJobResponse> listByJob(@PathVariable String jobId) {
-		return service.listByObject(AiJobType.JD_EXTRACTION, jobId).stream().map(AiJobResponse::from).toList();
+		return service.listByObject(jobId).stream().map(AiJobResponse::from).toList();
 	}
 
 	@PostMapping("/ai-jobs/{aiJobId}/retry")

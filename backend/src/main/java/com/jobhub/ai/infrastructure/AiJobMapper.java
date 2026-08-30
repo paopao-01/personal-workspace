@@ -40,6 +40,13 @@ public interface AiJobMapper {
 		""")
 	List<AiJob> selectByObject(@Param("jobType") String jobType, @Param("objectId") String objectId);
 
+	@Select("SELECT id, job_type AS jobType, object_id AS objectId, object_version AS objectVersion, status, " +
+		"provider_id AS providerId, provider_type AS providerType, model, prompt_version AS promptVersion, " +
+		"attempt_count AS attemptCount, failure_reason AS failureReason, input_snapshot AS inputSnapshot, " +
+		"output_json AS outputJson, started_at AS startedAt, finished_at AS finishedAt, created_at AS createdAt, updated_at AS updatedAt " +
+		"FROM ai_job WHERE object_id=#{objectId} ORDER BY created_at DESC, id LIMIT 50")
+	List<AiJob> selectByObjectAll(@Param("objectId") String objectId);
+
 	/** 单次转移：QUEUED -> RUNNING，返回受控行数用于并发守卫。 */
 	@Update("""
 		UPDATE ai_job SET status='RUNNING', started_at=COALESCE(started_at, #{now}), updated_at=#{now}

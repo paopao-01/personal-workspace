@@ -75,8 +75,8 @@ export function useTestAiProvider() {
 
 export function useCreateAiJob() {
   const queryClient = useQueryClient()
-  return useMutation<AiJob, Error, { jobType: 'JD_EXTRACTION'; objectId: string }>({
-    mutationFn: ({ jobType, objectId }) => createAiJob(jobType, objectId),
+  return useMutation<AiJob, Error, { jobType: 'JD_EXTRACTION' | 'RESUME_DRAFT'; objectId: string; sourceText?: string }>({
+    mutationFn: ({ jobType, objectId, sourceText }) => createAiJob(jobType, objectId, sourceText),
     onSuccess: (job) => queryClient.invalidateQueries({ queryKey: ['ai-jobs', 'job', job.objectId] }),
   })
 }
