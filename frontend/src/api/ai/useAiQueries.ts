@@ -4,6 +4,7 @@ import {
   activateAiProvider,
   cancelAiJob,
   createAnswerQualityAnalysis,
+  createTaskSuggestion,
   createAiJob,
   createQuestionClassification,
   createAiProvider,
@@ -150,6 +151,18 @@ export function useCreateAnswerQualityAnalysis() {
     onSuccess: (job) => {
       queryClient.invalidateQueries({
         queryKey: ['ai-jobs', 'question', job.objectId, 'ANSWER_QUALITY_ANALYSIS'],
+      })
+    },
+  })
+}
+
+export function useCreateTaskSuggestion() {
+  const queryClient = useQueryClient()
+  return useMutation<AiJob, Error, string>({
+    mutationFn: createTaskSuggestion,
+    onSuccess: (job) => {
+      queryClient.invalidateQueries({
+        queryKey: ['ai-jobs', 'question', job.objectId, 'TASK_SUGGESTION'],
       })
     },
   })

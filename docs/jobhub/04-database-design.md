@@ -25,7 +25,7 @@
 | 复盘 | `interview_review` | `interview_question`、`question_knowledge` | 每场面试仅一份当前复盘。 |
 | 学习任务 | `learning_task` | `task_source` | 支持一个任务关联多个问题、岗位和知识点。 |
 | 运维与可追溯 | `notification`、`audit_log`、`idempotency_record`、`data_export`、`trash_item` | — | 记录提醒、关键操作、重复写入和导出。 |
-| AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9/V12/V13)、`ai_job_item`(V7/V8) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT`、`QUESTION_CLASSIFICATION`、`ANSWER_QUALITY_ANALYSIS` 只保存必要输入快照与候选，均不自动覆盖主数据。 |
+| AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9/V12/V13/V14)、`ai_job_item`(V7/V8/V14) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT`、`QUESTION_CLASSIFICATION`、`ANSWER_QUALITY_ANALYSIS`、`TASK_SUGGESTION` 只保存必要输入快照与候选，均不自动覆盖主数据。任务建议采纳后通过 `task_id` 回链新建学习任务。 |
 
 ## 3. 关键数据规则
 
@@ -48,6 +48,7 @@
 - `interview_review.interview_id` 唯一，保证每场面试只有一份当前复盘。
 - `interview_question.answer_status` 更新后，薄弱点统计实时按问题和知识点聚合，不维护容易过期的冗余累计字段。
 - 回答质量分析候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁只更新回答状态、参考答案、错误原因和改进方案，不新增冗余分析结论表。
+- 学习任务建议候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁创建 `learning_task` 和 `task_source`，并在 `ai_job_item.task_id` 保存回链，不自动修改问题或技能。
 - `learning_task` 完成不改变 `user_skill.self_level`，也不删除历史薄弱题。
 - `task_source` 使用多态来源：`QUESTION`、`JOB_REQUIREMENT`、`SKILL`、`KNOWLEDGE_POINT`、`MANUAL`。服务层校验 `source_id` 的真实存在性。
 

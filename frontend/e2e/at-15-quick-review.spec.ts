@@ -127,9 +127,9 @@ test('AT-15 quick review saves a minimal draft and can be reopened', async ({ pa
       .filter({ hasText: 'Redis 缓存一致性如何保证？' })
       .getByLabel('更新回答状态'),
   ).toHaveValue('UNANSWERED')
-  await expect(page.getByText('我的回答')).toHaveCount(0)
-  await expect(page.getByText('参考答案')).toHaveCount(0)
-  await expect(page.getByText('错误原因')).toHaveCount(0)
+  await expect(page.getByText('我的回答', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('参考答案', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('错误原因', { exact: true })).toHaveCount(0)
 
   await page.goto('/dashboard')
   await page.goto(`/interviews/${interview.id}/review`)

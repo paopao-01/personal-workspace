@@ -10,6 +10,7 @@ public record AiJobItemResponse(
 	AiItemPayload editedPayload,
 	String status,
 	String requirementId,
+	String taskId,
 	String createdAt,
 	String updatedAt
 ) {
@@ -24,6 +25,7 @@ public record AiJobItemResponse(
 			parse(item.getEditedPayloadJson()),
 			item.getStatus().name(),
 			item.getRequirementId(),
+			item.getTaskId(),
 			item.getCreatedAt(),
 			item.getUpdatedAt()
 		);

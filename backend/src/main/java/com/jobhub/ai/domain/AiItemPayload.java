@@ -8,8 +8,17 @@ import java.util.List;
  */
 public record AiItemPayload(String type, String rawText, String normalizedName, String proficiencyText,
 		String rationale, AnswerStatus answerStatus, String referenceAnswer, String errorReason,
-		String improvementPlan) {
+		String improvementPlan, String taskTitle, String priority, Integer estimatedMinutes,
+		String learningGoal, String acceptanceCriteria, String verificationMethod, List<String> knowledgePointIds) {
 	public static final int MAX_ITEMS = 20;
+
+	/** Compatibility constructor for existing AI handlers. */
+	public AiItemPayload(String type, String rawText, String normalizedName, String proficiencyText,
+			String rationale, AnswerStatus answerStatus, String referenceAnswer, String errorReason,
+			String improvementPlan) {
+		this(type, rawText, normalizedName, proficiencyText, rationale, answerStatus, referenceAnswer,
+			errorReason, improvementPlan, null, null, null, null, null, null, null);
+	}
 
 	public static List<AiItemPayload> parseList(String outputJson) {
 		try {

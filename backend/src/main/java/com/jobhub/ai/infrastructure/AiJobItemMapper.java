@@ -15,7 +15,7 @@ public interface AiJobItemMapper {
 
 	@Select("""
 		SELECT id, ai_job_id AS aiJobId, payload_json AS payloadJson, edited_payload_json AS editedPayloadJson,
-		       status, requirement_id AS requirementId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+		       status, requirement_id AS requirementId, task_id AS taskId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
 		FROM ai_job_item
 		WHERE ai_job_id=#{aiJobId}
 		ORDER BY sort_order, created_at, id
@@ -24,7 +24,7 @@ public interface AiJobItemMapper {
 
 	@Select("""
 		SELECT id, ai_job_id AS aiJobId, payload_json AS payloadJson, edited_payload_json AS editedPayloadJson,
-		       status, requirement_id AS requirementId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+		       status, requirement_id AS requirementId, task_id AS taskId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
 		FROM ai_job_item
 		WHERE id=#{id}
 		""")
@@ -33,12 +33,12 @@ public interface AiJobItemMapper {
 	/** 采纳（可带编辑内容）：PROPOSED -> ACCEPTED，单次转移守卫。 */
 	@Update("""
 		UPDATE ai_job_item
-		SET status='ACCEPTED', edited_payload_json=#{editedPayloadJson}, requirement_id=#{requirementId},
+		SET status='ACCEPTED', edited_payload_json=#{editedPayloadJson}, requirement_id=#{requirementId}, task_id=#{taskId},
 		    updated_at=#{now}
 		WHERE id=#{id} AND status='PROPOSED'
 		""")
 	int markAccepted(@Param("id") String id, @Param("editedPayloadJson") String editedPayloadJson,
-			@Param("requirementId") String requirementId, @Param("now") String now);
+			@Param("requirementId") String requirementId, @Param("taskId") String taskId, @Param("now") String now);
 
 	@Update("""
 		UPDATE ai_job_item SET status='REJECTED', updated_at=#{now}

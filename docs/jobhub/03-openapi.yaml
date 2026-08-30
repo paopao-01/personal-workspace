@@ -972,6 +972,17 @@ paths:
         '202': { description: 任务已入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /interview-questions/{questionId}/ai-task-suggestion:
+    parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
+    post:
+      tags: [Ai]
+      summary: 为薄弱面试问题创建 AI 学习任务建议
+      description: 只快照问题、回答状态、改进信息和已有知识点；异步生成一个可编辑任务候选，不会自动创建学习任务。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '202': { description: 任务已入队, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /interview-questions/{questionId}/ai-jobs:
     parameters: [ { $ref: '#/components/parameters/QuestionId' } ]
     get:
@@ -981,7 +992,7 @@ paths:
         - name: jobType
           in: query
           required: false
-          schema: { type: string, enum: [QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS], default: QUESTION_CLASSIFICATION }
+          schema: { type: string, enum: [QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION], default: QUESTION_CLASSIFICATION }
       responses:
         '200': { description: 任务列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiJob' } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1988,7 +1999,7 @@ components:
       type: object
       required: [type, rawText]
       properties:
-        type: { type: string, enum: [MUST, BONUS, DRAFT, TECHNICAL, PROJECT_EXPERIENCE, SYSTEM_DESIGN, BEHAVIORAL, DOMAIN, OTHER, ANSWER_QUALITY] }
+        type: { type: string, enum: [MUST, BONUS, DRAFT, TECHNICAL, PROJECT_EXPERIENCE, SYSTEM_DESIGN, BEHAVIORAL, DOMAIN, OTHER, ANSWER_QUALITY, LEARNING_TASK] }
         rawText: { type: string, maxLength: 2000 }
         normalizedName: { type: string, maxLength: 200 }
         proficiencyText: { type: string, nullable: true, maxLength: 500 }
@@ -1997,6 +2008,13 @@ components:
         referenceAnswer: { type: string, nullable: true, maxLength: 20000 }
         errorReason: { type: string, nullable: true, maxLength: 5000 }
         improvementPlan: { type: string, nullable: true, maxLength: 5000 }
+        taskTitle: { type: string, nullable: true, maxLength: 200 }
+        priority: { type: string, nullable: true, enum: [LOW, MEDIUM, HIGH, URGENT] }
+        estimatedMinutes: { type: integer, nullable: true, minimum: 1 }
+        learningGoal: { type: string, nullable: true, maxLength: 5000 }
+        acceptanceCriteria: { type: string, nullable: true, maxLength: 5000 }
+        verificationMethod: { type: string, nullable: true, maxLength: 1000 }
+        knowledgePointIds: { type: array, nullable: true, items: { type: string, format: uuid } }
     AiJobItem:
       type: object
       required: [id, aiJobId, payload, status, createdAt]
@@ -2009,6 +2027,7 @@ components:
           $ref: '#/components/schemas/AiItemPayload'
         status: { type: string, enum: [PROPOSED, ACCEPTED, REJECTED] }
         requirementId: { type: string, format: uuid, nullable: true, description: 采纳后创建的岗位要求 id }
+        taskId: { type: string, format: uuid, nullable: true, description: 采纳后创建的学习任务 id }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     AiJob:
@@ -2016,7 +2035,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }

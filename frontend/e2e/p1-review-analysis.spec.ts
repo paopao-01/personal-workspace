@@ -87,11 +87,11 @@ async function createCompletedInterview(
 test('P1 full review fields persist and cross-interview analysis aggregates reviews', async ({ page, request }) => {
   const suffix = Date.now()
   const interviewA = await createCompletedInterview(request, suffix, {
-    startsAt: '2026-05-10T10:00:00Z',
+    startsAt: '2025-05-10T10:00:00Z',
     result: 'PASSED',
   })
   const interviewB = await createCompletedInterview(request, suffix + 1, {
-    startsAt: '2026-05-20T14:00:00Z',
+    startsAt: '2025-05-20T14:00:00Z',
     result: 'FAILED',
   })
   const redisKpName = `Redis 缓存-${suffix}`
@@ -188,10 +188,10 @@ test('P1 full review fields persist and cross-interview analysis aggregates revi
   await expect(formField(page, '我的回答').locator('textarea')).toHaveValue('提到布隆过滤器，但漏了空值缓存')
   await expect(formField(page, '难度').locator('select')).toHaveValue('4')
 
-  // 跨面试聚合：用 5 月窗口隔离本用例数据（其他用例的面试均落在窗口外）
+  // 跨面试聚合：用专属 2025 年 5 月窗口隔离本用例数据
   await page.goto('/reviews/analysis')
-  await fillField(page, '开始日期', '2026-05-01')
-  await fillField(page, '结束日期', '2026-05-31')
+  await fillField(page, '开始日期', '2025-05-01')
+  await fillField(page, '结束日期', '2025-05-31')
   const analysisResponse = page.waitForResponse((response) =>
     response.url().includes('/api/reviews/analysis') &&
     response.request().method() === 'GET',

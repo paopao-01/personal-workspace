@@ -35,6 +35,10 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		[
 		  {"type":"ANSWER_QUALITY","rawText":"覆盖了核心概念，但缺少故障场景与取舍说明。","normalizedName":"回答质量分析","answerStatus":"PARTIALLY_ANSWERED","referenceAnswer":"先说明机制，再比较适用场景、风险和恢复策略。","errorReason":"缺少方案取舍和边界条件。","improvementPlan":"按机制、场景、取舍、案例四步重新组织回答。","rationale":"原回答只提到了机制名称。"}
 		]""";
+	private static final String TASK_SUGGESTION_JSON = """
+		[
+		  {"type":"LEARNING_TASK","rawText":"完成一次可验证的口述演练。","taskTitle":"补齐缓存一致性回答","priority":"HIGH","estimatedMinutes":45,"learningGoal":"能够解释核心机制和边界条件。","acceptanceCriteria":"能在 3 分钟内完整回答原问题并说明一个边界场景。","verificationMethod":"口述演练并记录验证结果","rationale":"原问题回答存在薄弱点。"}
+		]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -45,7 +49,9 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
 			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String candidates = request.contains("ANSWER_QUALITY")
+			String candidates = request.contains("LEARNING_TASK")
+				? TASK_SUGGESTION_JSON
+				: request.contains("ANSWER_QUALITY")
 				? ANSWER_QUALITY_JSON
 				: request.contains("PROJECT_EXPERIENCE") ? QUESTION_CLASSIFICATION_JSON : CANDIDATES_JSON;
 			String contentJson = CONTENT_JSON.writeValueAsString(candidates);
@@ -95,6 +101,11 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 
 	private String createAnswerQualityAnalysis(String questionId) {
 		return restTemplate.exchange(url("/interview-questions/" + questionId + "/ai-answer-analysis"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+	}
+
+	private String createTaskSuggestion(String questionId) {
+		return restTemplate.exchange(url("/interview-questions/" + questionId + "/ai-task-suggestion"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
 	}
 
@@ -352,6 +363,63 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.str(rejected, "status")).isEqualTo("REJECTED");
 		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class)
 			.getBody(), "questions.0.referenceAnswer")).isEqualTo("编辑后的参考答案");
+	}
+
+	@Test
+	void P1_taskSuggestionRequiresAcceptanceAndLinksExistingSources() throws Exception {
+		String baseUrl = "http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1";
+		createActiveProvider(baseUrl);
+		String interviewId = createCompletedInterview();
+		String review = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String reviewId = JsonProbe.str(review, "id");
+		String knowledgePointId = JsonProbe.str(restTemplate.exchange(url("/knowledge-points"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"name\":\"AI 任务建议知识点\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class).getBody(), "id");
+		String question = restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存一致性如何处理？\",\"answerStatus\":\"PARTIALLY_ANSWERED\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String questionId = JsonProbe.str(question, "id");
+
+		String before = restTemplate.getForEntity(url("/tasks"), String.class).getBody();
+		assertThat(JsonProbe.intVal(before, "total")).isZero();
+		String aiJob = createTaskSuggestion(questionId);
+		assertThat(JsonProbe.str(aiJob, "jobType")).isEqualTo("TASK_SUGGESTION");
+		assertThat(JsonProbe.str(aiJob, "promptVersion")).isEqualTo("TASK_SUGGESTION_V1");
+		String finished = waitForTerminal(JsonProbe.str(aiJob, "id"));
+		assertThat(JsonProbe.str(finished, "status")).isEqualTo("SUCCEEDED");
+		assertThat(JsonProbe.str(finished, "items.0.status")).isEqualTo("PROPOSED");
+		assertThat(JsonProbe.str(finished, "items.0.payload.type")).isEqualTo("LEARNING_TASK");
+		assertThat(JsonProbe.str(finished, "items.0.payload.priority")).isEqualTo("HIGH");
+		assertThat(JsonProbe.intVal(restTemplate.getForEntity(url("/tasks"), String.class).getBody(), "total")).isZero();
+
+		String itemId = JsonProbe.str(finished, "items.0.id");
+		String accepted = restTemplate.exchange(url("/ai-job-items/" + itemId + "/accept"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"payload\":{\"type\":\"LEARNING_TASK\",\"rawText\":\"编辑后的建议\",\"taskTitle\":\"编辑后的学习任务\",\"priority\":\"URGENT\",\"estimatedMinutes\":30,\"learningGoal\":\"编辑后的目标\",\"acceptanceCriteria\":\"编辑后的验收标准\",\"verificationMethod\":\"编辑后的验证方式\"}}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class).getBody();
+		assertThat(JsonProbe.str(accepted, "status")).isEqualTo("ACCEPTED");
+		String taskId = JsonProbe.str(accepted, "taskId");
+		assertThat(taskId).isNotEqualTo("null");
+		String task = restTemplate.getForEntity(url("/tasks"), String.class).getBody();
+		assertThat(JsonProbe.str(task, "items.0.title")).isEqualTo("编辑后的学习任务");
+		assertThat(JsonProbe.str(task, "items.0.status")).isEqualTo("TODO");
+		assertThat(JsonProbe.str(task, "items.0.knowledgePoints.0.id")).isEqualTo(knowledgePointId);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_source WHERE task_id=? AND source_type='QUESTION' AND source_id=?",
+			Integer.class, taskId, questionId)).isEqualTo(1);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_source WHERE task_id=? AND source_type='KNOWLEDGE_POINT' AND source_id=?",
+			Integer.class, taskId, knowledgePointId)).isEqualTo(1);
+
+		String second = createTaskSuggestion(questionId);
+		String secondFinished = waitForTerminal(JsonProbe.str(second, "id"));
+		String secondItemId = JsonProbe.str(secondFinished, "items.0.id");
+		restTemplate.exchange(url("/interview-questions/" + questionId), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"content\":\"缓存一致性如何处理？\",\"answerStatus\":\"PARTIALLY_ANSWERED\",\"type\":\"人工补充\",\"knowledgePointIds\":[\"" + knowledgePointId + "\"]}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class);
+		ResponseEntity<String> stale = restTemplate.exchange(url("/ai-job-items/" + secondItemId + "/accept"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(JsonProbe.intVal(restTemplate.getForEntity(url("/tasks"), String.class).getBody(), "total")).isEqualTo(1);
 	}
 
 	@Test

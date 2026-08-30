@@ -231,6 +231,21 @@ When “我的回答”为空、用户拒绝候选或使用旧版本采纳
 Then 分别返回业务规则错误、REJECTED 或版本冲突，且问题记录不产生副作用
 ```
 
+### AT-17C AI 学习任务建议必须经用户采纳
+
+```gherkin
+Given 一道 PARTIALLY_ANSWERED 问题关联知识点 Redis
+When 用户发起 AI 学习任务建议并等待任务成功
+Then 返回一个 PROPOSED 的可编辑任务候选
+And 数据库中没有新增 learning_task
+When 用户编辑标题、验收标准和验证方式，并携带问题当前版本采纳
+Then 创建一条 TODO 学习任务
+And 任务通过 task_source 关联原问题和已有 Redis 知识点
+And 候选状态变为 ACCEPTED 并回链任务 ID
+When 用户拒绝候选或使用旧版本采纳
+Then 分别返回 REJECTED 或版本冲突，且不创建任务
+```
+
 ### AT-18 从问题创建任务必须由用户确认
 
 ```gherkin

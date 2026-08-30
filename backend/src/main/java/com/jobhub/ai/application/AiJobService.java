@@ -24,6 +24,9 @@ import com.jobhub.job.infrastructure.JobMapper;
 import com.jobhub.review.application.ReviewService;
 import com.jobhub.review.domain.InterviewQuestion;
 import com.jobhub.review.infrastructure.QuestionMapper;
+import com.jobhub.task.application.TaskCreateCommand;
+import com.jobhub.task.application.TaskService;
+import com.jobhub.task.domain.TaskPriority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +48,7 @@ public class AiJobService {
 	private final RequirementService requirementService;
 	private final QuestionMapper questionMapper;
 	private final ReviewService reviewService;
+	private final TaskService taskService;
 	private final AiJobExecutor executor;
 	private final IdGenerator ids;
 	private final UtcTime time;
@@ -52,7 +56,8 @@ public class AiJobService {
 
 	public AiJobService(AiJobMapper aiJobMapper, AiJobItemMapper itemMapper, AiProviderMapper providerMapper,
 			JobMapper jobMapper, RequirementService requirementService, AiJobExecutor executor, IdGenerator ids,
-			UtcTime time, List<AiTaskHandler> handlers, QuestionMapper questionMapper, ReviewService reviewService) {
+			UtcTime time, List<AiTaskHandler> handlers, QuestionMapper questionMapper, ReviewService reviewService,
+			TaskService taskService) {
 		this.aiJobMapper = aiJobMapper;
 		this.itemMapper = itemMapper;
 		this.providerMapper = providerMapper;
@@ -60,6 +65,7 @@ public class AiJobService {
 		this.requirementService = requirementService;
 		this.questionMapper = questionMapper;
 		this.reviewService = reviewService;
+		this.taskService = taskService;
 		this.executor = executor;
 		this.ids = ids;
 		this.time = time;
@@ -112,6 +118,35 @@ public class AiJobService {
 		aiJob.setPromptVersion(promptVersion(AiJobType.ANSWER_QUALITY_ANALYSIS));
 		aiJob.setAttemptCount(0);
 		aiJob.setInputSnapshot(serializeAnswerSnapshot(question));
+		aiJob.setCreatedAt(now);
+		aiJob.setUpdatedAt(now);
+		aiJobMapper.insert(aiJob);
+		submitAfterCommit(aiJob.getId());
+		return requireJob(aiJob.getId());
+	}
+
+	@Transactional
+	public AiJob createTaskSuggestion(String questionId) {
+		InterviewQuestion question = questionMapper.selectById(questionId);
+		VersionCheck.requireFound(question, "InterviewQuestion", questionId);
+		question.setKnowledgePoints(questionMapper.selectKnowledgePoints(questionId));
+		if (question.getAnswerStatus() == null || question.getAnswerStatus() == com.jobhub.review.domain.AnswerStatus.FULLY_ANSWERED) {
+			throw new BusinessRuleException("只有部分答出或未答出的问题可以生成学习任务建议");
+		}
+		AiProvider provider = requireActiveProvider();
+		String now = time.now();
+		AiJob aiJob = new AiJob();
+		aiJob.setId(ids.newId());
+		aiJob.setJobType(AiJobType.TASK_SUGGESTION);
+		aiJob.setObjectId(questionId);
+		aiJob.setObjectVersion(question.getVersion());
+		aiJob.setStatus(AiJobStatus.QUEUED);
+		aiJob.setProviderId(provider.getId());
+		aiJob.setProviderType(provider.getProviderType().name());
+		aiJob.setModel(provider.getModel());
+		aiJob.setPromptVersion(promptVersion(AiJobType.TASK_SUGGESTION));
+		aiJob.setAttemptCount(0);
+		aiJob.setInputSnapshot(serializeTaskSuggestionSnapshot(question));
 		aiJob.setCreatedAt(now);
 		aiJob.setUpdatedAt(now);
 		aiJobMapper.insert(aiJob);
@@ -249,7 +284,7 @@ public class AiJobService {
 			validateQuestionCategory(payload.type());
 			reviewService.applyAiClassification(itemJob.getObjectId(), questionVersion, payload.type());
 			String editedJson = editedPayload == null ? null : serialize(editedPayload);
-			if (itemMapper.markAccepted(itemId, editedJson, null, now) == 0) {
+			if (itemMapper.markAccepted(itemId, editedJson, null, null, now) == 0) {
 				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"条目状态已变化");
 			}
@@ -263,7 +298,34 @@ public class AiJobService {
 			reviewService.applyAiAnswerAnalysis(itemJob.getObjectId(), questionVersion, payload.answerStatus(),
 				payload.referenceAnswer(), payload.errorReason(), payload.improvementPlan());
 			String editedJson = editedPayload == null ? null : serialize(editedPayload);
-			if (itemMapper.markAccepted(itemId, editedJson, null, now) == 0) {
+			if (itemMapper.markAccepted(itemId, editedJson, null, null, now) == 0) {
+				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+					"条目状态已变化");
+			}
+			return itemMapper.selectById(itemId);
+		}
+		if (itemJob.getJobType() == AiJobType.TASK_SUGGESTION) {
+			InterviewQuestion question = questionMapper.selectById(itemJob.getObjectId());
+			VersionCheck.requireFound(question, "InterviewQuestion", itemJob.getObjectId());
+			question.setKnowledgePoints(questionMapper.selectKnowledgePoints(itemJob.getObjectId()));
+			if (questionVersion == null) {
+				throw new BusinessRuleException("采纳学习任务建议时必须携带问题当前版本");
+			}
+			if (question.getVersion() != questionVersion) {
+				throw new com.jobhub.common.error.VersionConflictException(question.getVersion());
+			}
+			if (question.getAnswerStatus() == null || question.getAnswerStatus() == com.jobhub.review.domain.AnswerStatus.FULLY_ANSWERED) {
+				throw new BusinessRuleException("只有部分答出或未答出的问题可以创建学习任务");
+			}
+			validateTaskSuggestion(payload, question);
+			TaskPriority priority = parsePriority(payload.priority());
+			var task = taskService.create(new TaskCreateCommand(
+				payload.taskTitle().trim(), "AI_SUGGESTED", payload.knowledgePointIds(), List.of(),
+				List.of(question.getId()), priority, payload.estimatedMinutes(), null,
+				payload.learningGoal().trim(), payload.acceptanceCriteria().trim(),
+				payload.verificationMethod().trim(), null));
+			String editedJson = editedPayload == null ? null : serialize(editedPayload);
+			if (itemMapper.markAccepted(itemId, editedJson, null, task.getId(), now) == 0) {
 				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"条目状态已变化");
 			}
@@ -272,7 +334,7 @@ public class AiJobService {
 		var requirement = requirementService.createAiCandidate(requireJobOfItem(item), payload.type(),
 				payload.rawText(), payload.normalizedName(), payload.proficiencyText());
 		String editedJson = editedPayload == null ? null : serialize(editedPayload);
-		if (itemMapper.markAccepted(itemId, editedJson, requirement.getId(), now) == 0) {
+		if (itemMapper.markAccepted(itemId, editedJson, requirement.getId(), null, now) == 0) {
 			throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
 					"条目状态已变化");
 		}
@@ -311,7 +373,14 @@ public class AiJobService {
 			edited.answerStatus() == null ? base.answerStatus() : edited.answerStatus(),
 			edited.referenceAnswer() == null ? base.referenceAnswer() : edited.referenceAnswer(),
 			edited.errorReason() == null ? base.errorReason() : edited.errorReason(),
-			edited.improvementPlan() == null ? base.improvementPlan() : edited.improvementPlan());
+			edited.improvementPlan() == null ? base.improvementPlan() : edited.improvementPlan(),
+			edited.taskTitle() == null ? base.taskTitle() : edited.taskTitle(),
+			edited.priority() == null ? base.priority() : edited.priority(),
+			edited.estimatedMinutes() == null ? base.estimatedMinutes() : edited.estimatedMinutes(),
+			edited.learningGoal() == null ? base.learningGoal() : edited.learningGoal(),
+			edited.acceptanceCriteria() == null ? base.acceptanceCriteria() : edited.acceptanceCriteria(),
+			edited.verificationMethod() == null ? base.verificationMethod() : edited.verificationMethod(),
+			edited.knowledgePointIds() == null ? base.knowledgePointIds() : edited.knowledgePointIds());
 	}
 
 	private AiProvider requireActiveProvider() {
@@ -338,7 +407,8 @@ public class AiJobService {
 
 	private boolean isQuestionJobType(AiJobType jobType) {
 		return jobType == AiJobType.QUESTION_CLASSIFICATION
-			|| jobType == AiJobType.ANSWER_QUALITY_ANALYSIS;
+			|| jobType == AiJobType.ANSWER_QUALITY_ANALYSIS
+			|| jobType == AiJobType.TASK_SUGGESTION;
 	}
 
 	private String serializeAnswerSnapshot(InterviewQuestion question) {
@@ -351,6 +421,46 @@ public class AiJobService {
 	}
 
 	private record AnswerAnalysisSnapshot(String question, String myAnswer, String referenceAnswer) { }
+
+	private String serializeTaskSuggestionSnapshot(InterviewQuestion question) {
+		try {
+			return JSON.writeValueAsString(new TaskSuggestionSnapshot(question.getContent(), question.getAnswerStatus(),
+				question.getMyAnswer(), question.getReferenceAnswer(), question.getErrorReason(), question.getImprovementPlan(),
+				question.getKnowledgePoints().stream().map(p -> new KnowledgePointSnapshot(p.getId(), p.getName(), p.getCategory())).toList()));
+		} catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+			throw new BusinessRuleException("学习任务建议输入快照序列化失败：" + ex.getMessage());
+		}
+	}
+
+	private record TaskSuggestionSnapshot(String question, com.jobhub.review.domain.AnswerStatus answerStatus,
+		String myAnswer, String referenceAnswer, String errorReason, String improvementPlan,
+		List<KnowledgePointSnapshot> knowledgePoints) { }
+	private record KnowledgePointSnapshot(String id, String name, String category) { }
+
+	private void validateTaskSuggestion(AiItemPayload payload, InterviewQuestion question) {
+		if (!"LEARNING_TASK".equals(payload.type()) || isBlank(payload.taskTitle())
+				|| isBlank(payload.learningGoal()) || isBlank(payload.acceptanceCriteria())
+				|| isBlank(payload.verificationMethod()) || payload.estimatedMinutes() == null
+				|| payload.estimatedMinutes() < 1 || isBlank(payload.priority())) {
+			throw new BusinessRuleException("学习任务建议候选值无效");
+		}
+		parsePriority(payload.priority());
+		var allowed = question.getKnowledgePoints().stream().map(p -> p.getId()).collect(java.util.stream.Collectors.toSet());
+		if (payload.knowledgePointIds() != null && payload.knowledgePointIds().stream()
+				.anyMatch(id -> id == null || !allowed.contains(id))) {
+			throw new BusinessRuleException("学习任务建议只能关联问题已有知识点");
+		}
+	}
+
+	private TaskPriority parsePriority(String value) {
+		try {
+			return TaskPriority.valueOf(value);
+		} catch (Exception ex) {
+			throw new BusinessRuleException("学习任务建议优先级无效");
+		}
+	}
+
+	private boolean isBlank(String value) { return value == null || value.isBlank(); }
 
 	private String requireJobOfItem(AiJobItem item) {
 		AiJob job = aiJobMapper.selectById(item.getAiJobId());

@@ -71,7 +71,16 @@ export async function createAnswerQualityAnalysis(questionId: string): Promise<A
   return res.data
 }
 
-export type QuestionAiJobType = 'QUESTION_CLASSIFICATION' | 'ANSWER_QUALITY_ANALYSIS'
+export async function createTaskSuggestion(questionId: string): Promise<AiJob> {
+  const res = await apiClient.post<AiJob>(
+    `/interview-questions/${questionId}/ai-task-suggestion`,
+    {},
+    { headers: idem() },
+  )
+  return res.data
+}
+
+export type QuestionAiJobType = 'QUESTION_CLASSIFICATION' | 'ANSWER_QUALITY_ANALYSIS' | 'TASK_SUGGESTION'
 
 export async function listAiJobsByQuestion(
   questionId: string,

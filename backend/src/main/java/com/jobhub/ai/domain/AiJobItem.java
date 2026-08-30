@@ -10,6 +10,7 @@ public class AiJobItem {
 	private String editedPayloadJson;
 	private AiJobItemStatus status;
 	private String requirementId;
+	private String taskId;
 	private int sortOrder;
 	private String createdAt;
 	private String updatedAt;
@@ -43,6 +44,7 @@ public class AiJobItem {
 	public String getEditedPayloadJson() { return editedPayloadJson; }
 	public AiJobItemStatus getStatus() { return status; }
 	public String getRequirementId() { return requirementId; }
+	public String getTaskId() { return taskId; }
 	public int getSortOrder() { return sortOrder; }
 	public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
 	public String getCreatedAt() { return createdAt; }

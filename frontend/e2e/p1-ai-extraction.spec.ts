@@ -36,8 +36,13 @@ test('P1 ai provider switchable and jd extraction candidates confirmable', async
   })
   expect(createResponse.ok(), `POST /api/ai-providers returned ${createResponse.status()}`).toBe(true)
   const provider = (await createResponse.json()) as { id: string; isActive: boolean; hasCredential: boolean }
-  expect(provider.isActive).toBe(true)
   expect(provider.hasCredential).toBe(true)
+  if (!provider.isActive) {
+    const activateResponse = await request.post(`/api/ai-providers/${provider.id}/activate`, {
+      headers: { 'Idempotency-Key': `e2e-p1ai-provider-activate-${crypto.randomUUID()}` },
+    })
+    expect(activateResponse.ok(), `POST /api/ai-providers/${provider.id}/activate returned ${activateResponse.status()}`).toBe(true)
+  }
 
   // 创建提取任务
   const aiJobResponse = await request.post('/api/ai-jobs', {

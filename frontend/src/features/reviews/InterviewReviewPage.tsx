@@ -29,6 +29,7 @@ import {
 import { answerStatusLabel, reviewStatusLabel } from '@/features/reviews/reviewLabels'
 import { AnswerQualityAnalysisSection } from '@/features/reviews/AnswerQualityAnalysisSection'
 import { QuestionClassificationSection } from '@/features/reviews/QuestionClassificationSection'
+import { TaskSuggestionSection } from '@/features/reviews/TaskSuggestionSection'
 
 interface QuestionDetailDraft {
   questionId: string
@@ -709,6 +710,11 @@ export function InterviewReviewPage() {
                     onChanged={() => reviewQuery.refetch()}
                   />
                   <AnswerQualityAnalysisSection
+                    question={question}
+                    disabled={cannotReview || isCompletedReview || pending}
+                    onChanged={() => reviewQuery.refetch()}
+                  />
+                  <TaskSuggestionSection
                     question={question}
                     disabled={cannotReview || isCompletedReview || pending}
                     onChanged={() => reviewQuery.refetch()}

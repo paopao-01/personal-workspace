@@ -36,6 +36,11 @@ public class AiJobController {
 		return ResponseEntity.status(202).body(AiJobResponse.from(service.createAnswerQualityAnalysis(questionId)));
 	}
 
+	@PostMapping("/interview-questions/{questionId}/ai-task-suggestion")
+	public ResponseEntity<AiJobResponse> createTaskSuggestion(@PathVariable String questionId) {
+		return ResponseEntity.status(202).body(AiJobResponse.from(service.createTaskSuggestion(questionId)));
+	}
+
 	@GetMapping("/interview-questions/{questionId}/ai-jobs")
 	public List<AiJobResponse> listQuestionJobs(@PathVariable String questionId,
 			@RequestParam(defaultValue = "QUESTION_CLASSIFICATION") AiJobType jobType) {

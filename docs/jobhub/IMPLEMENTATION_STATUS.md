@@ -4,12 +4,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十七个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试；AI 面试问题分类；AI 回答质量分析。
-- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 学习任务建议，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
+- 项目阶段：P1（V0.2）进行中，已完成十八个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试；AI 面试问题分类；AI 回答质量分析；AI 学习任务建议。
+- 里程碑说明：V0.2 主流程已完成；当前仅剩按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26、AT-17A、AT-17B 已覆盖。
-- 当前任务：AI 回答质量分析已完成；下一窗口只做 AI 学习任务建议候选的可验证垂直切片；`ai_provider` 删除端点仍按需保留。
+- 当前任务：AI 学习任务建议候选已完成；`ai_provider` 删除端点仍按需保留，后续窗口可按需求决定是否补充。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-30（窗口 2026-08-30-06）。
+- 最后更新：2026-08-30（窗口 2026-08-30-07）。
 
 ## 2. 已完成内容
 
@@ -71,6 +71,39 @@
 | M4 | 面试准备包、项目案例、证据、导出、最近删除 | `DONE` | M3 完成 | AT-20 至 AT-24 通过 |
 
 ## 5. 当前窗口交接
+
+### 窗口 2026-08-30-07
+
+- 目标：完成 P1 AI 学习任务建议候选垂直切片；候选仅供人工编辑和采纳，采纳后才创建 TODO 学习任务及可追溯来源。
+- 状态：**DONE**。
+- 已完成：
+  - 先更新 OpenAPI、状态机、数据库设计、页面规格、PRD、技术实施说明和 AT-17C；新增 `POST /interview-questions/{questionId}/ai-task-suggestion`，扩展 `TASK_SUGGESTION`、`LEARNING_TASK` 和候选 `taskId` 契约。
+  - 新增 Flyway `V14__link_ai_task_suggestions.sql` 保存采纳后任务 ID；新增 `V15__allow_task_suggestion_ai_jobs.sql` 扩展 AI 任务/条目约束，保持 V1~V13 不变。
+  - 新增 `TASK_SUGGESTION_V1` handler：只读取问题、用户回答、参考答案、错误原因、改进方案和已有知识点；输出一个可编辑学习任务候选，不创造事实、知识点或任务。
+  - 采纳前候选保持 `PROPOSED`；采纳要求问题当前版本，使用既有任务命令在同一事务创建 TODO 任务、QUESTION/KNOWLEDGE_POINT 来源并回链 `taskId`；过期版本不产生任务副作用。
+  - 复盘页新增 AI 学习任务建议区，支持生成、轮询、编辑任务字段、采纳创建或拒绝；保留原有手工创建学习任务路径。
+  - 集成测试覆盖弱问题限制、候选不自动创建任务、采纳字段编辑、来源关联、任务回链和问题版本冲突；新增浏览器 E2E 覆盖主路径。
+  - 同步修正 E2E 的精确文本定位、AI provider 显式激活和跨测试日期窗口隔离，避免共享测试数据库造成误报。
+- 未完成：
+  - `ai_provider` 删除端点仍按需保留。
+  - 不自动创建学习任务、不自动提升技能等级、不自动清除薄弱点、不读取或上传证据引用位置内容。
+- 修改文件：
+  - 规格：`docs/jobhub/01-page-spec.md`、`02-state-machines.md`、`03-openapi.yaml`、`04-database-design.md`、`05-acceptance-test-cases.md`、`06-technical-implementation.md`、`jobhub-prd.md`、本文件。
+  - 后端：`V14__link_ai_task_suggestions.sql`、`V15__allow_task_suggestion_ai_jobs.sql`、任务建议 handler、AI 任务服务/API/模型/Mapper、`AiIntegrationTest`。
+  - 前端：AI API/hooks、复盘页任务建议区、假 AI 服务、任务建议 E2E，以及相关回归用例隔离修正。
+- 已运行验证：
+  - `mvn -Dtest=AiIntegrationTest test`：6 tests，0 failures，0 errors。
+  - `mvn clean test`：86 tests，0 failures，0 errors；Flyway V1→V15 全部通过。
+  - `npm run gen-types`、`npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+  - `npm run e2e -- e2e/p1-ai-task-suggestion.spec.ts --reporter=list`：1 passed。
+  - `npm run e2e -- --reporter=list`：25 passed，0 failed。
+- 已知问题：
+  - Playwright 仍输出既有 React Router v7 future flag 与 Node `NO_COLOR` warning，不影响断言。
+  - Git 仍可能输出用户级 `C:\Users\35433/.config/git/ignore` 权限 warning，不影响仓库文件检查。
+- 下一窗口只做：
+  - 按用户需求决定是否补充 `ai_provider` 删除端点；否则 P1/V0.2 当前规划切片完成。
+- 不要重复做：
+  - 不要修改 V1~V15；不要让 AI 自动创建任务或覆盖用户事实；不要增加附件读取、上传、扫描或下载。
 
 ### 窗口 2026-08-29-17
 

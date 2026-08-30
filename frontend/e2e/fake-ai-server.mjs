@@ -29,6 +29,20 @@ const ANSWER_QUALITY_ANALYSIS = [
   },
 ]
 
+const TASK_SUGGESTION = [
+  {
+    type: 'LEARNING_TASK',
+    rawText: '围绕原问题完成一次可验证的口述演练。',
+    taskTitle: '补齐缓存一致性回答',
+    priority: 'HIGH',
+    estimatedMinutes: 45,
+    learningGoal: '能够解释核心机制、风险和改进方案。',
+    acceptanceCriteria: '能在 3 分钟内完整回答原问题并说明一个边界场景。',
+    verificationMethod: '口述演练并记录验证结果',
+    rationale: '问题回答存在薄弱点，需要通过练习形成可复用表达。',
+  },
+]
+
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200).end('ok')
@@ -47,7 +61,9 @@ const server = createServer((req, res) => {
         return
       }
       const requestText = JSON.stringify(body)
-      const content = requestText.includes('ANSWER_QUALITY')
+      const content = requestText.includes('LEARNING_TASK')
+        ? TASK_SUGGESTION
+        : requestText.includes('ANSWER_QUALITY')
         ? ANSWER_QUALITY_ANALYSIS
         : requestText.includes('PROJECT_EXPERIENCE')
           ? QUESTION_CLASSIFICATION
