@@ -123,7 +123,10 @@ function QuestionTypeStatsSection({ analysis }: { analysis: ReviewAnalysis }) {
 export function ReviewAnalysisPage() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [params, setParams] = useState<{ from?: string; to?: string }>({})
+  const [jobId, setJobId] = useState('')
+  const [compareFrom, setCompareFrom] = useState('')
+  const [compareTo, setCompareTo] = useState('')
+  const [params, setParams] = useState<{ from?: string; to?: string; jobId?: string; compareFrom?: string; compareTo?: string }>({})
   const analysisQuery = useReviewAnalysis(params)
 
   if (analysisQuery.isLoading) {
@@ -163,6 +166,17 @@ export function ReviewAnalysisPage() {
             <Field label="结束日期">
               <Input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
             </Field>
+            <Field label="岗位 ID" hint="可选；只统计该岗位的复盘">
+              <Input value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="岗位 UUID" />
+            </Field>
+          </div>
+          <div className="form-row">
+            <Field label="对比开始日期" hint="同时填写两个日期后显示薄弱点变化">
+              <Input type="date" value={compareFrom} onChange={(event) => setCompareFrom(event.target.value)} />
+            </Field>
+            <Field label="对比结束日期">
+              <Input type="date" value={compareTo} onChange={(event) => setCompareTo(event.target.value)} />
+            </Field>
           </div>
           <div className="flex-row" style={{ justifyContent: 'flex-end' }}>
             <Button
@@ -171,6 +185,9 @@ export function ReviewAnalysisPage() {
               onClick={() => {
                 setFrom('')
                 setTo('')
+                setJobId('')
+                setCompareFrom('')
+                setCompareTo('')
                 setParams({})
               }}
             >
@@ -183,6 +200,9 @@ export function ReviewAnalysisPage() {
                 setParams({
                   from: from || undefined,
                   to: to || undefined,
+                  jobId: jobId.trim() || undefined,
+                  compareFrom: compareFrom || undefined,
+                  compareTo: compareTo || undefined,
                 })
               }
             >
@@ -206,6 +226,29 @@ export function ReviewAnalysisPage() {
           <QuestionStatsSection analysis={analysis} />
           <KnowledgePointStatsSection analysis={analysis} />
           <QuestionTypeStatsSection analysis={analysis} />
+          {analysis.weakPointComparison ? (
+            <section className="card">
+              <div className="card-header"><h2 className="card-title">薄弱点改善对比</h2></div>
+              <div className="card-body">
+                <p className="muted">对比窗口：{analysis.weakPointComparison.compareTimeRange.from ?? '最早'} ~ {analysis.weakPointComparison.compareTimeRange.to ?? '今天'}；变化值 = 当前窗口 - 对比窗口，负数表示薄弱次数下降。</p>
+                {analysis.weakPointComparison.items.length === 0 ? <EmptyState icon="□" text="两个窗口暂无可比较的薄弱知识点" /> : (
+                  <div>
+                    {analysis.weakPointComparison.items.map((item) => (
+                      <div className="requirement-row" key={item.knowledgePoint.id}>
+                        <div className="requirement-main">
+                          <span className="requirement-raw">{item.knowledgePoint.name}</span>
+                          <span className="muted">当前 {item.currentWeightedWeaknessCount} · 对比 {item.compareWeightedWeaknessCount} · 题数 {item.currentQuestionCount}/{item.compareQuestionCount}</span>
+                        </div>
+                        <Badge variant={item.delta < 0 ? 'success' : item.delta > 0 ? 'warning' : 'subtle'}>
+                          {item.delta > 0 ? '+' : ''}{item.delta}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : null}
         </>
       )}
     </div>

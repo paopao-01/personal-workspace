@@ -215,10 +215,12 @@ public class ReviewService {
 	 * 跨面试复盘聚合分析：按面试开始日期与岗位过滤，只汇总原始计数，
 	 * 完全答出率以分子/分母片段输出（PRD 16.2），不做趋势推断。
 	 */
-	public ReviewAnalysis analysis(String from, String to, String jobId) {
+	public ReviewAnalysis analysis(String from, String to, String jobId, String compareFrom, String compareTo) {
 		String normalizedFrom = blankToNull(from);
 		String normalizedTo = blankToNull(to);
 		String normalizedJobId = blankToNull(jobId);
+		String normalizedCompareFrom = blankToNull(compareFrom);
+		String normalizedCompareTo = blankToNull(compareTo);
 		long totalCount = 0;
 		long fullyAnsweredCount = 0;
 		long partiallyAnsweredCount = 0;
@@ -265,9 +267,41 @@ public class ReviewService {
 				default -> { }
 			}
 		}
+		ReviewAnalysis.WeakPointComparison weakPointComparison = null;
+		if (normalizedCompareFrom != null && normalizedCompareTo != null) {
+			weakPointComparison = buildWeakPointComparison(normalizedFrom, normalizedTo, normalizedCompareFrom,
+				normalizedCompareTo, normalizedJobId);
+		}
 		return new ReviewAnalysis(normalizedFrom, normalizedTo, reviewCount, totalCount, fullyAnsweredCount,
 			partiallyAnsweredCount, unansweredCount, knowledgePointStats, questionTypeStats, withResultCount,
-			passedCount, failedCount, pendingCount);
+			passedCount, failedCount, pendingCount, weakPointComparison);
+	}
+
+	private ReviewAnalysis.WeakPointComparison buildWeakPointComparison(String currentFrom, String currentTo,
+			String compareFrom, String compareTo, String jobId) {
+		List<WeakKnowledgePoint> current = weakKnowledgePoints(currentFrom, currentTo, jobId);
+		List<WeakKnowledgePoint> compare = weakKnowledgePoints(compareFrom, compareTo, jobId);
+		java.util.Map<String, WeakKnowledgePoint> currentById = current.stream()
+			.collect(java.util.stream.Collectors.toMap(item -> item.getKnowledgePoint().getId(), item -> item, (a, b) -> a,
+				java.util.LinkedHashMap::new));
+		java.util.Map<String, WeakKnowledgePoint> compareById = compare.stream()
+			.collect(java.util.stream.Collectors.toMap(item -> item.getKnowledgePoint().getId(), item -> item, (a, b) -> a,
+				java.util.LinkedHashMap::new));
+		java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+		ids.addAll(currentById.keySet());
+		ids.addAll(compareById.keySet());
+		List<ReviewAnalysis.WeakPointComparisonItem> items = ids.stream().map(id -> {
+			WeakKnowledgePoint currentItem = currentById.get(id);
+			WeakKnowledgePoint compareItem = compareById.get(id);
+			WeakKnowledgePoint source = currentItem != null ? currentItem : compareItem;
+			double currentCount = currentItem == null ? 0 : currentItem.getWeightedWeaknessCount();
+			double compareCount = compareItem == null ? 0 : compareItem.getWeightedWeaknessCount();
+			return new ReviewAnalysis.WeakPointComparisonItem(source.getKnowledgePoint(), currentCount, compareCount,
+				currentCount - compareCount, currentItem == null ? 0 : currentItem.getQuestionCount(),
+				compareItem == null ? 0 : compareItem.getQuestionCount());
+		}).sorted(java.util.Comparator.comparingDouble(ReviewAnalysis.WeakPointComparisonItem::delta).reversed()
+			.thenComparing(item -> item.knowledgePoint().getName())).toList();
+		return new ReviewAnalysis.WeakPointComparison(compareFrom, compareTo, items);
 	}
 
 	private InterviewReview hydrate(InterviewReview review) {

@@ -9,8 +9,9 @@ public record ReviewAnalysisResponse(
 	long reviewCount,
 	QuestionStats questionStats,
 	List<KnowledgePointStat> knowledgePointStats,
-	List<QuestionTypeStat> questionTypeStats,
-	InterviewResultSummary interviewResultSummary
+		List<QuestionTypeStat> questionTypeStats,
+		InterviewResultSummary interviewResultSummary,
+		WeakPointComparison weakPointComparison
 ) {
 	public record TimeRange(String from, String to) { }
 
@@ -42,6 +43,20 @@ public record ReviewAnalysisResponse(
 		long pendingCount
 	) { }
 
+	public record WeakPointComparison(
+		TimeRange compareTimeRange,
+		List<WeakPointComparisonItem> items
+	) { }
+
+	public record WeakPointComparisonItem(
+		KnowledgePoint knowledgePoint,
+		double currentWeightedWeaknessCount,
+		double compareWeightedWeaknessCount,
+		double delta,
+		int currentQuestionCount,
+		int compareQuestionCount
+	) { }
+
 	public static ReviewAnalysisResponse from(ReviewAnalysis analysis) {
 		var knowledgePointStats = analysis.knowledgePointStats().stream()
 			.map(stat -> new KnowledgePointStat(stat.knowledgePoint(), stat.questionCount(),
@@ -50,6 +65,11 @@ public record ReviewAnalysisResponse(
 		var questionTypeStats = analysis.questionTypeStats().stream()
 			.map(stat -> new QuestionTypeStat(stat.type(), stat.questionCount(), stat.fullyAnsweredCount()))
 			.toList();
+		WeakPointComparison weakPointComparison = analysis.weakPointComparison() == null ? null : new WeakPointComparison(
+			new TimeRange(analysis.weakPointComparison().compareFrom(), analysis.weakPointComparison().compareTo()),
+			analysis.weakPointComparison().items().stream().map(item -> new WeakPointComparisonItem(item.knowledgePoint(),
+				item.currentWeightedWeaknessCount(), item.compareWeightedWeaknessCount(), item.delta(),
+				item.currentQuestionCount(), item.compareQuestionCount())).toList());
 		return new ReviewAnalysisResponse(
 			new TimeRange(analysis.from(), analysis.to()),
 			analysis.reviewCount(),
@@ -59,7 +79,8 @@ public record ReviewAnalysisResponse(
 			knowledgePointStats,
 			questionTypeStats,
 			new InterviewResultSummary(analysis.reviewCount(), analysis.withResultCount(), analysis.passedCount(),
-				analysis.failedCount(), analysis.pendingCount())
+				analysis.failedCount(), analysis.pendingCount()),
+			weakPointComparison
 		);
 	}
 }

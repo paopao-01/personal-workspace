@@ -69,6 +69,10 @@ class MatchReportIntegrationTest extends AbstractIntegrationTest {
 		String latestFresh = restTemplate.getForEntity(url("/jobs/" + jobId + "/match-reports/latest"), String.class).getBody();
 		assertThat(JsonProbe.str(latestFresh, "stale")).isEqualTo("false");
 		assertThat(JsonProbe.str(latestFresh, "id")).isNotEqualTo(reportId);
+
+		String history = restTemplate.getForEntity(url("/jobs/" + jobId + "/match-reports"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(history, "")).isEqualTo(2);
+		assertThat(history).contains(reportId);
 	}
 
 	@Test

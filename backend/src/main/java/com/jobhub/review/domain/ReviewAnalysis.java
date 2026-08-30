@@ -15,13 +15,20 @@ public record ReviewAnalysis(
 	long partiallyAnsweredCount,
 	long unansweredCount,
 	List<KnowledgePointStat> knowledgePointStats,
-	List<QuestionTypeStat> questionTypeStats,
-	long withResultCount,
-	long passedCount,
-	long failedCount,
-	long pendingCount
+		List<QuestionTypeStat> questionTypeStats,
+		long withResultCount,
+		long passedCount,
+		long failedCount,
+		long pendingCount,
+		WeakPointComparison weakPointComparison
 ) {
 	public record KnowledgePointStat(KnowledgePoint knowledgePoint, long questionCount, long fullyAnsweredCount) { }
 
 	public record QuestionTypeStat(String type, long questionCount, long fullyAnsweredCount) { }
+
+	public record WeakPointComparison(String compareFrom, String compareTo, List<WeakPointComparisonItem> items) { }
+
+	public record WeakPointComparisonItem(KnowledgePoint knowledgePoint,
+			double currentWeightedWeaknessCount, double compareWeightedWeaknessCount, double delta,
+			int currentQuestionCount, int compareQuestionCount) { }
 }

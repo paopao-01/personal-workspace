@@ -82,6 +82,15 @@ public class MatchReportService {
 		return view(report, stale);
 	}
 
+	public List<MatchReportView> history(String jobId) {
+		Job job = jobMapper.selectById(jobId);
+		VersionCheck.requireFound(job, "Job", jobId);
+		String current = fingerprint(gapListService.getGapList(jobId));
+		return matchReportMapper.selectHistoryByJob(jobId).stream()
+			.map(report -> view(report, !current.equals(report.getInputFingerprint())))
+			.toList();
+	}
+
 	private MatchReportContent build(List<GapItem> items) {
 		List<MatchReportContent.Item> requirementItems = new ArrayList<>();
 		for (GapItem item : items) {

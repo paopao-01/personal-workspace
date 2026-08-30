@@ -94,8 +94,10 @@ public class ReviewController {
 	public ReviewAnalysisResponse analysis(
 			@RequestParam(value = "from", required = false) String from,
 			@RequestParam(value = "to", required = false) String to,
-			@RequestParam(value = "jobId", required = false) String jobId) {
-		return ReviewAnalysisResponse.from(service.analysis(from, to, jobId));
+			@RequestParam(value = "jobId", required = false) String jobId,
+			@RequestParam(value = "compareFrom", required = false) String compareFrom,
+			@RequestParam(value = "compareTo", required = false) String compareTo) {
+		return ReviewAnalysisResponse.from(service.analysis(from, to, jobId, compareFrom, compareTo));
 	}
 
 	@GetMapping("/knowledge-points/weak")

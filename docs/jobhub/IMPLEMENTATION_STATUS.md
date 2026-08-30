@@ -1,5 +1,26 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-08-30-11
+
+- 目标：补齐现有 P0/P1 部分实现与增强缺口，在 `dev` 完成开发验证后合并 `main` 并推送远程。
+- 状态：**DONE**。
+- 已完成：
+  - 面试准备事项支持按清单项勾选完成/取消，沿用面试版本乐观锁、幂等命令和准备包缓存失效。
+  - 学习任务补齐类型返回字段、知识点/面试筛选、创建关联字段、详情编辑页和来源引用展示。
+  - 项目证据维护页增加技能关联选择，并保留后端技能事实校验。
+  - 复盘分析增加岗位筛选与两个时间窗口的薄弱点加权变化对比。
+  - 岗位匹配报告增加历史快照查询、过期状态识别和前端历史对比展示。
+  - OpenAPI、后端接口、前端 API 类型与新增自动化测试同步更新。
+- 未完成/不在本窗口范围：Service Worker 推送、邮件重试增强、导入报告持久化、附件真实上传/读取、AI 模拟面试与连续追问、简历多版本比较、日历同步、跨设备备份等 P2/V0.3/V1 能力。
+- 修改文件：OpenAPI；interview/job/review/task 后端及集成测试；任务、面试、项目证据、复盘、匹配报告前端及新增 E2E；本文件。
+- 已运行验证：
+  - `cd backend && mvn clean test`：91 tests，0 failures，0 errors；Flyway V1→V17 迁移成功。
+  - `cd frontend && npm run gen-types`、`npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+  - `cd frontend && npm run e2e -- e2e/p1-gap-closures.spec.ts --reporter=list`：1 passed。
+  - `cd frontend && npm run e2e -- --reporter=list`：27 passed，0 failed。
+  - 浏览器运行态抽查 `/tasks`：页面结构、任务表单、筛选器和空态正常；仅有既有 React Router future flag warning，无应用错误。
+- 下一步：提交 `dev`，推送 `origin/dev`，合并到 `main`，推送 `origin/main`，并复核远程分支指针。
+
 ### 窗口 2026-08-30-10
 
 - 目标：承接上一窗口结果完成发布前回归，并修复全量浏览器回归中暴露的测试契约漂移；验证后合并到 `main` 并推送远程。

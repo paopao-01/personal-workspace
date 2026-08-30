@@ -24,6 +24,11 @@ public class JobMatchReportController {
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 
+	@GetMapping("/jobs/{jobId}/match-reports")
+	public ResponseEntity<java.util.List<MatchReportResponse>> history(@PathVariable String jobId) {
+		return ResponseEntity.ok(service.history(jobId).stream().map(MatchReportResponse::from).toList());
+	}
+
 	@GetMapping("/jobs/{jobId}/match-reports/latest")
 	public ResponseEntity<MatchReportResponse> latest(@PathVariable String jobId) {
 		return ResponseEntity.ok(MatchReportResponse.from(service.latest(jobId)));

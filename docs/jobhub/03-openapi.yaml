@@ -171,6 +171,13 @@ paths:
         '422': { $ref: '#/components/responses/BusinessRuleError' }
   /jobs/{jobId}/match-reports:
     parameters: [ { $ref: '#/components/parameters/JobId' } ]
+    get:
+      tags: [Jobs]
+      summary: 查询岗位匹配报告历史
+      description: 返回该岗位的历史快照，按生成时间倒序；每条报告都在读取时计算 stale 标记。
+      responses:
+        '200': { description: 匹配报告历史, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MatchReport' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [Jobs]
       summary: 生成岗位匹配报告（可解释规则计算，保存数据快照；缺少资料的要求不计入分母）
@@ -400,6 +407,25 @@ paths:
       summary: 获取面试准备包
       responses:
         '200': { description: 由现有数据聚合，不复制业务数据, content: { application/json: { schema: { $ref: '#/components/schemas/PreparationPack' } } } }
+  /interviews/{interviewId}/checklist/{checklistItemId}:
+    parameters:
+      - $ref: '#/components/parameters/InterviewId'
+      - name: checklistItemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Interviews]
+      summary: 更新面试准备事项完成状态
+      description: 只更新准备事项的 completed 字段，并使用面试版本进行乐观锁保护；不改变学习任务状态。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChecklistUpdateRequest' } } }
+      responses:
+        '200': { description: 更新后的面试, content: { application/json: { schema: { $ref: '#/components/schemas/Interview' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
   /interviews/{interviewId}/reminders:
     parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
     get:
@@ -534,6 +560,12 @@ paths:
         - name: jobId
           in: query
           schema: { type: string, format: uuid }
+        - name: compareFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: compareTo
+          in: query
+          schema: { type: string, format: date }
       responses:
         '200': { description: 复盘聚合分析, content: { application/json: { schema: { $ref: '#/components/schemas/ReviewAnalysis' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
@@ -1577,6 +1609,11 @@ components:
       type: object
       required: [id, text, completed]
       properties: { id: { type: string }, text: { type: string }, completed: { type: boolean } }
+    ChecklistUpdateRequest:
+      type: object
+      required: [completed]
+      properties:
+        completed: { type: boolean }
     SourceRef:
       type: object
       required: [type, id, label]
@@ -1671,7 +1708,7 @@ components:
         questions: { type: array, items: { $ref: '#/components/schemas/InterviewQuestion' } }
     ReviewAnalysis:
       type: object
-      required: [timeRange, reviewCount, questionStats, knowledgePointStats, questionTypeStats, interviewResultSummary]
+      required: [timeRange, reviewCount, questionStats, knowledgePointStats, questionTypeStats, interviewResultSummary, weakPointComparison]
       properties:
         timeRange:
           type: object
@@ -1693,6 +1730,34 @@ components:
           description: 按问题类型聚合（type 为 null 表示未填写类型）
           items: { $ref: '#/components/schemas/ReviewQuestionTypeStat' }
         interviewResultSummary: { $ref: '#/components/schemas/ReviewInterviewResultSummary' }
+        weakPointComparison:
+          allOf:
+            - $ref: '#/components/schemas/WeakPointComparison'
+          nullable: true
+          description: 可选的两个时间窗口薄弱点对比；未提供 compareFrom/compareTo 时为 null。
+    WeakPointComparison:
+      type: object
+      required: [compareTimeRange, items]
+      properties:
+        compareTimeRange:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date, nullable: true }
+            to: { type: string, format: date, nullable: true }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/WeakPointComparisonItem' }
+    WeakPointComparisonItem:
+      type: object
+      required: [knowledgePoint, currentWeightedWeaknessCount, compareWeightedWeaknessCount, delta, currentQuestionCount, compareQuestionCount]
+      properties:
+        knowledgePoint: { $ref: '#/components/schemas/KnowledgePoint' }
+        currentWeightedWeaknessCount: { type: number, format: float }
+        compareWeightedWeaknessCount: { type: number, format: float }
+        delta: { type: number, format: float, description: 当前窗口减去对比窗口；负数表示薄弱次数下降 }
+        currentQuestionCount: { type: integer }
+        compareQuestionCount: { type: integer }
     RateFraction:
       type: object
       required: [numerator, denominator]

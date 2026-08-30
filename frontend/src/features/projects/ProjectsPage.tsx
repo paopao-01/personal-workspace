@@ -9,6 +9,7 @@ import {
   useUpdateProject,
 } from '@/api/projects/useProjectMutations'
 import { useEvidence, useProjects } from '@/api/projects/useProjectQueries'
+import { useSkillProfiles } from '@/api/skills/useSkillQueries'
 import type {
   Evidence,
   EvidenceType,
@@ -27,6 +28,7 @@ const URL_OR_PATH_HINT = '证据以外部链接或本地路径引用为主；应
 export function ProjectsPage() {
   const projectsQuery = useProjects()
   const evidenceQuery = useEvidence()
+  const skillsQuery = useSkillProfiles()
 
   // 项目案例表单
   const [projectTitle, setProjectTitle] = useState('')
@@ -45,6 +47,7 @@ export function ProjectsPage() {
   const [evidenceApproach, setEvidenceApproach] = useState('')
   const [evidenceResult, setEvidenceResult] = useState('')
   const [evidenceUrlOrPath, setEvidenceUrlOrPath] = useState('')
+  const [evidenceSkillIds, setEvidenceSkillIds] = useState<string[]>([])
   const [editingEvidence, setEditingEvidence] = useState<Evidence | null>(null)
 
   const [error, setError] = useState<string | null>(null)
@@ -55,7 +58,7 @@ export function ProjectsPage() {
   const deleteProjectMutation = useDeleteProject()
   const deleteEvidenceMutation = useDeleteEvidence()
 
-  if (projectsQuery.isLoading || evidenceQuery.isLoading) {
+  if (projectsQuery.isLoading || evidenceQuery.isLoading || skillsQuery.isLoading) {
     return <Spinner label="加载项目与证据…" />
   }
   if (projectsQuery.error) {
@@ -63,6 +66,9 @@ export function ProjectsPage() {
   }
   if (evidenceQuery.error) {
     return <ErrorState error={evidenceQuery.error} onRetry={() => evidenceQuery.refetch()} />
+  }
+  if (skillsQuery.error) {
+    return <ErrorState error={skillsQuery.error} onRetry={() => skillsQuery.refetch()} />
   }
 
   const projects = projectsQuery.data ?? []
@@ -103,6 +109,7 @@ export function ProjectsPage() {
     setEvidenceApproach('')
     setEvidenceResult('')
     setEvidenceUrlOrPath('')
+    setEvidenceSkillIds([])
   }
 
   const toggleEvidenceId = (evidenceId: string) => {
@@ -153,6 +160,7 @@ export function ProjectsPage() {
       approach: evidenceApproach.trim() || undefined,
       result: evidenceResult.trim() || undefined,
       urlOrPath: evidenceUrlOrPath.trim() || undefined,
+      skillIds: evidenceSkillIds,
     }
     try {
       if (editingEvidence) {
@@ -195,6 +203,7 @@ export function ProjectsPage() {
     setEvidenceApproach(item.approach ?? '')
     setEvidenceResult(item.result ?? '')
     setEvidenceUrlOrPath(item.urlOrPath ?? '')
+    setEvidenceSkillIds(item.skillIds ?? [])
   }
 
   const removeProject = async (project: ProjectCaseSummary) => {
@@ -488,6 +497,24 @@ export function ProjectsPage() {
                 />
               </Field>
             </div>
+            <Field label="关联技能" hint="用于技能画像和岗位匹配；不会自动改变技能自评等级。">
+              {(skillsQuery.data ?? []).length > 0 ? (
+                <div className="evidence-picker" role="group" aria-label="关联技能">
+                  {(skillsQuery.data ?? []).map((skill) => (
+                    <label key={skill.skillId} className="evidence-picker-item">
+                      <input
+                        type="checkbox"
+                        checked={evidenceSkillIds.includes(skill.skillId)}
+                        onChange={() => setEvidenceSkillIds((prev) => prev.includes(skill.skillId)
+                          ? prev.filter((id) => id !== skill.skillId)
+                          : [...prev, skill.skillId])}
+                      />
+                      <span>{skill.skillName}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : <span className="form-hint">暂无技能记录，请先在技能画像中添加技能。</span>}
+            </Field>
             <Field label="链接或本地路径">
               <Input
                 value={evidenceUrlOrPath}

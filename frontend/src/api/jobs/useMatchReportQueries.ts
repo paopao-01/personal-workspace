@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   generateMatchReport,
   getLatestMatchReport,
+  listMatchReportHistory,
   type MatchReport,
 } from '@/api/jobs/matchReportApi'
 
@@ -20,5 +21,12 @@ export function useGenerateMatchReport() {
     onSuccess: (report) => {
       queryClient.setQueryData(['jobs', report.jobId, 'match-report'], report)
     },
+  })
+}
+
+export function useMatchReportHistory(jobId: string) {
+  return useQuery<MatchReport[]>({
+    queryKey: ['jobs', jobId, 'match-reports'],
+    queryFn: () => listMatchReportHistory(jobId),
   })
 }

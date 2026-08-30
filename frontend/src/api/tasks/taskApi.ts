@@ -33,6 +33,11 @@ export async function listTasks(params: TaskListParams): Promise<PageTask> {
   return res.data
 }
 
+export async function getTask(taskId: string): Promise<LearningTask> {
+  const res = await apiClient.get<LearningTask>(`/tasks/${taskId}`)
+  return res.data
+}
+
 export async function createTask(body: TaskCreateRequest): Promise<LearningTask> {
   const res = await apiClient.post<LearningTask>('/tasks', body)
   return res.data

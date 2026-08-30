@@ -1,5 +1,6 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { usePreparationPack } from '@/api/interviews/useInterviewQueries'
+import { useUpdateChecklistItem } from '@/api/interviews/useInterviewMutations'
 import type { components } from '@/api/generated/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -17,6 +18,8 @@ import {
   interviewScheduleVariant,
 } from '@/features/interviews/interviewLabels'
 import { taskPriorityLabel, taskStatusLabel } from '@/features/tasks/taskLabels'
+import { isApiError, isNetworkError } from '@/api/errors'
+import { pushToast } from '@/components/feedback/toastStore'
 
 type Schemas = components['schemas']
 type PreparationItem = Schemas['PreparationItem']
@@ -39,6 +42,7 @@ export function InterviewPreparationPage() {
   const { interviewId } = useParams<{ interviewId: string }>()
   const navigate = useNavigate()
   const query = usePreparationPack(interviewId)
+  const updateChecklist = useUpdateChecklistItem()
 
   if (query.isLoading) return <Spinner label="加载面试准备包…" />
   if (query.error || !query.data) {
@@ -54,6 +58,23 @@ export function InterviewPreparationPage() {
   const pack = query.data
   const interview = pack.interview
   const checklist = pack.checklist ?? []
+
+  const toggleChecklist = async (itemId: string, completed: boolean) => {
+    try {
+      await updateChecklist.mutateAsync({
+        interviewId: interview.id,
+        itemId,
+        version: interview.version,
+        completed,
+      })
+      pushToast(completed ? '准备事项已完成' : '准备事项已取消完成')
+    } catch (caught) {
+      const message = isApiError(caught) || isNetworkError(caught)
+        ? caught.message
+        : '更新准备事项失败，请稍后重试'
+      pushToast(message, 'error')
+    }
+  }
 
   return (
     <div>
@@ -232,14 +253,21 @@ export function InterviewPreparationPage() {
               <ul className="checklist-readonly">
                 {checklist.map((item) => (
                   <li key={item.id}>
-                    <span aria-hidden="true">{item.completed ? '✓' : '□'}</span>
-                    <span>{item.text}</span>
+                    <label className="checklist-item-label">
+                      <input
+                        type="checkbox"
+                        checked={item.completed}
+                        disabled={updateChecklist.isPending}
+                        onChange={(event) => toggleChecklist(item.id, event.target.checked)}
+                      />
+                      <span>{item.text}</span>
+                    </label>
                   </li>
                 ))}
               </ul>
             )}
             <p className="form-hint" style={{ margin: '12px 0 0' }}>
-              勾选准备事项不会改变学习任务状态。
+              勾选准备事项只更新本场面试清单，不会改变学习任务状态。
             </p>
           </div>
         </section>

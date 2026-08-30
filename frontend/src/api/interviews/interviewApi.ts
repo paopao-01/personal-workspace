@@ -10,6 +10,7 @@ export type InterviewCreateRequest = Schemas['InterviewCreateRequest']
 export type InterviewCompleteRequest = Schemas['InterviewCompleteRequest']
 export type InterviewRescheduleRequest = Schemas['InterviewRescheduleRequest']
 export type InterviewScheduleStatus = Schemas['InterviewScheduleStatus']
+export type ChecklistUpdateRequest = Schemas['ChecklistUpdateRequest']
 
 export interface InterviewListParams {
   from?: string
@@ -58,6 +59,20 @@ export async function getInterviewReminders(
 ): Promise<Reminder[]> {
   const res = await apiClient.get<Reminder[]>(
     `/interviews/${interviewId}/reminders`,
+  )
+  return res.data
+}
+
+export async function updateChecklistItem(
+  interviewId: string,
+  checklistItemId: string,
+  version: number,
+  body: ChecklistUpdateRequest,
+): Promise<Interview> {
+  const res = await apiClient.put<Interview>(
+    `/interviews/${interviewId}/checklist/${checklistItemId}`,
+    body,
+    { headers: commandHeaders(interviewId, version, `checklist:${checklistItemId}`) },
   )
   return res.data
 }

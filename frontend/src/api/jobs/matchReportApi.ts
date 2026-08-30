@@ -13,3 +13,8 @@ export async function getLatestMatchReport(jobId: string): Promise<MatchReport> 
   const res = await apiClient.get<MatchReport>(`/jobs/${jobId}/match-reports/latest`)
   return res.data
 }
+
+export async function listMatchReportHistory(jobId: string): Promise<MatchReport[]> {
+  const res = await apiClient.get<MatchReport[]>(`/jobs/${jobId}/match-reports`)
+  return res.data
+}
