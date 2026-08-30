@@ -4,12 +4,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十五个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试。
+- 项目阶段：P1（V0.2）进行中，已完成十六个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试；AI 面试问题分类。
 - 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 问题分类/回答质量分析/任务建议，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
-- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26 已覆盖。
-- 当前任务：P1 多实例提醒协调与失败重试已完成；下一窗口只做 AI 问题分类、回答质量分析或任务建议中的一个可验证垂直切片。
+- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26、AT-17A 已覆盖。
+- 当前任务：AI 面试问题分类已完成；下一窗口只做 AI 回答质量分析或任务建议中的一个可验证垂直切片，优先回答质量分析；`ai_provider` 删除端点仍按需保留。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-30（窗口 2026-08-30-04）。
+- 最后更新：2026-08-30（窗口 2026-08-30-05）。
 
 ## 2. 已完成内容
 
@@ -181,6 +181,34 @@
   - 优先实现 AI 面试问题分类：先补 OpenAPI/状态与验收契约，再复用异步任务基础设施生成可编辑候选分类，支持逐项采纳/拒绝并补齐集成与 E2E 测试；不扩展回答质量分析或任务建议。
 - 不要重复做：
   - 不要重新修改提醒租约或扩大为文件上传、系统级推送、跨设备送达；不要实现 AI 静默写入用户事实。
+
+### 窗口 2026-08-30-05
+
+- 目标：完成 P1 AI 面试问题分类垂直切片：异步任务、可编辑候选、逐项采纳/拒绝和版本保护。
+- 状态：**DONE**。
+- 已完成：
+  - 先更新 OpenAPI、状态机、数据库设计、页面规格、技术实施说明和 AT-17A；新增问题分类任务创建/历史查询接口，扩展 AI 任务和候选分类枚举。
+  - 新增 Flyway `V12__allow_question_classification_ai_jobs.sql`，允许既有 `ai_job` 保存 `QUESTION_CLASSIFICATION`，不修改已执行迁移。
+  - 新增问题分类处理器：只读取问题内容快照，输出一个固定分类候选和理由；任务仍按 `QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELED` 异步执行。
+  - 分类候选保持 `PROPOSED`，前端可编辑分类后逐项采纳或拒绝；采纳必须携带问题当前版本，只更新 `question_type` 并同步递增问题与复盘版本，不改回答、答案或知识点。
+  - 复盘问题页接入任务状态、失败提示、轮询、重新分类、候选编辑、采纳和拒绝反馈。
+  - 集成测试覆盖分类任务、候选不自动写入、编辑后采纳、旧版本冲突和拒绝；浏览器 E2E 覆盖真实复盘页面主路径。
+- 未完成：
+  - AI 回答质量分析、任务建议仍待后续窗口；`ai_provider` 删除端点仍按需保留。
+  - 本窗口不扩展 AI 自动修改回答、知识点或学习任务，也不扩展邮件、浏览器通知和文件处理。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`docs/jobhub/06-technical-implementation.md`、本文件。
+  - 后端：`backend/src/main/resources/db/migration/V12__allow_question_classification_ai_jobs.sql`、AI 分类处理器/服务/控制器、复盘问题版本更新、`AiIntegrationTest`。
+  - 前端：AI API 与查询 mutation、`QuestionClassificationSection`、复盘页、E2E 假供应商和 `p1-ai-question-classification.spec.ts`、生成的 OpenAPI 类型。
+- 已运行验证：
+  - `mvn test -Dtest=AiIntegrationTest`（隔离 SQLite 库）：4 tests，0 failures，0 errors；Flyway V1→V12 通过。
+  - `mvn test`（隔离 SQLite 库）：84 tests，0 failures，0 errors。
+  - `npm run gen-types`、`npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+  - `npm run e2e -- e2e/p1-ai-question-classification.spec.ts --reporter=list`：1 passed；Playwright 输出既有 React Router future flag 与 Node `NO_COLOR` warning，成功后 Windows 子进程回收需手动中断，不影响该测试断言结果。
+- 下一窗口只做：
+  - 优先实现 AI 回答质量分析：先定义只读输入快照、质量维度和候选改进建议的 OpenAPI/验收契约，再复用 AI 异步任务与人工确认基础设施；不自动修改回答、参考答案或问题状态。
+- 不要重复做：
+  - 不要重新修改 V11 提醒租约或 V12 分类迁移；不要把分类候选直接写成用户事实；不要增加文件上传、读取、扫描或下载。
 
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。

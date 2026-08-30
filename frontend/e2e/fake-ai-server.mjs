@@ -7,6 +7,15 @@ const CANDIDATES = [
   { type: 'BONUS', rawText: '有 Redis 高并发经验（E2E 假供应商输出）', normalizedName: 'Redis 高并发', proficiencyText: '' },
 ]
 
+const QUESTION_CLASSIFICATION = [
+  {
+    type: 'TECHNICAL',
+    rawText: 'Redis 持久化机制如何选择？（E2E 分类输出）',
+    normalizedName: '技术基础',
+    rationale: '问题要求解释具体技术机制。',
+  },
+]
+
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200).end('ok')
@@ -24,8 +33,11 @@ const server = createServer((req, res) => {
         res.end(JSON.stringify({ error: { message: 'model required' } }))
         return
       }
+      const content = JSON.stringify(body).includes('PROJECT_EXPERIENCE')
+        ? QUESTION_CLASSIFICATION
+        : CANDIDATES
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(CANDIDATES) } }] }))
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(content) } }] }))
     })
     return
   }

@@ -26,6 +26,16 @@ public class AiJobController {
 			.body(AiJobResponse.from(service.create(request.jobType(), request.objectId(), request.sourceText())));
 	}
 
+	@PostMapping("/interview-questions/{questionId}/ai-classification")
+	public ResponseEntity<AiJobResponse> createQuestionClassification(@PathVariable String questionId) {
+		return ResponseEntity.status(202).body(AiJobResponse.from(service.createQuestionClassification(questionId)));
+	}
+
+	@GetMapping("/interview-questions/{questionId}/ai-jobs")
+	public List<AiJobResponse> listQuestionClassifications(@PathVariable String questionId) {
+		return service.listQuestionClassifications(questionId).stream().map(AiJobResponse::from).toList();
+	}
+
 	@GetMapping("/ai-jobs/{aiJobId}")
 	public AiJobResponse get(@PathVariable String aiJobId) {
 		return AiJobResponse.from(service.get(aiJobId));
@@ -48,9 +58,10 @@ public class AiJobController {
 
 	@PostMapping("/ai-job-items/{itemId}/accept")
 	public AiJobItemResponse accept(@PathVariable String itemId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long questionVersion,
 			@RequestBody(required = false) @Valid AiJobItemAcceptRequest request) {
 		AiItemPayload edited = request == null ? null : request.payload();
-		return AiJobItemResponse.from(service.acceptItem(itemId, edited));
+		return AiJobItemResponse.from(service.acceptItem(itemId, edited, questionVersion));
 	}
 
 	@PostMapping("/ai-job-items/{itemId}/reject")

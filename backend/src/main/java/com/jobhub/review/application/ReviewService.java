@@ -152,6 +152,17 @@ public class ReviewService {
 		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
 	}
 
+	/** Applies an explicitly accepted AI category without touching any other review fact. */
+	@Transactional
+	public InterviewQuestion applyAiClassification(String questionId, long expectedVersion, String type) {
+		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);
+		String now = time.now();
+		VersionCheck.requireAffected(questionMapper.updateType(questionId, type, expectedVersion, now),
+			question.getVersion());
+		reviewMapper.bumpVersion(question.getReviewId(), now);
+		return hydrateQuestion(requireQuestion(questionMapper.selectById(questionId), questionId));
+	}
+
 	@Transactional
 	public void deleteQuestion(String questionId, long expectedVersion) {
 		InterviewQuestion question = requireQuestion(questionMapper.selectById(questionId), questionId);

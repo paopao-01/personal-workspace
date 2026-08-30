@@ -25,6 +25,6 @@ public class ResumeDraftHandler implements AiTaskHandler {
 		if (result.size() != 1 || result.get(0) == null || result.get(0).rawText() == null || result.get(0).rawText().isBlank()) {
 			throw new IllegalStateException("模型未返回有效的简历草稿");
 		}
-		return List.of(new AiItemPayload("DRAFT", result.get(0).rawText().trim(), "简历定制草稿", null));
+		return List.of(new AiItemPayload("DRAFT", result.get(0).rawText().trim(), "简历定制草稿", null, null));
 	}
 }

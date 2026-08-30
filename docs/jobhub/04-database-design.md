@@ -25,7 +25,7 @@
 | 复盘 | `interview_review` | `interview_question`、`question_knowledge` | 每场面试仅一份当前复盘。 |
 | 学习任务 | `learning_task` | `task_source` | 支持一个任务关联多个问题、岗位和知识点。 |
 | 运维与可追溯 | `notification`、`audit_log`、`idempotency_record`、`data_export`、`trash_item` | — | 记录提醒、关键操作、重复写入和导出。 |
-| AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9)、`ai_job_item`(V7/V8) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT` 只保存用户确认简历与 JD 快照及候选草稿，不覆盖主数据。 |
+| AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9)、`ai_job_item`(V7/V8) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT` 只保存用户确认简历与 JD 快照及候选草稿，`QUESTION_CLASSIFICATION` 保存问题内容快照与候选分类，均不覆盖主数据。 |
 
 ## 3. 关键数据规则
 

@@ -8,7 +8,7 @@ export type AiProviderTestResult = Schemas['AiProviderTestResult']
 export type AiJob = Schemas['AiJob']
 export type AiJobItem = Schemas['AiJobItem']
 export type AiItemPayload = Schemas['AiItemPayload']
-export type AiJobType = 'JD_EXTRACTION' | 'RESUME_DRAFT'
+export type AiJobType = Schemas['AiJob']['jobType']
 
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
@@ -53,6 +53,20 @@ export async function getAiJob(aiJobId: string): Promise<AiJob> {
   return res.data
 }
 
+export async function createQuestionClassification(questionId: string): Promise<AiJob> {
+  const res = await apiClient.post<AiJob>(
+    `/interview-questions/${questionId}/ai-classification`,
+    {},
+    { headers: idem() },
+  )
+  return res.data
+}
+
+export async function listAiJobsByQuestion(questionId: string): Promise<AiJob[]> {
+  const res = await apiClient.get<AiJob[]>(`/interview-questions/${questionId}/ai-jobs`)
+  return res.data
+}
+
 export async function listAiJobsByJob(jobId: string): Promise<AiJob[]> {
   const res = await apiClient.get<AiJob[]>(`/jobs/${jobId}/ai-jobs`)
   return res.data
@@ -71,8 +85,18 @@ export async function cancelAiJob(aiJobId: string): Promise<AiJob> {
 export async function acceptAiJobItem(
   itemId: string,
   payload?: AiItemPayload,
+  questionVersion?: number,
 ): Promise<AiJobItem> {
-  const res = await apiClient.post<AiJobItem>(`/ai-job-items/${itemId}/accept`, payload ? { payload } : {})
+  const res = await apiClient.post<AiJobItem>(
+    `/ai-job-items/${itemId}/accept`,
+    payload ? { payload } : {},
+    {
+      headers: {
+        ...idem(),
+        ...(questionVersion === undefined ? {} : { 'If-Match-Version': String(questionVersion) }),
+      },
+    },
+  )
   return res.data
 }
 

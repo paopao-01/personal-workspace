@@ -15,7 +15,7 @@ public interface AiJobItemMapper {
 
 	@Select("""
 		SELECT id, ai_job_id AS aiJobId, payload_json AS payloadJson, edited_payload_json AS editedPayloadJson,
-		       status, requirement_id AS requirementId, created_at AS createdAt, updated_at AS updatedAt
+		       status, requirement_id AS requirementId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
 		FROM ai_job_item
 		WHERE ai_job_id=#{aiJobId}
 		ORDER BY sort_order, created_at, id
@@ -24,7 +24,7 @@ public interface AiJobItemMapper {
 
 	@Select("""
 		SELECT id, ai_job_id AS aiJobId, payload_json AS payloadJson, edited_payload_json AS editedPayloadJson,
-		       status, requirement_id AS requirementId, created_at AS createdAt, updated_at AS updatedAt
+		       status, requirement_id AS requirementId, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
 		FROM ai_job_item
 		WHERE id=#{id}
 		""")

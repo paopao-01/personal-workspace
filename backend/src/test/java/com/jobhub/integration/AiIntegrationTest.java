@@ -27,6 +27,10 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		  {"type":"BONUS","rawText":"有 Redis 高并发经验","normalizedName":"Redis 高并发","proficiencyText":""},
 		  {"type":"INVALID","rawText":"类型非法应被跳过","normalizedName":"bad","proficiencyText":""}
 		]""";
+	private static final String QUESTION_CLASSIFICATION_JSON = """
+		[
+		  {"type":"TECHNICAL","rawText":"Redis 持久化机制如何选择？","normalizedName":"技术基础","rationale":"问题要求解释具体技术机制。"}
+		]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -36,7 +40,9 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
-			String contentJson = CONTENT_JSON.writeValueAsString(CANDIDATES_JSON);
+			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+			String candidates = request.contains("PROJECT_EXPERIENCE") ? QUESTION_CLASSIFICATION_JSON : CANDIDATES_JSON;
+			String contentJson = CONTENT_JSON.writeValueAsString(candidates);
 			byte[] body = ("{\"choices\":[{\"message\":{\"content\":" + contentJson + "}}]}")
 					.getBytes(StandardCharsets.UTF_8);
 			exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -74,6 +80,35 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		return restTemplate.exchange(url("/ai-jobs"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"jobType\":\"JD_EXTRACTION\",\"objectId\":\"" + jobId + "\"}",
 				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+	}
+
+	private String createQuestionClassification(String questionId) {
+		return restTemplate.exchange(url("/interview-questions/" + questionId + "/ai-classification"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+	}
+
+	private String createCompletedInterview() {
+		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
+			TestFixtures.httpJson(TestFixtures.createJobBody("复盘科技", "Java 后端工程师")), String.class).getBody(), "id");
+		String applicationId = JsonProbe.str(restTemplate.exchange(url("/applications"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders(TestFixtures.createApplicationBody(jobId, "2026-08-20", "BOSS直聘", null, null, null),
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody(), "id");
+		transition(applicationId, "APPLIED", "0");
+		transition(applicationId, "RESUME_PASSED", "1");
+		String interviewId = JsonProbe.str(restTemplate.exchange(url("/interviews"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"applicationId\":\"" + applicationId + "\",\"roundName\":\"技术一面\",\"startsAt\":\"2026-09-10T10:00:00Z\",\"eventTimeZone\":\"Asia/Shanghai\"}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody(), "id");
+		long version = JsonProbe.lng(restTemplate.getForEntity(url("/interviews/" + interviewId), String.class).getBody(), "version");
+		restTemplate.exchange(url("/interviews/" + interviewId + "/complete"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"result\":\"FAILED\"}", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(version)), String.class);
+		return interviewId;
+	}
+
+	private void transition(String applicationId, String targetStatus, String version) {
+		restTemplate.exchange(url("/applications/" + applicationId + "/transition"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders(TestFixtures.transitionBody(targetStatus, null, null),
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", version), String.class);
 	}
 
 	private String waitForTerminal(String aiJobId) throws InterruptedException {
@@ -181,6 +216,53 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		ResponseEntity<String> duplicate = restTemplate.exchange(url("/ai-job-items/" + item0 + "/accept"),
 			HttpMethod.POST, TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
 		assertThat(duplicate.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+	}
+
+	@Test
+	void P1_questionClassificationIsEditableAndRequiresCurrentQuestionVersion() throws Exception {
+		String baseUrl = "http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1";
+		createActiveProvider(baseUrl);
+		String interviewId = createCompletedInterview();
+		String review = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String reviewId = JsonProbe.str(review, "id");
+		String question = restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"Redis 持久化机制如何选择？\",\"answerStatus\":\"UNANSWERED\",\"type\":\"自定义类型\"}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String questionId = JsonProbe.str(question, "id");
+
+		String aiJob = createQuestionClassification(questionId);
+		assertThat(JsonProbe.str(aiJob, "jobType")).isEqualTo("QUESTION_CLASSIFICATION");
+		assertThat(JsonProbe.str(aiJob, "promptVersion")).isEqualTo("QUESTION_CLASSIFICATION_V1");
+		String finished = waitForTerminal(JsonProbe.str(aiJob, "id"));
+		assertThat(JsonProbe.str(finished, "status")).isEqualTo("SUCCEEDED");
+		assertThat(JsonProbe.str(finished, "items.0.status")).isEqualTo("PROPOSED");
+		assertThat(JsonProbe.str(finished, "items.0.payload.type")).isEqualTo("TECHNICAL");
+
+		String itemId = JsonProbe.str(finished, "items.0.id");
+		String accepted = restTemplate.exchange(url("/ai-job-items/" + itemId + "/accept"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"payload\":{\"type\":\"SYSTEM_DESIGN\",\"rawText\":\"Redis 持久化机制如何选择？\",\"normalizedName\":\"系统设计\",\"rationale\":\"用户编辑后的分类理由\"}}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class).getBody();
+		assertThat(JsonProbe.str(accepted, "status")).isEqualTo("ACCEPTED");
+		assertThat(JsonProbe.str(accepted, "requirementId")).isEqualTo("null");
+
+		String afterAccept = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		assertThat(JsonProbe.str(afterAccept, "questions.0.type")).isEqualTo("SYSTEM_DESIGN");
+		assertThat(JsonProbe.str(afterAccept, "questions.0.answerStatus")).isEqualTo("UNANSWERED");
+		assertThat(JsonProbe.intVal(afterAccept, "questions.0.version")).isEqualTo(1);
+
+		String secondJob = createQuestionClassification(questionId);
+		String secondFinished = waitForTerminal(JsonProbe.str(secondJob, "id"));
+		String secondItemId = JsonProbe.str(secondFinished, "items.0.id");
+		ResponseEntity<String> stale = restTemplate.exchange(url("/ai-job-items/" + secondItemId + "/accept"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		String rejected = restTemplate.exchange(url("/ai-job-items/" + secondItemId + "/reject"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		assertThat(JsonProbe.str(rejected, "status")).isEqualTo("REJECTED");
+		assertThat(JsonProbe.str(restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody(),
+			"questions.0.type")).isEqualTo("SYSTEM_DESIGN");
 	}
 
 	@Test

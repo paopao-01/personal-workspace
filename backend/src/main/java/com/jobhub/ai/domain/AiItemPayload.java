@@ -3,9 +3,10 @@ package com.jobhub.ai.domain;
 import java.util.List;
 
 /**
- * AI 候选条目载荷。type 仅 MUST/BONUS（与岗位要求类型对应），由解析阶段校验。
+ * AI 候选条目载荷。不同任务类型复用同一可编辑 JSON 结构；所有条目都必须经过人工采纳。
  */
-public record AiItemPayload(String type, String rawText, String normalizedName, String proficiencyText) {
+public record AiItemPayload(String type, String rawText, String normalizedName, String proficiencyText,
+		String rationale) {
 	public static final int MAX_ITEMS = 20;
 
 	public static List<AiItemPayload> parseList(String outputJson) {

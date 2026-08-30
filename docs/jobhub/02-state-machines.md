@@ -146,6 +146,13 @@ FAILED ──regenerate──> CANCELED + 新建 PENDING
 
 ## 6. 复盘、问题与薄弱点
 
+### 6.4 AI 问题分类候选
+
+问题分类使用独立的异步 AI 任务，任务状态为 `QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELED`。
+任务完成后只产生 `PROPOSED` 候选，用户可以编辑分类后逐项采纳，或直接拒绝；采纳必须携带问题当前版本，成功后才将候选分类写入 `question_type` 并递增问题及复盘版本。任务失败、取消或拒绝不改变问题原有类型和其他人工记录。
+
+默认分类候选值为 `TECHNICAL`、`PROJECT_EXPERIENCE`、`SYSTEM_DESIGN`、`BEHAVIORAL`、`DOMAIN`、`OTHER`，人工编辑仍可使用既有自定义类型。
+
 ### 6.1 复盘状态
 
 ```text

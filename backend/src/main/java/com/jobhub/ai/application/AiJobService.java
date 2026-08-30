@@ -8,6 +8,7 @@ import com.jobhub.ai.domain.AiJobStatus;
 import com.jobhub.ai.domain.AiJobType;
 import com.jobhub.ai.domain.AiItemPayload;
 import com.jobhub.ai.domain.AiProvider;
+import com.jobhub.ai.domain.AiQuestionCategory;
 import com.jobhub.ai.infrastructure.AiJobItemMapper;
 import com.jobhub.ai.infrastructure.AiJobMapper;
 import com.jobhub.ai.infrastructure.AiProviderMapper;
@@ -20,6 +21,9 @@ import com.jobhub.common.version.VersionCheck;
 import com.jobhub.job.application.RequirementService;
 import com.jobhub.job.domain.Job;
 import com.jobhub.job.infrastructure.JobMapper;
+import com.jobhub.review.application.ReviewService;
+import com.jobhub.review.domain.InterviewQuestion;
+import com.jobhub.review.infrastructure.QuestionMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +43,8 @@ public class AiJobService {
 	private final AiProviderMapper providerMapper;
 	private final JobMapper jobMapper;
 	private final RequirementService requirementService;
+	private final QuestionMapper questionMapper;
+	private final ReviewService reviewService;
 	private final AiJobExecutor executor;
 	private final IdGenerator ids;
 	private final UtcTime time;
@@ -46,16 +52,43 @@ public class AiJobService {
 
 	public AiJobService(AiJobMapper aiJobMapper, AiJobItemMapper itemMapper, AiProviderMapper providerMapper,
 			JobMapper jobMapper, RequirementService requirementService, AiJobExecutor executor, IdGenerator ids,
-			UtcTime time, List<AiTaskHandler> handlers) {
+			UtcTime time, List<AiTaskHandler> handlers, QuestionMapper questionMapper, ReviewService reviewService) {
 		this.aiJobMapper = aiJobMapper;
 		this.itemMapper = itemMapper;
 		this.providerMapper = providerMapper;
 		this.jobMapper = jobMapper;
 		this.requirementService = requirementService;
+		this.questionMapper = questionMapper;
+		this.reviewService = reviewService;
 		this.executor = executor;
 		this.ids = ids;
 		this.time = time;
 		this.handlers = handlers;
+	}
+
+	@Transactional
+	public AiJob createQuestionClassification(String questionId) {
+		InterviewQuestion question = questionMapper.selectById(questionId);
+		VersionCheck.requireFound(question, "InterviewQuestion", questionId);
+		AiProvider provider = requireActiveProvider();
+		String now = time.now();
+		AiJob aiJob = new AiJob();
+		aiJob.setId(ids.newId());
+		aiJob.setJobType(AiJobType.QUESTION_CLASSIFICATION);
+		aiJob.setObjectId(questionId);
+		aiJob.setObjectVersion(question.getVersion());
+		aiJob.setStatus(AiJobStatus.QUEUED);
+		aiJob.setProviderId(provider.getId());
+		aiJob.setProviderType(provider.getProviderType().name());
+		aiJob.setModel(provider.getModel());
+		aiJob.setPromptVersion(promptVersion(AiJobType.QUESTION_CLASSIFICATION));
+		aiJob.setAttemptCount(0);
+		aiJob.setInputSnapshot(question.getContent());
+		aiJob.setCreatedAt(now);
+		aiJob.setUpdatedAt(now);
+		aiJobMapper.insert(aiJob);
+		submitAfterCommit(aiJob.getId());
+		return requireJob(aiJob.getId());
 	}
 
 	@Transactional
@@ -65,6 +98,9 @@ public class AiJobService {
 
 	@Transactional
 	public AiJob create(AiJobType jobType, String objectId, String sourceText) {
+		if (jobType == AiJobType.QUESTION_CLASSIFICATION) {
+			throw new BusinessRuleException("问题分类必须通过面试问题专用接口创建");
+		}
 		Job job = jobMapper.selectById(objectId);
 		VersionCheck.requireFound(job, "Job", objectId);
 		if (jobType == AiJobType.JD_EXTRACTION && (job.getJdRawText() == null || job.getJdRawText().isBlank())) {
@@ -73,10 +109,7 @@ public class AiJobService {
 		if (jobType == AiJobType.RESUME_DRAFT && (sourceText == null || sourceText.isBlank())) {
 			throw new BusinessRuleException("请先提供已确认的简历原文");
 		}
-		AiProvider provider = providerMapper.selectActive();
-		if (provider == null) {
-			throw new BusinessRuleException("尚未配置激活的 AI 供应商，请先在设置中配置");
-		}
+		AiProvider provider = requireActiveProvider();
 		String now = time.now();
 		AiJob aiJob = new AiJob();
 		aiJob.setId(ids.newId());
@@ -126,6 +159,11 @@ public class AiJobService {
 		return aiJobMapper.selectByObjectAll(objectId).stream().map(this::hydrate).toList();
 	}
 
+	public List<AiJob> listQuestionClassifications(String questionId) {
+		VersionCheck.requireFound(questionMapper.selectById(questionId), "InterviewQuestion", questionId);
+		return listByObject(AiJobType.QUESTION_CLASSIFICATION, questionId);
+	}
+
 	@Transactional
 	public AiJob retry(String id) {
 		AiJob job = requireJob(id);
@@ -156,10 +194,11 @@ public class AiJobService {
 
 	/** 采纳候选（可编辑）：创建 source_type=AI 的 PENDING 岗位要求并回链条目。 */
 	@Transactional
-	public AiJobItem acceptItem(String itemId, AiItemPayload editedPayload) {
+	public AiJobItem acceptItem(String itemId, AiItemPayload editedPayload, Long questionVersion) {
 		AiJobItem item = requireItem(itemId);
 		AiJob itemJob = aiJobMapper.selectById(item.getAiJobId());
-		if (itemJob != null && itemJob.getJobType() == AiJobType.RESUME_DRAFT) {
+		VersionCheck.requireFound(itemJob, "AiJob", item.getAiJobId());
+		if (itemJob.getJobType() == AiJobType.RESUME_DRAFT) {
 			throw new BusinessRuleException("简历草稿只能人工编辑，不能采纳为岗位要求");
 		}
 		if (item.getStatus() != AiJobItemStatus.PROPOSED) {
@@ -168,6 +207,19 @@ public class AiJobService {
 		}
 		AiItemPayload payload = resolvePayload(item, editedPayload);
 		String now = time.now();
+		if (itemJob.getJobType() == AiJobType.QUESTION_CLASSIFICATION) {
+			if (questionVersion == null) {
+				throw new BusinessRuleException("采纳问题分类时必须携带问题当前版本");
+			}
+			validateQuestionCategory(payload.type());
+			reviewService.applyAiClassification(itemJob.getObjectId(), questionVersion, payload.type());
+			String editedJson = editedPayload == null ? null : serialize(editedPayload);
+			if (itemMapper.markAccepted(itemId, editedJson, null, now) == 0) {
+				throw new IllegalStateTransitionException(item.getStatus().name(), AiJobItemStatus.ACCEPTED.name(),
+					"条目状态已变化");
+			}
+			return itemMapper.selectById(itemId);
+		}
 		var requirement = requirementService.createAiCandidate(requireJobOfItem(item), payload.type(),
 				payload.rawText(), payload.normalizedName(), payload.proficiencyText());
 		String editedJson = editedPayload == null ? null : serialize(editedPayload);
@@ -205,7 +257,24 @@ public class AiJobService {
 			edited.type() == null || edited.type().isBlank() ? base.type() : edited.type(),
 			edited.rawText() == null || edited.rawText().isBlank() ? base.rawText() : edited.rawText(),
 			edited.normalizedName() == null || edited.normalizedName().isBlank() ? base.normalizedName() : edited.normalizedName(),
-			edited.proficiencyText() == null ? base.proficiencyText() : edited.proficiencyText());
+			edited.proficiencyText() == null ? base.proficiencyText() : edited.proficiencyText(),
+			edited.rationale() == null ? base.rationale() : edited.rationale());
+	}
+
+	private AiProvider requireActiveProvider() {
+		AiProvider provider = providerMapper.selectActive();
+		if (provider == null) {
+			throw new BusinessRuleException("尚未配置激活的 AI 供应商，请先在设置中配置");
+		}
+		return provider;
+	}
+
+	private void validateQuestionCategory(String type) {
+		try {
+			AiQuestionCategory.valueOf(type);
+		} catch (Exception ex) {
+			throw new BusinessRuleException("问题分类候选值无效");
+		}
 	}
 
 	private String requireJobOfItem(AiJobItem item) {

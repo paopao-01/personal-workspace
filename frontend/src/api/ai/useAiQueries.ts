@@ -4,9 +4,11 @@ import {
   activateAiProvider,
   cancelAiJob,
   createAiJob,
+  createQuestionClassification,
   createAiProvider,
   getAiJob,
   listAiJobsByJob,
+  listAiJobsByQuestion,
   listAiProviders,
   rejectAiJobItem,
   retryAiJob,
@@ -40,6 +42,18 @@ export function useSingleAiJob(aiJobId: string | undefined) {
     queryKey: ['ai-jobs', 'single', aiJobId],
     queryFn: () => getAiJob(aiJobId!),
     enabled: Boolean(aiJobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'QUEUED' || status === 'RUNNING' ? 1000 : false
+    },
+  })
+}
+
+export function useAiJobsByQuestion(questionId: string | undefined) {
+  return useQuery<AiJob[]>({
+    queryKey: ['ai-jobs', 'question', questionId],
+    queryFn: () => listAiJobsByQuestion(questionId!),
+    enabled: Boolean(questionId),
   })
 }
 
@@ -99,11 +113,12 @@ export function useCancelAiJob() {
 
 export function useAcceptAiJobItem() {
   const queryClient = useQueryClient()
-  return useMutation<AiJobItem, Error, { itemId: string; payload?: AiItemPayload }>({
-    mutationFn: ({ itemId, payload }) => acceptAiJobItem(itemId, payload),
+  return useMutation<AiJobItem, Error, { itemId: string; payload?: AiItemPayload; questionVersion?: number }>({
+    mutationFn: ({ itemId, payload, questionVersion }) => acceptAiJobItem(itemId, payload, questionVersion),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ai-jobs'] })
       queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
     },
   })
 }
@@ -113,5 +128,15 @@ export function useRejectAiJobItem() {
   return useMutation<AiJobItem, Error, string>({
     mutationFn: rejectAiJobItem,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ai-jobs'] }),
+  })
+}
+
+export function useCreateQuestionClassification() {
+  const queryClient = useQueryClient()
+  return useMutation<AiJob, Error, string>({
+    mutationFn: createQuestionClassification,
+    onSuccess: (job) => {
+      queryClient.invalidateQueries({ queryKey: ['ai-jobs', 'question', job.objectId] })
+    },
   })
 }

@@ -27,6 +27,7 @@ import {
   interviewScheduleVariant,
 } from '@/features/interviews/interviewLabels'
 import { answerStatusLabel, reviewStatusLabel } from '@/features/reviews/reviewLabels'
+import { QuestionClassificationSection } from '@/features/reviews/QuestionClassificationSection'
 
 interface QuestionDetailDraft {
   questionId: string
@@ -701,6 +702,11 @@ export function InterviewReviewPage() {
                       </div>
                     </div>
                   ) : null}
+                  <QuestionClassificationSection
+                    question={question}
+                    disabled={cannotReview || isCompletedReview || pending}
+                    onChanged={() => reviewQuery.refetch()}
+                  />
                 </div>
               ))}
             </div>

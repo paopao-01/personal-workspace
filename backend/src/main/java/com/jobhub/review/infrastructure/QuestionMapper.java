@@ -63,6 +63,10 @@ public interface QuestionMapper {
 		""")
 	int updateQuestion(@Param("question") InterviewQuestion question, @Param("expectedVersion") long expectedVersion);
 
+	@Update("UPDATE interview_question SET question_type=#{type}, updated_at=#{now}, version=version+1 WHERE id=#{id} AND version=#{expectedVersion} AND deleted_at IS NULL")
+	int updateType(@Param("id") String id, @Param("type") String type, @Param("expectedVersion") long expectedVersion,
+			@Param("now") String now);
+
 	@Select("""
 		SELECT k.id AS knowledge_point_id,
 		       k.name,
