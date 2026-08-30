@@ -9,6 +9,7 @@ public class Reminder {
     private String failureReason;
     private String createdAt;
     private String updatedAt;
+    private int attemptCount;
     private long version;
     public Reminder() { }
     public static Reminder create(String id, String interviewId, ReminderType type, String scheduledAt, String now) {
@@ -19,9 +20,10 @@ public class Reminder {
         if (enabled) this.status = ReminderStatus.PENDING;
         else this.status = ReminderStatus.CANCELED;
         if (scheduledAt != null) this.scheduledAt = scheduledAt;
+        this.failureReason = null;
         this.updatedAt = now;
     }
     public String getId(){return id;} public String getInterviewId(){return interviewId;} public ReminderType getReminderType(){return reminderType;}
     public String getScheduledAt(){return scheduledAt;} public ReminderStatus getStatus(){return status;} public String getFailureReason(){return failureReason;}
-    public String getCreatedAt(){return createdAt;} public String getUpdatedAt(){return updatedAt;} public long getVersion(){return version;}
+    public String getCreatedAt(){return createdAt;} public String getUpdatedAt(){return updatedAt;} public int getAttemptCount(){return attemptCount;} public long getVersion(){return version;}
 }

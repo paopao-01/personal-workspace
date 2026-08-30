@@ -72,6 +72,53 @@ class ReminderDispatchIntegrationTest extends AbstractIntegrationTest {
 			.isEqualTo(0);
 	}
 
+	@Test
+	void P1_expiredProcessingLeaseCanBeReclaimedWithoutDuplicateNotification() {
+		String interviewId = createInterview(Instant.now().plus(Duration.ofMinutes(10)));
+		String reminders = restTemplate.getForEntity(url("/interviews/" + interviewId + "/reminders"), String.class).getBody();
+		String reminderId = JsonProbe.arrStr(reminders, "", 0, "id");
+		jdbc.update("UPDATE interview_reminder SET status='PROCESSING', attempt_count=7, lease_until=?, lease_token=? WHERE id=?",
+			"2000-01-01T00:00:00Z", "expired-worker", reminderId);
+
+		assertThat(dispatchService.dispatchDue()).isEqualTo(3);
+		assertThat(jdbc.queryForObject("SELECT status FROM interview_reminder WHERE id=?", String.class, reminderId))
+			.isEqualTo("SENT");
+		assertThat(jdbc.queryForObject("SELECT attempt_count FROM interview_reminder WHERE id=?", Integer.class, reminderId))
+			.isEqualTo(8);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM notification WHERE reminder_id=?", Integer.class, reminderId))
+			.isEqualTo(1);
+		assertThat(JsonProbe.arraySize(restTemplate.getForEntity(url("/notifications"), String.class).getBody(), ""))
+			.isEqualTo(3);
+	}
+
+	@Test
+	void P1_failedReminderCanBeRetriedWithVersionAndStaleVersionHasNoSideEffect() {
+		String interviewId = createInterview(Instant.now().plus(Duration.ofMinutes(10)));
+		String reminders = restTemplate.getForEntity(url("/interviews/" + interviewId + "/reminders"), String.class).getBody();
+		String reminderId = JsonProbe.arrStr(reminders, "", 0, "id");
+		long initialVersion = JsonProbe.lng(reminders, "0.version");
+		jdbc.update("UPDATE interview_reminder SET status='FAILED', failure_reason=?, attempt_count=4 WHERE id=?",
+			"SMTP 暂时不可用", reminderId);
+
+		ResponseEntity<String> retried = restTemplate.exchange(url("/reminders/" + reminderId + "/retry"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(initialVersion)), String.class);
+		assertThat(retried.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.str(retried.getBody(), "status")).isEqualTo("PENDING");
+		assertThat(JsonProbe.str(retried.getBody(), "failureReason")).isEqualTo("null");
+		assertThat(JsonProbe.lng(retried.getBody(), "attemptCount")).isEqualTo(4);
+
+		ResponseEntity<String> stale = restTemplate.exchange(url("/reminders/" + reminderId + "/retry"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(initialVersion)), String.class);
+		assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(jdbc.queryForObject("SELECT status FROM interview_reminder WHERE id=?", String.class, reminderId))
+			.isEqualTo("PENDING");
+		assertThat(dispatchService.dispatchDue()).isEqualTo(3);
+		assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM notification WHERE reminder_id=?", Integer.class, reminderId))
+			.isEqualTo(1);
+	}
+
 	private String createInterview(Instant startsAt) {
 		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("提醒科技", "P1 通知岗位")), String.class).getBody(), "id");

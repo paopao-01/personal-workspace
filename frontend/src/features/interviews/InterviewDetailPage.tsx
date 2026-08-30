@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useInterview, useInterviewReminders } from '@/api/interviews/useInterviewQueries'
+import { useRetryReminder } from '@/api/interviews/useInterviewMutations'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { isApiError } from '@/api/errors'
+import { pushToast } from '@/components/feedback/toastStore'
 import { InterviewActionSection } from '@/features/interviews/components/InterviewActionSection'
 import {
   formatInterviewTime,
@@ -23,6 +26,7 @@ export function InterviewDetailPage() {
   const [openedAt] = useState(() => Date.now())
   const interviewQuery = useInterview(interviewId)
   const reminderQuery = useInterviewReminders(interviewId)
+  const retryReminderMutation = useRetryReminder(interviewId)
 
   if (interviewQuery.isLoading) return <Spinner label="加载面试详情…" />
   if (interviewQuery.error || !interviewQuery.data) {
@@ -168,13 +172,41 @@ export function InterviewDetailPage() {
               <EmptyState icon="⏰" text="暂无提醒计划" />
             ) : (
               <table className="table">
-                <thead><tr><th>节点</th><th>时间</th><th>状态</th></tr></thead>
+                <thead><tr><th>节点</th><th>时间</th><th>状态</th><th>处理</th></tr></thead>
                 <tbody>
                   {reminderQuery.data?.map((reminder) => (
                     <tr key={reminder.id}>
                       <td>{reminderTypeLabel[reminder.reminderType]}</td>
                       <td>{formatInterviewTime(reminder.scheduledAt)}</td>
-                      <td>{reminderStatusLabel[reminder.status]}</td>
+                      <td>
+                        <div>{reminderStatusLabel[reminder.status]}</div>
+                        {reminder.status === 'FAILED' ? (
+                          <div className="form-hint">
+                            {reminder.failureReason ?? '未记录失败原因'} · 已尝试 {reminder.attemptCount} 次
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>
+                        {reminder.status === 'FAILED' ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={retryReminderMutation.isPending}
+                            onClick={() => retryReminderMutation.mutate(
+                              { reminderId: reminder.id, version: reminder.version },
+                              {
+                                onSuccess: () => pushToast('提醒已重新排队'),
+                                onError: (error) => pushToast(
+                                  isApiError(error) ? error.message : '重试失败，请稍后再试',
+                                  'error',
+                                ),
+                              },
+                            )}
+                          >
+                            {retryReminderMutation.isPending ? '排队中…' : '重试'}
+                          </Button>
+                        ) : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

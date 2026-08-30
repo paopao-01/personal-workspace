@@ -118,3 +118,20 @@ export async function markInterviewNoShow(
   )
   return res.data
 }
+
+export async function retryReminder(
+  reminderId: string,
+  version: number,
+): Promise<Reminder> {
+  const res = await apiClient.post<Reminder>(
+    `/reminders/${reminderId}/retry`,
+    {},
+    {
+      headers: {
+        'If-Match-Version': String(version),
+        'Idempotency-Key': `reminder:${reminderId}:retry:${version}`,
+      },
+    },
+  )
+  return res.data
+}

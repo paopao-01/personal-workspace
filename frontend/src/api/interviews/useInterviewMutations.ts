@@ -5,6 +5,7 @@ import {
   completeInterview,
   markInterviewNoShow,
   rescheduleInterview,
+  retryReminder,
   type Interview,
   type InterviewCompleteRequest,
   type InterviewCreateRequest,
@@ -74,5 +75,18 @@ export function useMarkInterviewNoShow() {
   return useMutation<Interview, Error, InterviewCommandArgs>({
     mutationFn: ({ interviewId, version }) => markInterviewNoShow(interviewId, version),
     onSuccess: (interview) => invalidateInterviewViews(queryClient, interview),
+  })
+}
+
+export function useRetryReminder(interviewId: string | undefined) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reminderId, version }: { reminderId: string; version: number }) =>
+      retryReminder(reminderId, version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['interviews', interviewId, 'reminders'],
+      })
+    },
   })
 }

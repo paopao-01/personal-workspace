@@ -28,6 +28,9 @@ public interface NotificationMapper {
 		""")
 	Notification selectById(@Param("id") String id);
 
+	@Select("SELECT id, reminder_id, title, content, read_at, created_at FROM notification WHERE reminder_id=#{reminderId} LIMIT 1")
+	Notification selectByReminderId(@Param("reminderId") String reminderId);
+
 	@Update("UPDATE notification SET read_at=#{now} WHERE id=#{id} AND read_at IS NULL")
 	int markRead(@Param("id") String id, @Param("now") String now);
 }

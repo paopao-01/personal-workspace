@@ -58,7 +58,7 @@
 | 首页待处理投递 | `application_record(status, next_action_due_at)` |
 | 投递历史 | `application_status_log(application_id, occurred_at DESC)` |
 | 某岗位的确认要求 | `job_requirement(job_id, confirmation_status, sort_order)` |
-| 未来提醒扫描 | `interview_reminder(status, scheduled_at)` |
+| 未来提醒扫描 | `interview_reminder(status, scheduled_at, lease_until)` |
 | 面试复盘问题 | `interview_question(review_id, deleted_at)` |
 | 薄弱知识点 | `question_knowledge(knowledge_point_id, question_id)` + 问题的回答状态索引 |
 | 任务列表 | `learning_task(status, due_at, priority)` |

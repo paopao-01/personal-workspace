@@ -390,6 +390,18 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/ReminderUpdateRequest' } } }
       responses:
         '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/Reminder' } } } }
+  /reminders/{reminderId}/retry:
+    parameters: [ { $ref: '#/components/parameters/ReminderId' } ]
+    post:
+      tags: [Interviews]
+      summary: 重试失败的提醒展示
+      description: FAILED 提醒重新进入 PENDING；不会自动重试，也不会修改用户填写的面试事实。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '200': { description: 提醒已重新排队, content: { application/json: { schema: { $ref: '#/components/schemas/Reminder' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
 
   /interviews/{interviewId}/review:
     parameters: [ { $ref: '#/components/parameters/InterviewId' } ]
@@ -1395,7 +1407,7 @@ components:
         jobTitle: { type: string }
     Reminder:
       type: object
-      required: [id, interviewId, reminderType, scheduledAt, status, version]
+      required: [id, interviewId, reminderType, scheduledAt, status, attemptCount, version]
       properties:
         id: { type: string, format: uuid }
         interviewId: { type: string, format: uuid }
@@ -1403,6 +1415,7 @@ components:
         scheduledAt: { type: string, format: date-time }
         status: { $ref: '#/components/schemas/ReminderStatus' }
         failureReason: { type: string, nullable: true }
+        attemptCount: { type: integer, minimum: 0, description: 调度尝试次数 }
         version: { type: integer }
     ReminderCreateRequest:
       type: object

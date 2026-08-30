@@ -4,12 +4,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十四个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库。
-- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 问题分类/回答质量分析/任务建议、多实例提醒协调与更完整失败重试策略，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
-- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：P1 附件证据引用元数据库已完成；下一候选为多实例提醒协调与失败重试策略，或经用户确认后扩展 AI 问题分类/回答质量分析/任务建议。
+- 项目阶段：P1（V0.2）进行中，已完成十五个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库；多实例提醒协调与失败重试。
+- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 问题分类/回答质量分析/任务建议，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
+- 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-26 已覆盖。
+- 当前任务：P1 多实例提醒协调与失败重试已完成；下一窗口只做 AI 问题分类、回答质量分析或任务建议中的一个可验证垂直切片。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-30。
+- 最后更新：2026-08-30（窗口 2026-08-30-04）。
 
 ## 2. 已完成内容
 
@@ -153,6 +153,35 @@
 - 不要重复做：
   - 不要增加文件上传、读取、扫描、下载或自动校验；不要修改已执行的 V1~V9 迁移。
   - 不要重建附件引用 CRUD、V10 迁移、导入导出接入或 `/evidence-attachments` 页面。
+
+### 窗口 2026-08-30-04
+
+- 目标：完成 P1 多实例提醒协调与失败重试策略，修复提醒调度先标记成功导致失败不可追踪的问题。
+- 状态：**DONE**。
+- 已完成：
+  - 先更新 OpenAPI、状态机、数据库设计、页面规格、PRD 与 AT-26；新增 `POST /reminders/{reminderId}/retry`，返回 `attemptCount`。
+  - 新增 Flyway `V11__coordinate_reminder_dispatch.sql`：提醒尝试次数、租约截止时间、租约令牌；为 `notification.reminder_id` 增加唯一索引，阻止重复站内通知。
+  - 调度改为扫描候选后逐条独立事务领取：`PENDING` 或过期 `PROCESSING` 才能原子领取；成功转 `SENT`，异常保存截断后的失败原因并转 `FAILED`；旧租约令牌不能完成后续状态转移。
+  - 失败提醒通过带 `If-Match-Version` 的专用重试命令重新进入 `PENDING`，清除当前失败原因但保留累计尝试次数；取消、完成、缺席和改期会清除未完成提醒的租约并取消 `FAILED` 记录。
+  - 通知创建按 `reminder_id` 幂等查找并补齐启用渠道，租约接管不会重复生成站内通知。
+  - 面试详情页展示失败原因和尝试次数，并提供重试按钮及成功/失败反馈。
+  - 集成测试新增过期租约接管、尝试次数、通知唯一性、失败重试、旧版本 409 和重试后再次调度覆盖。
+- 未完成：
+  - AI 问题分类、回答质量分析、任务建议仍待后续窗口；`ai_provider` 删除端点仍按需保留。
+  - 本窗口不扩展浏览器/邮件渠道的多实例投递租约；已有渠道失败重试策略保持不变。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端：`backend/src/main/resources/db/migration/V11__coordinate_reminder_dispatch.sql`、提醒调度/重试/通知幂等实现、`ReminderDispatchIntegrationTest`。
+  - 前端：面试提醒 API、mutation、面试详情提醒计划和生成的 OpenAPI 类型。
+- 已运行验证：
+  - `mvn clean test`：83 tests，0 failures，0 errors；Flyway 在临时 SQLite 库成功执行 11 个迁移。
+  - `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+  - `npm run e2e -- e2e/at-11-interview-reschedule-reminders.spec.ts`：1 passed；首次普通权限启动因 Maven 子进程目录权限提前退出，允许写入构建目录后重跑通过。
+- 下一窗口只做：
+  - 优先实现 AI 面试问题分类：先补 OpenAPI/状态与验收契约，再复用异步任务基础设施生成可编辑候选分类，支持逐项采纳/拒绝并补齐集成与 E2E 测试；不扩展回答质量分析或任务建议。
+- 不要重复做：
+  - 不要重新修改提醒租约或扩大为文件上传、系统级推送、跨设备送达；不要实现 AI 静默写入用户事实。
+
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
   - 新增：`backend/src/main/resources/db/migration/V7__create_ai_infrastructure.sql`、`V8__add_ai_job_item_sort_order.sql`、`backend/src/main/java/com/jobhub/ai/**`（domain 8 + infrastructure 3 + application 8 + api 7 个文件）、`backend/src/test/java/com/jobhub/integration/AiIntegrationTest.java`、`frontend/src/api/ai/{aiApi,useAiQueries}.ts`、`frontend/src/features/settings/AiProviderSection.tsx`、`frontend/src/features/jobs/AiExtractionSection.tsx`、`frontend/e2e/{fake-ai-server.mjs,p1-ai-extraction.spec.ts}`。

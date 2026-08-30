@@ -34,8 +34,14 @@ public class NotificationService {
 
 	/** 供到期提醒调度调用：写一条站内通知，并为已启用渠道生成 PENDING 渠道投递记录（PRD 9.3）。 */
 	public void createFromReminder(String reminderId, String title, String content) {
-		String notificationId = ids.newId();
-		notificationMapper.insert(notificationId, reminderId, title, content, time.now());
+		Notification existing = notificationMapper.selectByReminderId(reminderId);
+		String notificationId;
+		if (existing == null) {
+			notificationId = ids.newId();
+			notificationMapper.insert(notificationId, reminderId, title, content, time.now());
+		} else {
+			notificationId = existing.getId();
+		}
 		for (String enabledType : channelMapper.selectEnabledTypes()) {
 			ChannelType type = ChannelType.valueOf(enabledType);
 			if (deliveryMapper.selectByNotificationAndType(notificationId, type.name()) == null) {
