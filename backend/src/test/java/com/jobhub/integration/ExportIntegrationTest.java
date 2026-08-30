@@ -21,6 +21,9 @@ class ExportIntegrationTest extends AbstractIntegrationTest {
 				{"type":"GIT_REPOSITORY","title":"AT24 证据","urlOrPath":"https://github.com/user/at24"}
 				""", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
 		String evidenceId = JsonProbe.str(evidence, "id");
+		restTemplate.exchange(url("/evidence/" + evidenceId + "/attachments"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"displayName\":\"AT24附件\",\"sourceType\":\"EXTERNAL_URL\",\"location\":\"https://example.com/at24.pdf\"}",
+				"Idempotency-Key", TestFixtures.newKey()), String.class);
 
 		ResponseEntity<String> created = restTemplate.exchange(url("/data-exports"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"format\":\"JSON\"}", "Idempotency-Key", TestFixtures.newKey()),
@@ -46,6 +49,8 @@ class ExportIntegrationTest extends AbstractIntegrationTest {
 		assertThat(payload).contains("job_posting");
 		assertThat(payload).contains("evidence");
 		assertThat(payload).contains(evidenceId);
+		assertThat(payload).contains("evidence_attachment");
+		assertThat(payload).contains("https://example.com/at24.pdf");
 
 		// 导出排除运行记录与幂等数据
 		assertThat(payload).doesNotContain(EXPORT_KEY);

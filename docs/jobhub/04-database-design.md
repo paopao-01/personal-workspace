@@ -18,6 +18,7 @@
 |---|---|---|---|
 | 用户设置 | `user_profile` | `user_setting` | 本地单用户仅一条用户记录。 |
 | 技能与证据 | `skill`、`user_skill`、`project`、`evidence` | `skill_alias`、`skill_evidence`、`project_evidence` | 技能自评、证据状态和面试表现独立保存。 |
+| 附件证据引用 | `evidence_attachment` | — | 一条证据可维护多条本地路径或外部链接及人工填写的类型、大小、说明；只保存引用元数据，不保存或读取文件内容。 |
 | 岗位 | `job_posting` | `job_requirement`、`requirement_skill`、`requirement_match` | JD 更新导致要求重新确认，不删除历史依据。 |
 | 投递 | `application_record` | `application_status_log` | 唯一的当前投递状态来源。 |
 | 面试 | `interview_schedule` | `interview_reminder`、`interview_checklist_item` | 日程状态与结果分离。 |
@@ -77,3 +78,4 @@
 - 导出中不得包含 `idempotency_record`、运行日志、AI 请求内容、密钥或令牌。
 - 恢复流程必须先做冲突预检。P1（V0.2）已实现导入与完整恢复（PRD 9.5）：数据包为导出端点的标准 JSON 原样回传；预检将同键行分为重复（内容一致）与冲突（内容不同），外键父行缺失的行为缺父级；恢复只插入本地缺失的行，重复、冲突与缺父级行一律跳过并列出在结果报告中，不覆盖、不修改任何已有行，因此重复恢复天然幂等。排除表（用户资料/设置、审计、幂等、导出任务、回收站）按未知表跳过；导入列以数据库实际列白名单为准。
 - 本地数据库文件、导出 JSON 和附件引用均应提醒用户自行备份；应用不自动读取或上传本地路径指向的内容。
+- `evidence_attachment` 随证据业务数据进入 JSON/CSV 导出与恢复；删除采用软删除并进入最近删除，恢复只恢复该引用记录，不会恢复或触碰引用位置指向的文件。

@@ -4,10 +4,10 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）进行中，已完成十一个切片：AI 基础设施与 JD 结构化提取（V7/V8 迁移新增 ai_provider/ai_job/ai_job_item，可切换供应商，候选逐项确认）；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析（V4 迁移 + `GET /reviews/analysis`）；数据导入与完整恢复（`POST /data-imports/validate|restore`）；浏览器与邮件提醒（V5 迁移 + 渠道配置/测试通知/投递回执闭环，GreenMail 真实 SMTP 集成测试）；CSV 导出（V6 迁移放宽 data_export.format，ZIP 打包按表拆分 CSV）；AI 基础设施 + JD 结构化提取（可切换供应商）。
-- 里程碑说明：V0.2 清单中除「AI 异步分析和候选变更确认」「简历定制草稿」「复杂恢复报告与完整附件证据库」「多实例提醒协调与失败重试」外均已实现；AI 两项需用户明确同意接入 AI 后启动。
+- 项目阶段：P1（V0.2）进行中，已完成十四个切片：AI 基础设施与 JD 结构化提取；设置页时区与默认提醒节点；提醒到期调度 + 通知中心闭环；复盘 reopen；技能画像页 + Dashboard 弱点真实聚合；要求合并；可解释岗位匹配报告；完整复盘分析；数据导入与完整恢复；浏览器与邮件提醒；CSV 导出；简历定制草稿；复杂恢复报告；附件证据引用元数据库。
+- 里程碑说明：V0.2 主流程已完成；当前剩余为 AI 问题分类/回答质量分析/任务建议、多实例提醒协调与更完整失败重试策略，以及按需补充的 `ai_provider` 删除端点。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `IN_PROGRESS`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成。
-- 当前任务：P1 复杂恢复报告已完成；下一候选为完整附件证据库（需单独设计本地文件引用与生命周期）。
+- 当前任务：P1 附件证据引用元数据库已完成；下一候选为多实例提醒协调与失败重试策略，或经用户确认后扩展 AI 问题分类/回答质量分析/任务建议。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-08-30。
 
@@ -119,6 +119,40 @@
 - 验证结果：`mvn clean test` 通过（78 tests, 0 failures, 0 errors）；前端 `npm run typecheck`、`npm run lint`、`npm run build` 通过。
 - 修改文件：ImportService、导入响应模型、逐行结果模型、DataImportIntegrationTest、OpenAPI、ImportRestoreSection、状态记录。
 - 下一步：完整附件证据库；多实例提醒协调与更完整失败重试策略；AI 问题分类/回答质量分析/任务建议。
+
+### 窗口 2026-08-30-03
+
+- 目标：按计划完成附件证据引用库，保持本地路径和外部链接只作为文本引用保存；验证后交接下一项 P1 任务。
+- 状态：**DONE**。
+- 已完成：
+  - 先更新 OpenAPI，新增 `GET /evidence-attachments`、`POST /evidence/{evidenceId}/attachments`、附件引用的 PUT/DELETE，以及 `EvidenceAttachment` / `EvidenceAttachmentCreateRequest` 契约；同步页面规格、数据库设计、PRD 和新增 AT-25。
+  - 新增 Flyway `V10__create_evidence_attachment.sql`，独立保存证据 ID、来源类型（`LOCAL_PATH`/`EXTERNAL_URL`）、用户填写的位置、可选 MIME 类型/大小/说明、UTC 时间和版本号；不保存文件字节。
+  - 新增附件引用 CRUD 后端与前端 API，写操作带幂等拦截，更新/删除使用 `If-Match-Version`；删除进入最近删除，支持恢复和永久清理，证据永久清理时同步处理其附件元数据。
+  - JSON/CSV 导出增加 `evidence_attachment`，导入按外键顺序恢复且保持只插入缺失行语义；测试数据库清理同步增加附件表。
+  - 新增 `/evidence-attachments` 附件引用库页面：按证据登记多条引用、编辑人工元数据、删除，展示引用位置与安全提示；侧边栏加入入口。
+  - 新增附件后端集成测试和 Playwright 页面验收，覆盖创建幂等、版本冲突、未知证据、软删除/恢复、导入恢复和 UI 登记流程。
+- 未完成：
+  - 不实现文件上传、下载、内容读取、扫描、自动 MIME/大小探测或校验；如未来需要，必须先单独定义文件大小、格式、存储、导出和敏感信息规则，并取得明确需求。
+  - 多实例提醒协调/失败重试、AI 问题分类/回答质量分析/任务建议、`ai_provider` 删除端点仍未实现。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端：`backend/src/main/resources/db/migration/V10__create_evidence_attachment.sql`、`backend/src/main/java/com/jobhub/evidence/**` 新增附件模型/服务/接口/Mapper，导入导出/回收站及相关测试同步修改。
+  - 前端：`frontend/src/api/evidenceAttachment/**`、`frontend/src/features/evidence/EvidenceAttachmentsPage.tsx`、路由、侧边栏、样式、设置标签和 Playwright 测试。
+- 已运行验证：
+  - `cd backend && mvn clean test`（隔离临时构建目录） -> BUILD SUCCESS，81 tests，0 failures，0 errors；Flyway V1→V10 迁移通过。
+  - `cd frontend && npm run typecheck` -> 通过；`npm run lint` -> 0 warning / 0 error；`npm run build` -> 通过。
+  - `cd frontend && npx playwright test e2e/p1-evidence-attachments.spec.ts --reporter=list` -> 1 passed。
+- 验证结果：
+  - 附件引用 CRUD、乐观锁、幂等、最近删除恢复、导入导出和页面主路径均通过自动化验证；没有访问或上传引用位置指向的文件内容。
+- 已知问题：
+  - 默认 Maven `target` 目录存在环境级文件锁，本窗口回归测试使用临时 `target-codex` 构建目录验证；临时配置和产物已清理，`backend/pom.xml` 无功能改动。
+  - Playwright 仍输出既有 React Router v7 future flag 与 Node `NO_COLOR` warning，不影响测试结果。
+- 下一窗口只做：
+  - 优先实现多实例提醒协调与失败重试策略：先检查当前提醒调度/投递状态字段和状态机，补契约、迁移（如确有需要）、集成测试，再实现调度锁/重试退避和前端失败状态展示。
+  - 若用户优先 AI，则先确认问题分类、回答质量分析或任务建议的输入范围与人工确认边界，再复用现有 AI 异步任务基础设施。
+- 不要重复做：
+  - 不要增加文件上传、读取、扫描、下载或自动校验；不要修改已执行的 V1~V9 迁移。
+  - 不要重建附件引用 CRUD、V10 迁移、导入导出接入或 `/evidence-attachments` 页面。
 - 修改文件：
   - 修改：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/04-database-design.md`、`docs/jobhub/IMPLEMENTATION_STATUS.md`、`job/domain/JobRequirement.java`、`job/application/RequirementService.java`、`backend/src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`、`frontend/playwright.config.ts`、`frontend/src/api/generated/types.ts`（重新生成，不入库）。
   - 新增：`backend/src/main/resources/db/migration/V7__create_ai_infrastructure.sql`、`V8__add_ai_job_item_sort_order.sql`、`backend/src/main/java/com/jobhub/ai/**`（domain 8 + infrastructure 3 + application 8 + api 7 个文件）、`backend/src/test/java/com/jobhub/integration/AiIntegrationTest.java`、`frontend/src/api/ai/{aiApi,useAiQueries}.ts`、`frontend/src/features/settings/AiProviderSection.tsx`、`frontend/src/features/jobs/AiExtractionSection.tsx`、`frontend/e2e/{fake-ai-server.mjs,p1-ai-extraction.spec.ts}`。

@@ -48,4 +48,12 @@ public interface TrashMapper {
 		WHERE id=#{id} AND restored_at IS NULL AND purged_at IS NULL
 		""")
 	int markPurged(@Param("id") String id, @Param("now") String now);
+
+	@Update("""
+		UPDATE trash_item SET purged_at=#{now}
+		WHERE resource_type=#{resourceType} AND resource_id=#{resourceId}
+		  AND restored_at IS NULL AND purged_at IS NULL
+		""")
+	int markPurgedForResource(@Param("resourceType") String resourceType, @Param("resourceId") String resourceId,
+			@Param("now") String now);
 }

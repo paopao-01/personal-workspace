@@ -7,6 +7,8 @@ import com.jobhub.common.version.VersionCheck;
 import com.jobhub.datamanagement.domain.TrashItem;
 import com.jobhub.datamanagement.infrastructure.TrashMapper;
 import com.jobhub.evidence.infrastructure.EvidenceMapper;
+import com.jobhub.evidence.infrastructure.EvidenceAttachmentMapper;
+import com.jobhub.evidence.domain.EvidenceAttachment;
 import com.jobhub.evidence.infrastructure.ProjectMapper;
 import com.jobhub.review.infrastructure.QuestionMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +24,7 @@ public class TrashService {
 	public static final String TYPE_PROJECT_CASE = "PROJECT_CASE";
 	public static final String TYPE_EVIDENCE = "EVIDENCE";
 	public static final String TYPE_INTERVIEW_QUESTION = "INTERVIEW_QUESTION";
+	public static final String TYPE_EVIDENCE_ATTACHMENT = "EVIDENCE_ATTACHMENT";
 
 	private static final Duration RETENTION = Duration.ofDays(30);
 	private static final ObjectMapper JSON = new ObjectMapper();
@@ -29,15 +32,17 @@ public class TrashService {
 	private final TrashMapper trashMapper;
 	private final ProjectMapper projectMapper;
 	private final EvidenceMapper evidenceMapper;
+	private final EvidenceAttachmentMapper evidenceAttachmentMapper;
 	private final QuestionMapper questionMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
 	public TrashService(TrashMapper trashMapper, ProjectMapper projectMapper, EvidenceMapper evidenceMapper,
-			QuestionMapper questionMapper, IdGenerator ids, UtcTime time) {
+			EvidenceAttachmentMapper evidenceAttachmentMapper, QuestionMapper questionMapper, IdGenerator ids, UtcTime time) {
 		this.trashMapper = trashMapper;
 		this.projectMapper = projectMapper;
 		this.evidenceMapper = evidenceMapper;
+		this.evidenceAttachmentMapper = evidenceAttachmentMapper;
 		this.questionMapper = questionMapper;
 		this.ids = ids;
 		this.time = time;
@@ -67,6 +72,7 @@ public class TrashService {
 			case TYPE_EVIDENCE -> evidenceMapper.restoreById(resourceId, now) > 0;
 			case TYPE_PROJECT_CASE -> projectMapper.restoreById(resourceId, now) > 0;
 			case TYPE_INTERVIEW_QUESTION -> questionMapper.restoreById(resourceId, now) > 0;
+			case TYPE_EVIDENCE_ATTACHMENT -> evidenceAttachmentMapper.restoreById(resourceId, now) > 0;
 			default -> throw new BusinessRuleException("Unsupported trash resource type: " + item.getResourceType());
 		};
 		if (!restored) {
@@ -89,10 +95,15 @@ public class TrashService {
 				if (evidenceMapper.countProjectRefs(resourceId) > 0 || evidenceMapper.countSkillRefs(resourceId) > 0) {
 					throw new BusinessRuleException("证据仍被项目案例或技能引用，不能永久删除；请先在引用方移除关联");
 				}
+				for (EvidenceAttachment attachment : evidenceAttachmentMapper.selectByEvidenceIncludeTrashed(resourceId)) {
+					trashMapper.markPurgedForResource(TYPE_EVIDENCE_ATTACHMENT, attachment.getId(), time.now());
+				}
+				evidenceAttachmentMapper.hardDeleteByEvidence(resourceId);
 				evidenceMapper.deleteProjectRefs(resourceId);
 				evidenceMapper.deleteSkillRefs(resourceId);
 				evidenceMapper.hardDelete(resourceId);
 			}
+			case TYPE_EVIDENCE_ATTACHMENT -> evidenceAttachmentMapper.hardDelete(resourceId);
 			case TYPE_PROJECT_CASE -> {
 				projectMapper.deleteEvidenceRefs(resourceId);
 				projectMapper.hardDelete(resourceId);

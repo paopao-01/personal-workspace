@@ -36,7 +36,7 @@ public class ImportService {
 		"job_requirement", "requirement_skill", "requirement_match", "application_record",
 		"application_status_log", "interview_schedule", "interview_checklist_item", "interview_reminder",
 		"interview_review", "interview_question", "question_knowledge", "learning_task", "task_source",
-		"project_evidence", "skill_evidence", "notification");
+		"project_evidence", "skill_evidence", "evidence_attachment", "notification");
 
 	/** 复合主键表（无 id 列）；其余表主键为 id。 */
 	private static final Map<String, List<String>> KEY_COLUMNS = Map.of(
@@ -70,6 +70,7 @@ public class ImportService {
 			new FkRef("evidence_id", "evidence", false))),
 		Map.entry("project_evidence", List.of(new FkRef("project_id", "project", false),
 			new FkRef("evidence_id", "evidence", false))),
+		Map.entry("evidence_attachment", List.of(new FkRef("evidence_id", "evidence", false))),
 		Map.entry("notification", List.of(new FkRef("reminder_id", "interview_reminder", true))),
 		Map.entry("knowledge_point", List.of(new FkRef("merged_into_knowledge_point_id", "knowledge_point", true))));
 

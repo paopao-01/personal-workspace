@@ -413,6 +413,20 @@ button {
   justify-content: flex-end;
 }
 
+.table-wrap {
+  overflow-x: auto;
+}
+
+.attachment-location {
+  display: block;
+  max-width: 280px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: normal;
+}
+
 /* ===== Badge ===== */
 .badge {
   display: inline-flex;

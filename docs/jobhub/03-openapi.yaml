@@ -653,6 +653,46 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
       responses:
         '204': { description: 已删除 }
+  /evidence-attachments:
+    get:
+      tags: [SkillsAndEvidence]
+      summary: 查询附件证据引用库
+      parameters:
+        - name: evidenceId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: 附件引用列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EvidenceAttachment' } } } } }
+  /evidence/{evidenceId}/attachments:
+    parameters: [ { $ref: '#/components/parameters/EvidenceId' } ]
+    post:
+      tags: [SkillsAndEvidence]
+      summary: 为证据创建附件引用元数据（不读取或上传文件）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceAttachmentCreateRequest' } } }
+      responses:
+        '201': { description: 创建成功, content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceAttachment' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /evidence-attachments/{attachmentId}:
+    parameters: [ { $ref: '#/components/parameters/EvidenceAttachmentId' } ]
+    put:
+      tags: [SkillsAndEvidence]
+      summary: 更新附件引用元数据
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceAttachmentCreateRequest' } } }
+      responses:
+        '200': { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceAttachment' } } } }
+    delete:
+      tags: [SkillsAndEvidence]
+      summary: 软删除附件引用（进入最近删除，30 天内可恢复）
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
 
   /data-exports:
     post:
@@ -987,6 +1027,7 @@ components:
     ProjectId: { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
     SkillId: { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
     EvidenceId: { name: evidenceId, in: path, required: true, schema: { type: string, format: uuid } }
+    EvidenceAttachmentId: { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
     ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1642,6 +1683,28 @@ components:
         - type: object
           required: [id, version]
           properties: { id: { type: string, format: uuid }, version: { type: integer } }
+    EvidenceAttachmentCreateRequest:
+      type: object
+      required: [displayName, sourceType, location]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 200 }
+        sourceType: { type: string, enum: [LOCAL_PATH, EXTERNAL_URL] }
+        location: { type: string, minLength: 1, maxLength: 2000, description: 用户填写的本地路径或外部链接，仅作为文本保存 }
+        mediaType: { type: string, maxLength: 100, description: 可选人工填写的 MIME 类型，不自动读取文件探测 }
+        sizeBytes: { type: integer, format: int64, minimum: 0, maximum: 2199023255552, description: 可选人工填写的大小，不自动读取文件属性 }
+        description: { type: string, maxLength: 1000 }
+    EvidenceAttachment:
+      allOf:
+        - $ref: '#/components/schemas/EvidenceAttachmentCreateRequest'
+        - type: object
+          required: [id, evidenceId, evidenceTitle, createdAt, updatedAt, version]
+          properties:
+            id: { type: string, format: uuid }
+            evidenceId: { type: string, format: uuid }
+            evidenceTitle: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            version: { type: integer }
     ProjectCaseSummary:
       type: object
       required: [id, title, scenario, approach, problemSolved, version]

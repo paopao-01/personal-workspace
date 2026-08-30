@@ -17,6 +17,7 @@ import { ProjectsPage } from '@/features/projects/ProjectsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { SkillsPage } from '@/features/skills/SkillsPage'
+import { EvidenceAttachmentsPage } from '@/features/evidence/EvidenceAttachmentsPage'
 
 export function AppRouter() {
   return (
@@ -43,6 +44,7 @@ export function AppRouter() {
         <Route path="/knowledge-points/weak" element={<WeakKnowledgePointsPage />} />
         <Route path="/tasks" element={<TaskListPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/evidence-attachments" element={<EvidenceAttachmentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/skills" element={<SkillsPage />} />

@@ -79,6 +79,9 @@ public interface ExportDataMapper {
 	@Select("SELECT * FROM project_evidence")
 	List<Map<String, Object>> selectProjectEvidence();
 
+	@Select("SELECT * FROM evidence_attachment ORDER BY created_at")
+	List<Map<String, Object>> selectEvidenceAttachments();
+
 	@Select("SELECT * FROM notification ORDER BY created_at")
 	List<Map<String, Object>> selectNotifications();
 }

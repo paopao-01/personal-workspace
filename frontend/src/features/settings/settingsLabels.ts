@@ -25,7 +25,8 @@ export function exportStatusVariant(status: string): 'success' | 'info' | 'subtl
 export const trashResourceTypeLabels: Record<string, string> = {
   PROJECT_CASE: '项目案例',
   EVIDENCE: '证据引用',
-  INTERVIEW_QUESTION: '面试问题',
+	INTERVIEW_QUESTION: '面试问题',
+	EVIDENCE_ATTACHMENT: '附件引用',
 }
 
 export function trashResourceTypeLabel(type: string): string {

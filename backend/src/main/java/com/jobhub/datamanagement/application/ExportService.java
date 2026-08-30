@@ -196,6 +196,7 @@ public class ExportService {
 		tables.put("project", exportDataMapper.selectProjects());
 		tables.put("evidence", exportDataMapper.selectEvidence());
 		tables.put("project_evidence", exportDataMapper.selectProjectEvidence());
+		tables.put("evidence_attachment", exportDataMapper.selectEvidenceAttachments());
 		tables.put("notification", exportDataMapper.selectNotifications());
 		return tables;
 	}
