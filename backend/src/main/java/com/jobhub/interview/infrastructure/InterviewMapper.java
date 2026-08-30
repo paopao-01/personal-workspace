@@ -14,6 +14,8 @@ public interface InterviewMapper {
     int insert(Interview i);
     @Select("SELECT * FROM interview_schedule WHERE id=#{id} AND deleted_at IS NULL") Interview selectById(@Param("id") String id);
     @Select("SELECT * FROM interview_schedule WHERE application_id=#{applicationId} AND deleted_at IS NULL ORDER BY starts_at") List<Interview> selectByApplication(@Param("applicationId") String applicationId);
+    @Select("SELECT COUNT(*) FROM interview_schedule WHERE application_id=#{applicationId} AND schedule_status='COMPLETED' AND deleted_at IS NULL")
+    long countCompletedByApplication(@Param("applicationId") String applicationId);
     @Select("SELECT * FROM interview_schedule WHERE deleted_at IS NULL AND starts_at >= #{from} AND starts_at <= #{to} AND (#{status} IS NULL OR schedule_status=#{status}) ORDER BY starts_at") List<Interview> selectUpcoming(@Param("from") String from, @Param("to") String to, @Param("status") InterviewScheduleStatus status);
     @Select("SELECT i.* FROM interview_schedule i LEFT JOIN interview_review r ON r.interview_id=i.id AND r.deleted_at IS NULL " +
             "WHERE i.deleted_at IS NULL AND i.schedule_status='COMPLETED' AND (r.id IS NULL OR r.review_status != 'COMPLETED') ORDER BY i.starts_at DESC")

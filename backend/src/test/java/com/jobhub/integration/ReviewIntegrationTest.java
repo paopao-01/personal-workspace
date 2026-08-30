@@ -130,6 +130,38 @@ class ReviewIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void completedReviewCanBeEditedDirectlyWhileCompletionRequirementsRemainSatisfied() {
+		String interviewId = completedInterview();
+		String draft = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class).getBody();
+		String reviewId = JsonProbe.str(draft, "id");
+		restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"完成前的问题\",\"answerStatus\":\"UNANSWERED\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		String ready = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		restTemplate.exchange(url("/reviews/" + reviewId + "/complete"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(ready, "version")),
+			String.class);
+		String completed = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+
+		ResponseEntity<String> edited = restTemplate.exchange(url("/interviews/" + interviewId + "/review"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"interviewResult\":\"FAILED\",\"noQuestionsRecorded\":false,\"overallFeeling\":\"完成后补充感受\"}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(completed, "version")), String.class);
+		assertThat(edited.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.str(edited.getBody(), "status")).isEqualTo("COMPLETED");
+		assertThat(JsonProbe.str(edited.getBody(), "overallFeeling")).isEqualTo("完成后补充感受");
+
+		ResponseEntity<String> extraQuestion = restTemplate.exchange(url("/reviews/" + reviewId + "/questions"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"完成后补充的问题\",\"answerStatus\":\"PARTIALLY_ANSWERED\"}", "Idempotency-Key", TestFixtures.newKey()),
+			String.class);
+		assertThat(extraQuestion.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		String afterQuestion = restTemplate.getForEntity(url("/interviews/" + interviewId + "/review"), String.class).getBody();
+		assertThat(JsonProbe.str(afterQuestion, "status")).isEqualTo("COMPLETED");
+		assertThat(JsonProbe.arraySize(afterQuestion, "questions")).isEqualTo(2);
+	}
+
+	@Test
 	void P1_reopenCompletedReviewKeepsQuestionsAndAllowsEditing() {
 		String interviewId = completedInterview();
 		String reviewBody = restTemplate.exchange(

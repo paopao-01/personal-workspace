@@ -74,7 +74,7 @@ export function InterviewReviewPage() {
   const lastAutoSaved = useRef('')
 
   useEffect(() => {
-    if (!interviewQuery.data || !review || review.status === 'COMPLETED') return
+    if (!interviewQuery.data || !review) return
     if (overallFeeling === null && interviewerFocus === null && jobInterest === null && projectExpressRisk === null && interviewResult === '' && noQuestionsRecorded === null) return
     const body = {
       interviewResult: interviewResult || review.interviewResult || 'PENDING',
@@ -126,7 +126,7 @@ export function InterviewReviewPage() {
   const selectedInterviewerFocus = interviewerFocus ?? review?.interviewerFocus ?? ''
   const selectedJobInterest = jobInterest ?? review?.jobInterest ?? ''
   const selectedProjectExpressRisk = projectExpressRisk ?? review?.projectExpressRisk ?? ''
-  const fullReviewFieldsDisabled = cannotReview || isCompletedReview || pending
+  const fullReviewFieldsDisabled = cannotReview || pending
 
   const reportError = (caught: Error) => {
     if (isApiError(caught) || isNetworkError(caught)) {
@@ -143,7 +143,7 @@ export function InterviewReviewPage() {
     setError(null)
     setActionError(null)
     const content = questionContent.trim()
-    if (!selectedNoQuestionsRecorded && !content) {
+    if (!selectedNoQuestionsRecorded && !content && !(review?.questions?.length)) {
       setError('请填写至少一道问题，或勾选未记录到问题')
       return
     }
@@ -366,7 +366,7 @@ export function InterviewReviewPage() {
       ) : null}
       {isCompletedReview ? (
         <div className="success-banner" style={{ gap: 12 }}>
-          <span>复盘已完成。如需补充或修改问题，可重新打开复盘（问题与任务关联会保留）。</span>
+          <span>复盘已完成，可以直接补充或修改；若要使其重新回到草稿状态，也可重新打开（问题与任务关联会保留）。</span>
           <Button
             size="sm"
             variant="default"
@@ -391,7 +391,7 @@ export function InterviewReviewPage() {
             size="sm"
             variant="ghost"
             type="button"
-            disabled={cannotReview || isCompletedReview}
+            disabled={cannotReview || pending}
             onClick={() => setShowFullReview((value) => !value)}
           >
             {showFullReview ? '收起完整复盘字段' : '展开完整复盘字段'}
@@ -406,7 +406,7 @@ export function InterviewReviewPage() {
                   onChange={(event) =>
                     setInterviewResult(event.target.value as typeof interviewResult)
                   }
-                  disabled={cannotReview || isCompletedReview}
+                  disabled={cannotReview || pending}
                 >
                   <option value="FAILED">未通过</option>
                   <option value="PASSED">通过</option>
@@ -417,7 +417,7 @@ export function InterviewReviewPage() {
                 <Select
                   value={answerStatus}
                   onChange={(event) => setAnswerStatus(event.target.value as AnswerStatus)}
-                  disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
+                  disabled={cannotReview || pending || selectedNoQuestionsRecorded}
                 >
                   <option value="UNANSWERED">{answerStatusLabel.UNANSWERED}</option>
                   <option value="PARTIALLY_ANSWERED">{answerStatusLabel.PARTIALLY_ANSWERED}</option>
@@ -431,7 +431,7 @@ export function InterviewReviewPage() {
                 onChange={(event) => setQuestionContent(event.target.value)}
                 rows={4}
                 maxLength={10000}
-                disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
+                disabled={cannotReview || pending || selectedNoQuestionsRecorded}
                 aria-invalid={Boolean(error)}
               />
             </Field>
@@ -441,7 +441,7 @@ export function InterviewReviewPage() {
                 onChange={(event) => setKnowledgePointName(event.target.value)}
                 maxLength={100}
                 placeholder="例如 Redis 缓存一致性"
-                disabled={cannotReview || isCompletedReview || selectedNoQuestionsRecorded}
+                disabled={cannotReview || pending || selectedNoQuestionsRecorded}
               />
             </Field>
             <label className="decision-radio" style={{ marginBottom: 16 }}>
@@ -449,7 +449,7 @@ export function InterviewReviewPage() {
                 type="checkbox"
                 checked={selectedNoQuestionsRecorded}
                 onChange={(event) => setNoQuestionsRecorded(event.target.checked)}
-                disabled={cannotReview || isCompletedReview}
+                disabled={cannotReview || pending}
               />
               未记录到问题
             </label>
@@ -459,7 +459,7 @@ export function InterviewReviewPage() {
                 onChange={(event) => setOverallFeeling(event.target.value)}
                 rows={3}
                 maxLength={5000}
-                disabled={cannotReview || isCompletedReview}
+                disabled={cannotReview || pending}
               />
             </Field>
             {showFullReview ? (
@@ -509,7 +509,7 @@ export function InterviewReviewPage() {
               <Button
                 variant="primary"
                 type="submit"
-                disabled={cannotReview || isCompletedReview || pending}
+                disabled={cannotReview || pending}
               >
                 {pending ? '保存中…' : '保存复盘'}
               </Button>
@@ -561,7 +561,7 @@ export function InterviewReviewPage() {
                       size="sm"
                       variant="ghost"
                       type="button"
-                      disabled={pending || isCompletedReview}
+                      disabled={pending}
                       onClick={() =>
                         questionDetailDraft?.questionId === question.id
                           ? setQuestionDetailDraft(null)
@@ -728,17 +728,17 @@ export function InterviewReviewPage() {
                   ) : null}
                   <QuestionClassificationSection
                     question={question}
-                    disabled={cannotReview || isCompletedReview || pending}
+                    disabled={cannotReview || pending}
                     onChanged={() => reviewQuery.refetch()}
                   />
                   <AnswerQualityAnalysisSection
                     question={question}
-                    disabled={cannotReview || isCompletedReview || pending}
+                    disabled={cannotReview || pending}
                     onChanged={() => reviewQuery.refetch()}
                   />
                   <TaskSuggestionSection
                     question={question}
-                    disabled={cannotReview || isCompletedReview || pending}
+                    disabled={cannotReview || pending}
                     onChanged={() => reviewQuery.refetch()}
                   />
                 </div>

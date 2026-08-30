@@ -37,7 +37,6 @@ public class InterviewReview {
 
 	public void updateDraft(InterviewResult result, boolean noQuestionsRecorded, String overallFeeling,
 			String interviewerFocus, String jobInterest, String projectExpressionRisk, String now) {
-		this.status = ReviewStatus.DRAFT;
 		this.interviewResult = result;
 		this.noQuestionsRecorded = noQuestionsRecorded;
 		this.overallFeeling = overallFeeling;
