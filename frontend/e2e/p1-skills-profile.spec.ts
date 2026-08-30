@@ -7,7 +7,7 @@ test('P1 skills profile shows unrated skills and supports self-level updates', a
   test.setTimeout(180_000)
   const suffix = Date.now()
 
-  // 造数：岗位 + JD 提取 + 确认 Redis 要求 + e2e 夹具创建技能（仅 e2e profile 可用）
+  // 造数：岗位 + JD 提取 + 确认 Redis 要求 + e2e 夹具创建带项目证据的技能
   const jobResponse = await request.post('/api/jobs', {
     headers: { 'Idempotency-Key': `e2e-p1s-job-${crypto.randomUUID()}` },
     data: {
@@ -54,19 +54,19 @@ test('P1 skills profile shows unrated skills and supports self-level updates', a
   const redis = profiles.find((item) => item.skillName === skillName)
   expect(redis).toBeTruthy()
   expect(redis!.selfLevel).toBeNull()
-  expect(redis!.evidenceStatus).toBeNull()
+  expect(redis!.evidenceStatus).toBe('VALID')
   expect(redis!.version).toBe(0)
 
-  // UI：未评估 → 首次自评 3 → 证据状态保持无证据（三维度独立）
+  // UI：未评估 → 首次自评 3 → 证据状态保持有效（三维度独立）
   await page.goto('/skills')
   const redisRow = page.locator('.requirement-row').filter({ hasText: skillName })
   await expect(redisRow.getByText('自评：未评估')).toBeVisible()
-  await expect(redisRow.getByText('证据：未评估')).toBeVisible()
+  await expect(redisRow.getByText('证据：证据有效')).toBeVisible()
 
   await redisRow.getByLabel(`选择 ${skillName} 的自评等级`).selectOption('3')
   await redisRow.getByRole('button', { name: '保存' }).click()
   await expect(redisRow.getByText('自评：3 / 5')).toBeVisible()
-  await expect(redisRow.getByText('证据：无证据')).toBeVisible()
+  await expect(redisRow.getByText('证据：证据有效')).toBeVisible()
 
   // 刷新后持久化
   await page.reload()
@@ -82,7 +82,7 @@ test('P1 skills profile shows unrated skills and supports self-level updates', a
   }>
   const redisAfter = profilesAfter.find((item) => item.skillName === skillName)
   expect(redisAfter!.selfLevel).toBe(3)
-  expect(redisAfter!.evidenceStatus).toBe('NO_EVIDENCE')
+  expect(redisAfter!.evidenceStatus).toBe('VALID')
   // 首次自评创建 user_skill 后为初始版本 0
   expect(redisAfter!.version).toBe(0)
 })

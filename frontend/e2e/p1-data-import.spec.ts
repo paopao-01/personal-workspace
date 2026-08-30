@@ -49,6 +49,11 @@ function remapPackage(packageJson: string): { json: string; mapping: Map<string,
       }
     }
   }
+  for (const row of pkg.tables.skill_alias ?? []) {
+    if (typeof row.normalized_alias === 'string' && typeof row.id === 'string') {
+      row.normalized_alias = `${row.normalized_alias}-导入副本-${row.id.slice(0, 8)}`
+    }
+  }
   return { json: JSON.stringify(pkg), mapping }
 }
 
