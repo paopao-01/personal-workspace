@@ -25,6 +25,7 @@ public class LearningTask {
 	private String deletedAt;
 	private long version;
 	private List<KnowledgePoint> knowledgePoints = List.of();
+	private List<com.jobhub.task.application.TaskSourceRef> sourceRefs = List.of();
 
 	public static LearningTask create(String id, String title, String type, TaskPriority priority,
 			Integer estimatedMinutes, String dueAt, String learningGoal, String acceptanceCriteria,
@@ -116,5 +117,9 @@ public class LearningTask {
 	public List<KnowledgePoint> getKnowledgePoints() { return knowledgePoints == null ? List.of() : knowledgePoints; }
 	public void setKnowledgePoints(List<KnowledgePoint> knowledgePoints) {
 		this.knowledgePoints = knowledgePoints == null ? List.of() : knowledgePoints;
+	}
+	public List<com.jobhub.task.application.TaskSourceRef> getSourceRefs() { return sourceRefs == null ? List.of() : sourceRefs; }
+	public void setSourceRefs(List<com.jobhub.task.application.TaskSourceRef> sourceRefs) {
+		this.sourceRefs = sourceRefs == null ? List.of() : sourceRefs;
 	}
 }

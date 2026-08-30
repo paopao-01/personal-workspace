@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useInterview, useInterviewReminders } from '@/api/interviews/useInterviewQueries'
-import { useRetryReminder } from '@/api/interviews/useInterviewMutations'
+import { useDeleteInterview, useRetryReminder } from '@/api/interviews/useInterviewMutations'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
@@ -27,6 +27,7 @@ export function InterviewDetailPage() {
   const interviewQuery = useInterview(interviewId)
   const reminderQuery = useInterviewReminders(interviewId)
   const retryReminderMutation = useRetryReminder(interviewId)
+  const deleteInterview = useDeleteInterview()
 
   if (interviewQuery.isLoading) return <Spinner label="加载面试详情…" />
   if (interviewQuery.error || !interviewQuery.data) {
@@ -44,6 +45,13 @@ export function InterviewDetailPage() {
   }
 
   const interview = interviewQuery.data
+  const remove = () => {
+    if (!confirm('确认删除此面试？可在最近删除中恢复。')) return
+    deleteInterview.mutate({ interviewId: interview.id, version: interview.version }, {
+      onSuccess: () => { pushToast('面试已移至最近删除'); navigate(`/applications/${interview.applicationId}`) },
+      onError: (error) => pushToast(isApiError(error) ? error.message : '删除失败，请稍后重试', 'error'),
+    })
+  }
   const waitingForConfirmation =
     interview.scheduleStatus === 'SCHEDULED' &&
     new Date(interview.startsAt).getTime() < openedAt
@@ -69,6 +77,9 @@ export function InterviewDetailPage() {
             onClick={() => navigate(`/applications/${interview.applicationId}`)}
           >
             返回投递
+          </Button>
+          <Button variant="ghost" size="sm" disabled={deleteInterview.isPending} onClick={remove}>
+            删除面试
           </Button>
         </div>
       </div>

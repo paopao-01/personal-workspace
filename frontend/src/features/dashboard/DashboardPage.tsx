@@ -19,9 +19,7 @@ import {
 /**
  * P01 首页工作台。让用户在 10 秒内知道今天应做什么。
  *
- * 后端 actionItems 已按 priority 升序排序（1=逾期, 2=缺失, 3=一般），
- * 同优先级按 dueAt 升序。本切片只有 APPLICATION_ACTION_DUE 类行动项；
- * upcomingInterviews 为未来已安排面试；weakKnowledgePoints 仍为空数组占位。
+ * 后端按业务优先级聚合待复盘、投递行动和学习任务；所有行动都保留来源跳转。
  */
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -142,14 +140,16 @@ function UpcomingInterviewsSection({
 function actionVariant(
   priority: number,
 ): 'danger' | 'warning' | 'info' {
-  if (priority === 1) return 'danger'
-  if (priority === 2) return 'warning'
+  if (priority === 2 || priority === 4) return 'danger'
+  if (priority === 1 || priority === 3 || priority === 5) return 'warning'
   return 'info'
 }
 
 function actionTag(priority: number): string {
-  if (priority === 1) return '逾期'
-  if (priority === 2) return '缺失'
+  if (priority === 1) return '待复盘'
+  if (priority === 2 || priority === 4) return '逾期'
+  if (priority === 3) return '缺失'
+  if (priority === 5) return '即将到期'
   return '待办'
 }
 
@@ -170,9 +170,16 @@ function TodayActionsSection({ items }: { items: ActionItem[] }) {
                 key={item.id}
                 className="requirement-row"
                 style={{ justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}
-                onClick={() => navigate(item.sourceRef.type === 'JOB'
-                  ? `/jobs/${item.sourceRef.id}`
-                  : `/applications/${item.sourceRef.id}`)}
+                onClick={() => {
+                  const path = item.sourceRef.type === 'JOB'
+                    ? `/jobs/${item.sourceRef.id}`
+                    : item.sourceRef.type === 'INTERVIEW'
+                      ? `/interviews/${item.sourceRef.id}/review`
+                      : item.sourceRef.type === 'TASK'
+                        ? '/tasks'
+                        : `/applications/${item.sourceRef.id}`
+                  navigate(path)
+                }}
               >
                 <div className="requirement-main">
                   <div className="requirement-meta">

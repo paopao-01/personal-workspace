@@ -4,6 +4,7 @@ import com.jobhub.review.api.KnowledgePointResponse;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskPriority;
 import com.jobhub.task.domain.TaskStatus;
+import com.jobhub.task.application.TaskSourceRef;
 import java.util.List;
 
 public record LearningTaskResponse(
@@ -11,8 +12,10 @@ public record LearningTaskResponse(
 	String title,
 	TaskStatus status,
 	TaskPriority priority,
+	Integer estimatedMinutes,
 	String dueAt,
 	List<KnowledgePointResponse> knowledgePoints,
+	List<SourceRefResponse> sourceRefs,
 	String learningGoal,
 	String acceptanceCriteria,
 	String verificationMethod,
@@ -26,8 +29,10 @@ public record LearningTaskResponse(
 			task.getTitle(),
 			task.getStatus(),
 			task.getPriority(),
+			task.getEstimatedMinutes(),
 			task.getDueAt(),
 			task.getKnowledgePoints().stream().map(KnowledgePointResponse::from).toList(),
+			task.getSourceRefs().stream().map(SourceRefResponse::from).toList(),
 			task.getLearningGoal(),
 			task.getAcceptanceCriteria(),
 			task.getVerificationMethod(),
@@ -35,5 +40,11 @@ public record LearningTaskResponse(
 			task.getOutputUrl(),
 			task.getVersion()
 		);
+	}
+
+	public record SourceRefResponse(String type, String id, String label) {
+		static SourceRefResponse from(TaskSourceRef source) {
+			return new SourceRefResponse(source.getType(), source.getId(), source.getLabel());
+		}
 	}
 }

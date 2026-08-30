@@ -60,10 +60,17 @@ public class JobRequirement {
 		return r;
 	}
 
-	public JobRequirement confirm(String normalizedName, RequirementType type, String proficiencyText, String now) {
+	public JobRequirement updateDetails(String rawText, String normalizedName, RequirementType type,
+			String proficiencyText, String now) {
+		this.rawText = rawText;
 		this.normalizedName = normalizedName;
 		this.type = type;
 		this.proficiencyText = proficiencyText;
+		this.updatedAt = now;
+		return this;
+	}
+
+	public JobRequirement confirm(String now) {
 		this.confirmationStatus = ConfirmationStatus.CONFIRMED;
 		this.updatedAt = now;
 		return this;

@@ -11,6 +11,8 @@ import com.jobhub.evidence.infrastructure.EvidenceAttachmentMapper;
 import com.jobhub.evidence.domain.EvidenceAttachment;
 import com.jobhub.evidence.infrastructure.ProjectMapper;
 import com.jobhub.review.infrastructure.QuestionMapper;
+import com.jobhub.application.infrastructure.ApplicationMapper;
+import com.jobhub.interview.infrastructure.InterviewMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,8 @@ public class TrashService {
 	public static final String TYPE_EVIDENCE = "EVIDENCE";
 	public static final String TYPE_INTERVIEW_QUESTION = "INTERVIEW_QUESTION";
 	public static final String TYPE_EVIDENCE_ATTACHMENT = "EVIDENCE_ATTACHMENT";
+	public static final String TYPE_APPLICATION = "APPLICATION";
+	public static final String TYPE_INTERVIEW = "INTERVIEW";
 
 	private static final Duration RETENTION = Duration.ofDays(30);
 	private static final ObjectMapper JSON = new ObjectMapper();
@@ -34,16 +38,21 @@ public class TrashService {
 	private final EvidenceMapper evidenceMapper;
 	private final EvidenceAttachmentMapper evidenceAttachmentMapper;
 	private final QuestionMapper questionMapper;
+	private final ApplicationMapper applicationMapper;
+	private final InterviewMapper interviewMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
 	public TrashService(TrashMapper trashMapper, ProjectMapper projectMapper, EvidenceMapper evidenceMapper,
-			EvidenceAttachmentMapper evidenceAttachmentMapper, QuestionMapper questionMapper, IdGenerator ids, UtcTime time) {
+			EvidenceAttachmentMapper evidenceAttachmentMapper, QuestionMapper questionMapper, ApplicationMapper applicationMapper,
+			InterviewMapper interviewMapper, IdGenerator ids, UtcTime time) {
 		this.trashMapper = trashMapper;
 		this.projectMapper = projectMapper;
 		this.evidenceMapper = evidenceMapper;
 		this.evidenceAttachmentMapper = evidenceAttachmentMapper;
 		this.questionMapper = questionMapper;
+		this.applicationMapper = applicationMapper;
+		this.interviewMapper = interviewMapper;
 		this.ids = ids;
 		this.time = time;
 	}
@@ -73,6 +82,8 @@ public class TrashService {
 			case TYPE_PROJECT_CASE -> projectMapper.restoreById(resourceId, now) > 0;
 			case TYPE_INTERVIEW_QUESTION -> questionMapper.restoreById(resourceId, now) > 0;
 			case TYPE_EVIDENCE_ATTACHMENT -> evidenceAttachmentMapper.restoreById(resourceId, now) > 0;
+			case TYPE_APPLICATION -> applicationMapper.restoreById(resourceId, now) > 0;
+			case TYPE_INTERVIEW -> interviewMapper.restoreById(resourceId, now) > 0;
 			default -> throw new BusinessRuleException("Unsupported trash resource type: " + item.getResourceType());
 		};
 		if (!restored) {

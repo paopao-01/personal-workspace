@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   createInterview,
+  deleteInterview,
   cancelInterview,
   completeInterview,
   markInterviewNoShow,
@@ -87,6 +88,19 @@ export function useRetryReminder(interviewId: string | undefined) {
       queryClient.invalidateQueries({
         queryKey: ['interviews', interviewId, 'reminders'],
       })
+    },
+  })
+}
+
+export function useDeleteInterview() {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, { interviewId: string; version: number }>({
+    mutationFn: ({ interviewId, version }) => deleteInterview(interviewId, version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['interviews'] })
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['trash'] })
     },
   })
 }

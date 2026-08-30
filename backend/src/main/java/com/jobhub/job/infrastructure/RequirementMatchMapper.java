@@ -17,7 +17,7 @@ public interface RequirementMatchMapper {
 	RequirementMatch selectByRequirementId(@Param("requirementId") String requirementId);
 
 	@Select("<script>" +
-			"SELECT * FROM requirement_match WHERE requirement_id IN " +
+			"SELECT * FROM requirement_match WHERE invalidated_at IS NULL AND requirement_id IN " +
 			"<foreach collection='ids' item='id' open='(' close=')' separator=','>" +
 			"#{id}" +
 			"</foreach>" +
@@ -31,11 +31,13 @@ public interface RequirementMatchMapper {
 	int insert(RequirementMatch match);
 
 	@Update("UPDATE requirement_match SET match_status=#{match.matchStatus}, " +
-			"manual_override_reason=#{match.manualOverrideReason, jdbcType=VARCHAR}, updated_at=#{match.updatedAt} " +
+			"manual_override_reason=#{match.manualOverrideReason, jdbcType=VARCHAR}, invalidated_at=NULL, " +
+			"updated_at=#{match.updatedAt}, version=version+1 " +
 			"WHERE requirement_id=#{match.requirementId} AND version=#{expectedVersion}")
 	int updateByRequirementIdAndVersion(@Param("match") RequirementMatch match, @Param("expectedVersion") long expectedVersion);
 
-	@Delete("DELETE FROM requirement_match WHERE requirement_id IN " +
+	@Update("UPDATE requirement_match SET invalidated_at=#{now}, updated_at=#{now}, version=version+1 " +
+			"WHERE invalidated_at IS NULL AND requirement_id IN " +
 			"(SELECT id FROM job_requirement WHERE job_id = #{jobId})")
-	int deleteByJobId(@Param("jobId") String jobId);
+	int invalidateByJobId(@Param("jobId") String jobId, @Param("now") String now);
 }

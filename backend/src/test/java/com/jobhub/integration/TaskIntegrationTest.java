@@ -73,6 +73,23 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrStr(weak, "", 0, "questions.0.id")).isEqualTo(questionId);
 	}
 
+	@Test
+	void p0_directJobTask_canBeListedBySourceAndExposesSourceReference() {
+		String jobId = JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
+			TestFixtures.httpJson(TestFixtures.createJobBody("任务关联科技", "Java 后端工程师")), String.class).getBody(), "id");
+		ResponseEntity<String> created = restTemplate.exchange(url("/tasks"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("""
+				{"title":"阅读岗位要求","priority":"HIGH","dueAt":"2099-01-01T00:00:00Z","relatedJobIds":["%s"]}
+				""".formatted(jobId), "Idempotency-Key", TestFixtures.newKey()), String.class);
+		assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+		assertThat(JsonProbe.arrStr(created.getBody(), "sourceRefs", 0, "type")).isEqualTo("JOB");
+		assertThat(JsonProbe.arrStr(created.getBody(), "sourceRefs", 0, "id")).isEqualTo(jobId);
+
+		String filtered = restTemplate.getForObject(url("/tasks?sourceType=JOB&jobId=" + jobId), String.class);
+		assertThat(JsonProbe.intVal(filtered, "total")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(filtered, "items", 0, "sourceRefs.0.label")).isEqualTo("Java 后端工程师");
+	}
+
 	private ResponseEntity<String> transitionTask(String taskId, long version, String targetStatus, String verificationResult) {
 		String body = verificationResult == null
 			? "{\"targetStatus\":\"" + targetStatus + "\"}"

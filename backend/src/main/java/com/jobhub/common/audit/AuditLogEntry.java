@@ -40,6 +40,18 @@ public class AuditLogEntry {
 		return entry;
 	}
 
+	public static AuditLogEntry requirementChanged(String id, String requirementId, String action,
+			String reason, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "JOB_REQUIREMENT";
+		entry.resourceId = requirementId;
+		entry.action = action;
+		entry.reason = reason;
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
 	public String getId() { return id; }
 	public String getResourceType() { return resourceType; }
 	public String getResourceId() { return resourceId; }

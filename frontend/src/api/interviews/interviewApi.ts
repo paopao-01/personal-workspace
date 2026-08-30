@@ -135,3 +135,7 @@ export async function retryReminder(
   )
   return res.data
 }
+
+export async function deleteInterview(interviewId: string, version: number): Promise<void> {
+  await apiClient.delete(`/interviews/${interviewId}`, { headers: ifMatchHeader(version) })
+}

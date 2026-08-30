@@ -8,6 +8,36 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TrashIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
+	void p0_interviewAndApplicationDelete_enterTrashAndCanBeRestored() {
+		String interviewId = completedInterview();
+		String interview = restTemplate.getForEntity(url("/interviews/" + interviewId), String.class).getBody();
+		String applicationId = JsonProbe.str(interview, "applicationId");
+		ResponseEntity<String> deletedInterview = restTemplate.exchange(url("/interviews/" + interviewId), HttpMethod.DELETE,
+			TestFixtures.httpWithHeaders("", "If-Match-Version", String.valueOf(JsonProbe.lng(interview, "version"))), String.class);
+		assertThat(deletedInterview.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+		String trash = restTemplate.getForEntity(url("/trash"), String.class).getBody();
+		assertThat(JsonProbe.arrStr(trash, "", 0, "resourceType")).isEqualTo("INTERVIEW");
+		String interviewTrashId = JsonProbe.arrStr(trash, "", 0, "id");
+		restTemplate.exchange(url("/trash/" + interviewTrashId + "/restore"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
+		String restoredInterview = restTemplate.getForEntity(url("/interviews/" + interviewId), String.class).getBody();
+		assertThat(restoredInterview).isNotNull();
+		// 投递删除要求先移除关联面试；恢复后再次删除以验证该约束及完整生命周期。
+		restTemplate.exchange(url("/interviews/" + interviewId), HttpMethod.DELETE,
+			TestFixtures.httpWithHeaders("", "If-Match-Version", String.valueOf(JsonProbe.lng(restoredInterview, "version"))), String.class);
+
+		String application = restTemplate.getForEntity(url("/applications/" + applicationId), String.class).getBody();
+		ResponseEntity<String> deletedApplication = restTemplate.exchange(url("/applications/" + applicationId), HttpMethod.DELETE,
+			TestFixtures.httpWithHeaders("", "If-Match-Version", String.valueOf(JsonProbe.lng(application, "version"))), String.class);
+		assertThat(deletedApplication.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+		String applicationTrash = restTemplate.getForEntity(url("/trash"), String.class).getBody();
+		assertThat(JsonProbe.arrStr(applicationTrash, "", 0, "resourceType")).isEqualTo("APPLICATION");
+		restTemplate.exchange(url("/trash/" + JsonProbe.arrStr(applicationTrash, "", 0, "id") + "/restore"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey()), String.class);
+		assertThat(restTemplate.getForEntity(url("/applications/" + applicationId), String.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	@Test
 	void AT23_deleteReferencedEvidence_showsTrashedRefsAndRestoreKeepsId() {
 		String evidence = createEvidence("被引用证据");
 		String evidenceId = JsonProbe.str(evidence, "id");

@@ -16,8 +16,8 @@ import {
 } from '@/features/jobs/statusLabels'
 import type {
   JobDecisionStatus,
+  JobListItem,
   JobStatus,
-  PageJob,
 } from '@/api/jobs/jobApi'
 import { isApiError, isNetworkError, isVersionConflict } from '@/api/errors'
 import { pushToast } from '@/components/feedback/toastStore'
@@ -39,10 +39,6 @@ const STATUS_OPTIONS: { value: '' | JobStatus; label: string }[] = [
   { value: 'ARCHIVED', label: jobStatusLabel.ARCHIVED },
 ]
 
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + '…' : s
-}
-
 export function JobListPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -50,6 +46,9 @@ export function JobListPage() {
   const query = searchParams.get('query') ?? ''
   const decisionStatus = (searchParams.get('decisionStatus') ?? '') as string
   const jobStatus = (searchParams.get('jobStatus') ?? '') as string
+  const location = searchParams.get('location') ?? ''
+  const source = searchParams.get('source') ?? ''
+  const pendingRequirements = searchParams.get('hasPendingRequirements') ?? ''
   const page = Number(searchParams.get('page') ?? '1') || 1
 
   const { data, isLoading, error, refetch } = useJobList({
@@ -60,6 +59,9 @@ export function JobListPage() {
       | Exclude<JobDecisionStatus, null>
       | undefined,
     jobStatus: (jobStatus || undefined) as JobStatus | undefined,
+    location: location || undefined,
+    source: source || undefined,
+    hasPendingRequirements: pendingRequirements === '' ? undefined : pendingRequirements === 'true',
   })
 
   const updateParam = (key: string, value: string) => {
@@ -73,7 +75,8 @@ export function JobListPage() {
   const archiveMutation = useArchiveJob()
   const restoreMutation = useRestoreJob()
 
-  const handleArchive = (job: PageJob['items'][number]) => {
+  const handleArchive = (item: JobListItem) => {
+    const job = item.job
     if (!confirm(`确认归档岗位「${job.title}」？归档后仍可恢复。`)) return
     archiveMutation.mutate(
       { jobId: job.id, version: job.version },
@@ -93,7 +96,8 @@ export function JobListPage() {
     )
   }
 
-  const handleRestore = (job: PageJob['items'][number]) => {
+  const handleRestore = (item: JobListItem) => {
+    const job = item.job
     restoreMutation.mutate(
       { jobId: job.id, version: job.version },
       {
@@ -163,6 +167,19 @@ export function JobListPage() {
             ))}
           </Select>
         </Field>
+        <Field label="地点">
+          <Input value={location} onChange={(e) => updateParam('location', e.target.value)} placeholder="城市 / 地区" maxLength={100} />
+        </Field>
+        <Field label="来源">
+          <Input value={source} onChange={(e) => updateParam('source', e.target.value)} placeholder="招聘平台 / 推荐" maxLength={100} />
+        </Field>
+        <Field label="待确认要求">
+          <Select value={pendingRequirements} onChange={(e) => updateParam('hasPendingRequirements', e.target.value)}>
+            <option value="">全部</option>
+            <option value="true">有待确认项</option>
+            <option value="false">无待确认项</option>
+          </Select>
+        </Field>
       </div>
 
       <div className="card">
@@ -187,13 +204,15 @@ export function JobListPage() {
                 '岗位',
                 '地点',
                 '决定',
-                '状态',
-                'JD 摘要',
+                '要求 / 差距',
+                '有效投递',
                 '最近更新',
                 '',
               ]}
             >
-              {jobs.map((job) => (
+              {jobs.map((item) => {
+                const job = item.job
+                return (
                 <tr
                   key={job.id}
                   style={{ cursor: 'pointer' }}
@@ -211,13 +230,14 @@ export function JobListPage() {
                       <Badge variant="subtle">未决定</Badge>
                     )}
                   </td>
-                  <td>
-                    <Badge variant={job.status === 'ARCHIVED' ? 'neutral' : 'primary'}>
-                      {jobStatusLabel[job.status]}
-                    </Badge>
+                  <td className="muted">
+                    已确认 {item.confirmedRequirementCount} 项 / 待确认 {item.pendingRequirementCount} 项<br />
+                    {item.gapOverview}
                   </td>
-                  <td className="muted" style={{ maxWidth: 220 }}>
-                    {truncate(job.jdRawText, 60)}
+                  <td>
+                    <Badge variant={item.hasActiveApplication ? 'success' : 'subtle'}>
+                      {item.hasActiveApplication ? '有' : '无'}
+                    </Badge>
                   </td>
                   <td className="muted">{formatDateTime(job.updatedAt)}</td>
                   <td
@@ -228,7 +248,7 @@ export function JobListPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleArchive(job)}
+                        onClick={() => handleArchive(item)}
                         disabled={
                           archiveMutation.isPending ||
                           restoreMutation.isPending
@@ -240,7 +260,7 @@ export function JobListPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleRestore(job)}
+                        onClick={() => handleRestore(item)}
                         disabled={
                           archiveMutation.isPending ||
                           restoreMutation.isPending
@@ -251,7 +271,8 @@ export function JobListPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </Table>
             <div className="pagination">
               <span className="pagination-info">

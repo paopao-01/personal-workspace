@@ -43,4 +43,14 @@ public class JobRequirementController {
 				request.targetRequirementId(), request.sourceRequirementIds());
 		return ResponseEntity.ok(JobRequirementResponse.from(target));
 	}
+
+	@DeleteMapping("/job-requirements/{requirementId}")
+	public ResponseEntity<Void> delete(@PathVariable String requirementId,
+			@RequestHeader(value = "If-Match-Version", required = false) Long ifMatchVersion) {
+		if (ifMatchVersion == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		requirementService.deleteRequirement(requirementId, ifMatchVersion);
+		return ResponseEntity.noContent().build();
+	}
 }

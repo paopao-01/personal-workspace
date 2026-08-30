@@ -115,3 +115,7 @@ export async function listStatusHistory(
   )
   return res.data
 }
+
+export async function deleteApplication(applicationId: string, version: number): Promise<void> {
+  await apiClient.delete(`/applications/${applicationId}`, { headers: ifMatchHeader(version) })
+}

@@ -5,6 +5,7 @@ type Schemas = components['schemas']
 export type LearningTask = Schemas['LearningTask']
 export type PageTask = Schemas['PageTask']
 export type TaskStatus = Schemas['TaskStatus']
+export type TaskSourceType = Schemas['TaskSourceType']
 export type TaskPriority = NonNullable<LearningTask['priority']>
 export type TaskCreateRequest = Schemas['TaskCreateRequest']
 export type TaskUpdateRequest = Schemas['TaskUpdateRequest']
@@ -15,6 +16,12 @@ export interface TaskListParams {
   page?: number
   pageSize?: number
   status?: TaskStatus
+  knowledgePointId?: string
+  sourceType?: TaskSourceType
+  dueAfter?: string
+  dueBefore?: string
+  jobId?: string
+  interviewId?: string
 }
 
 const ifMatchHeader = (version: number) => ({

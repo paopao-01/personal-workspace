@@ -66,7 +66,7 @@ class JobCrudIntegrationTest extends AbstractIntegrationTest {
 		// 过滤 jobStatus=ARCHIVED
 		String archived = restTemplate.getForObject(url("/jobs?jobStatus=ARCHIVED"), String.class);
 		assertThat(JsonProbe.lng(archived, "total")).isEqualTo(1L);
-		assertThat(JsonProbe.arrStr(archived, "items", 0, "status")).isEqualTo("ARCHIVED");
+		assertThat(JsonProbe.arrStr(archived, "items", 0, "job.status")).isEqualTo("ARCHIVED");
 
 		// 过滤 decisionStatus=TO_APPLY
 		String toApply = restTemplate.getForObject(url("/jobs?decisionStatus=TO_APPLY"), String.class);

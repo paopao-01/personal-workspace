@@ -10,6 +10,7 @@ import com.jobhub.job.domain.*;
 import com.jobhub.job.infrastructure.JobMapper;
 import com.jobhub.job.infrastructure.JobRequirementMapper;
 import com.jobhub.job.infrastructure.RequirementMatchMapper;
+import com.jobhub.skill.infrastructure.SkillProfileMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,10 +28,12 @@ public class RequirementService {
 	private final IdGenerator idGenerator;
 	private final UtcTime utcTime;
 	private final RequirementExtractor extractor;
+	private final SkillProfileMapper skillProfileMapper;
 
 	public RequirementService(JobMapper jobMapper, JobRequirementMapper requirementMapper,
 							   RequirementMatchMapper matchMapper, AuditLogMapper auditLogMapper,
-							   IdGenerator idGenerator, UtcTime utcTime, RequirementExtractor extractor) {
+							   IdGenerator idGenerator, UtcTime utcTime, RequirementExtractor extractor,
+							   SkillProfileMapper skillProfileMapper) {
 		this.jobMapper = jobMapper;
 		this.requirementMapper = requirementMapper;
 		this.matchMapper = matchMapper;
@@ -38,6 +41,7 @@ public class RequirementService {
 		this.idGenerator = idGenerator;
 		this.utcTime = utcTime;
 		this.extractor = extractor;
+		this.skillProfileMapper = skillProfileMapper;
 	}
 
 	@Transactional
@@ -50,6 +54,9 @@ public class RequirementService {
 			return new ExtractionResult(List.of(), 0);
 		}
 		requirementMapper.batchInsert(candidates);
+		for (JobRequirement candidate : candidates) {
+			replaceSkillRefs(candidate, utcTime.now());
+		}
 		return new ExtractionResult(candidates, candidates.size());
 	}
 
@@ -67,6 +74,7 @@ public class RequirementService {
 				normalizedName == null || normalizedName.isBlank() ? rawText : normalizedName,
 				requirementType, proficiencyText, existing.size(), utcTime.now());
 		requirementMapper.batchInsert(List.of(candidate));
+		replaceSkillRefs(candidate, utcTime.now());
 		return candidate;
 	}
 
@@ -81,10 +89,14 @@ public class RequirementService {
 
 		ConfirmationStatus target = cmd.confirmationStatus();
 		String now = utcTime.now();
+		String rawText = textOrCurrent(cmd.rawText(), req.getRawText(), "Requirement raw text is required");
+		String normalizedName = textOrCurrent(cmd.normalizedName(), req.getNormalizedName(),
+				"Requirement normalized name is required");
+		RequirementType type = cmd.type() != null ? cmd.type() : req.getType();
+		req.updateDetails(rawText, normalizedName, type,
+				cmd.proficiencyText() != null ? cmd.proficiencyText() : req.getProficiencyText(), now);
 		switch (target) {
-			case CONFIRMED -> req.confirm(cmd.normalizedName() != null ? cmd.normalizedName() : req.getNormalizedName(),
-					cmd.type() != null ? cmd.type() : req.getType(),
-					cmd.proficiencyText(), now);
+			case CONFIRMED -> req.confirm(now);
 			case IGNORED -> req.ignore(now);
 			case PENDING -> req.restoreToPending(now);
 		}
@@ -93,6 +105,9 @@ public class RequirementService {
 		VersionCheck.requireAffected(affected, req.getVersion());
 		int bumped = requirementMapper.bumpVersionByIdAndVersion(requirementId, expectedVersion);
 		VersionCheck.requireAffected(bumped, req.getVersion());
+		replaceSkillRefs(req, now);
+		auditLogMapper.insert(AuditLogEntry.requirementChanged(idGenerator.newId(), requirementId,
+				"REQUIREMENT_UPDATED", "User edited or confirmed requirement.", now));
 
 		// AT-04：人工修正匹配状态。当用户提供 manualMatchStatus 时，upsert requirement_match。
 		if (cmd.manualMatchStatus() != null) {
@@ -111,6 +126,20 @@ public class RequirementService {
 		}
 
 		return requirementMapper.selectById(requirementId);
+	}
+
+	@Transactional
+	public void deleteRequirement(String requirementId, long expectedVersion) {
+		JobRequirement requirement = requirementMapper.selectById(requirementId);
+		VersionCheck.requireFound(requirement, "JobRequirement", requirementId);
+		if (requirement.getConfirmationStatus() == ConfirmationStatus.CONFIRMED) {
+			throw new BusinessRuleException("Confirmed requirement must be restored to PENDING before deletion");
+		}
+		String now = utcTime.now();
+		VersionCheck.requireAffected(requirementMapper.softDelete(requirementId, expectedVersion, now), requirement.getVersion());
+		requirementMapper.deleteSkillRefs(requirementId);
+		auditLogMapper.insert(AuditLogEntry.requirementChanged(idGenerator.newId(), requirementId,
+				"REQUIREMENT_DELETED", "User deleted an unconfirmed requirement candidate.", now));
 	}
 
 	/**
@@ -148,6 +177,9 @@ public class RequirementService {
 			if (source.getConfirmationStatus() != ConfirmationStatus.PENDING) {
 				throw new BusinessRuleException("Only PENDING requirements can be merged");
 			}
+			if (source.getType() != target.getType()) {
+				throw new BusinessRuleException("Merged requirements must have the same type");
+			}
 		}
 		for (String sourceId : sourceIds) {
 			requirementMapper.mergeInto(sourceId, targetRequirementId, now);
@@ -155,5 +187,21 @@ public class RequirementService {
 					targetRequirementId, now));
 		}
 		return requirementMapper.selectById(targetRequirementId);
+	}
+
+	private void replaceSkillRefs(JobRequirement requirement, String now) {
+		requirementMapper.deleteSkillRefs(requirement.getId());
+		String skillId = skillProfileMapper.findActiveSkillIdByNameOrAlias(requirement.getNormalizedName());
+		if (skillId != null) {
+			requirementMapper.insertSkillRef(requirement.getId(), skillId, now);
+		}
+	}
+
+	private String textOrCurrent(String value, String current, String message) {
+		String result = value == null ? current : value.trim();
+		if (result == null || result.isBlank()) {
+			throw new BusinessRuleException(message);
+		}
+		return result;
 	}
 }
