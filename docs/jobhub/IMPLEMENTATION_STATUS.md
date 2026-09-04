@@ -1,5 +1,24 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-04-01
+
+- 目标：恢复项目上下文，确定下一个可开发切片；完成发布前全量回归，核对并合并 `dev` 与 `main`。
+- 状态：**DONE**。
+- 已完成：
+  - 按既定规格与当前代码核对后确认：已定义的 P0/P1 契约均已完成；P2/V0.3 尚未具备对应的 OpenAPI、状态机与验收契约，因此未擅自扩展产品范围。
+  - 发现并修正交接状态与 Git 实际状态不一致：此前记录的“待合并”已在 `main` 完成；`main` 已包含 `dev`，远程 `origin/main` 与 `origin/dev` 均已同步。
+  - 运行完整后端和前端发布回归，结果全部通过。
+- 未完成：无已定义的 P0/P1 开发任务。
+- 修改文件：本文件。
+- 已运行验证：
+  - `cd backend && mvn clean test`：首次受 Windows 目录锁阻断；提升权限重跑并由 Surefire 报告确认 27 suites、93 tests、0 failures、0 errors、0 skipped。
+  - `cd frontend && npm run typecheck`、`npm run lint`、`npm run build`：全部通过（生产构建同步重新生成 OpenAPI 类型）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：27 passed；首次普通权限启动时后端资源目录被拒绝访问，提升权限重跑后通过。既有 React Router future flag 与 Node `NO_COLOR` 提示不影响断言。
+  - `git fetch origin --prune`、分支祖先关系和工作区检查：通过；`origin/main` 已包含 `origin/dev`，工作区仅本交接记录待提交。
+- 验证结果：当前 P0/P1 发布状态可用；无需重复合并已有功能提交。
+- 下一窗口只做：先由用户为 P2/V0.3 选择一个最小垂直切片，并先补齐其 OpenAPI、状态机、数据库语义和验收场景，再开发实现。
+- 不要重复做：不要重复实现已完成的 P0/P1；不要把 P2 清单项直接实现为功能；不要增加附件读取/上传、云同步或未经契约支持的自动化能力。
+
 ### 窗口 2026-08-30-12
 
 - 目标：按“除 V0.3/V1 外补齐”的范围复核 P0/P1，实现仍缺失的状态机规则，在 `dev` 验证后合并 `main` 并推送远程。
