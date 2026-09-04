@@ -13,7 +13,7 @@
   - 后端实现独立模拟面试会话：项目快照、`MOCK_INTERVIEW` 异步任务审计、首轮讲解稿和追问保存，以及 `DRAFT → ACTIVE → COMPLETED/CANCELED` 专用状态命令。
   - 项目页新增“模拟面试”入口及会话页轮询与结束/取消操作；生成内容明确不回写用户事实。
   - AI 集成测试新增 AT-27 主路径并同步测试清理顺序。
-- 未完成：无；本窗口功能与发布回归已完成，待执行 Git 提交、合并与推送。
+- 未完成：无；本窗口功能、回归、提交、合并与远程发布均已完成。
 - 修改文件：OpenAPI 与四份规格/验收文档、V18、`mockinterview` 后端模块、AI 处理器和服务、AI 集成测试、前端路由/项目入口/模拟面试 API 与页面、本文件。
 - 已运行验证：
   - `cd backend && mvn clean test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；Flyway V1→V18 成功。
@@ -21,6 +21,7 @@
   - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V18 成功。
   - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；新增 AT-27 E2E 通过。仅有既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
   - `git diff --check`：通过。
+  - `git push origin dev`、`git push origin main`、`git fetch origin --prune`：成功；`dev` 与 `main` 均已和远程同步。
 - 下一窗口只做：先依序补齐并实现一个最小会话切片：
   1. 规格：新增 `mock_interview_session` 与 `mock_interview_turn` 语义，`DRAFT → ACTIVE → COMPLETED/CANCELED` 专用命令，以及创建/查询/首题生成接口和 AT 场景。
   2. 实现：新增 Flyway V18（不可修改 V1~V17）、项目快照输入、独立 `MOCK_INTERVIEW` AI handler、会话与首轮保存；讲解稿和追问只作为会话内容，不改写项目、技能、证据或岗位要求。
