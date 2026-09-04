@@ -164,11 +164,18 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		String session = restTemplate.getForEntity(url("/mock-interviews/" + sessionId), String.class).getBody();
 		assertThat(JsonProbe.str(session, "status")).isEqualTo("ACTIVE");
 		long sessionVersion = JsonProbe.lng(session, "version");
+		String answer = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/answers"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"我会先说明流量峰值，再解释异步削峰的取舍。\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class).getBody();
+		assertThat(JsonProbe.str(answer, "speaker")).isEqualTo("USER");
+		ResponseEntity<String> staleAnswer = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/answers"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"content\":\"不应保存的重复作答\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class);
+		assertThat(staleAnswer.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		String answeredSession = restTemplate.getForEntity(url("/mock-interviews/" + sessionId), String.class).getBody();
 		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class).getBody();
+			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(answeredSession, "version")), String.class).getBody();
 		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");
 		String turns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
-		assertThat(turns).contains("场景、方案", "取舍");
+		assertThat(turns).contains("场景、方案", "取舍", "异步削峰的取舍");
 		assertThat(restTemplate.getForEntity(url("/projects"), String.class).getBody()).contains("订单平台");
 	}
 

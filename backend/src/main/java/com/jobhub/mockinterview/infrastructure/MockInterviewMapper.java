@@ -9,4 +9,7 @@ import com.jobhub.mockinterview.domain.*; import org.apache.ibatis.annotations.*
  @Insert("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,created_at) VALUES (#{id},#{sessionId},#{turnNumber},#{speaker},#{content},#{createdAt})") int insertTurn(MockInterviewTurn t);
  @Select("SELECT id,session_id AS sessionId,turn_number AS turnNumber,speaker,content,created_at AS createdAt FROM mock_interview_turn WHERE session_id=#{sessionId} ORDER BY turn_number") List<MockInterviewTurn> selectTurns(String sessionId);
  @Select("SELECT COUNT(*) FROM mock_interview_turn WHERE session_id=#{sessionId}") int countTurns(String sessionId);
+ @Select("SELECT COUNT(*) FROM mock_interview_turn WHERE session_id=#{sessionId} AND speaker='USER'") int countUserTurns(String sessionId);
+ @Select("SELECT COALESCE(MAX(turn_number), 0) + 1 FROM mock_interview_turn WHERE session_id=#{sessionId}") int nextTurnNumber(String sessionId);
+ @Update("UPDATE mock_interview_session SET updated_at=#{now},version=version+1 WHERE id=#{id} AND status='ACTIVE' AND version=#{version}") int incrementVersionForAnswer(@Param("id") String id,@Param("version") long version,@Param("now") String now);
 }

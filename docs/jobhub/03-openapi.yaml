@@ -1174,6 +1174,14 @@ paths:
       tags: [Ai]
       summary: 查询已保存的模拟面试轮次
       responses: { '200': { description: 轮次, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MockInterviewTurn' } } } } } }
+  /mock-interviews/{mockInterviewId}/answers:
+    parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
+    post:
+      tags: [Ai]
+      summary: 保存用户对首个高频追问的作答；不生成连续追问或评分
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewAnswerRequest' } } } }
+      responses: { '201': { description: 作答已保存, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewTurn' } } } }, '409': { $ref: '#/components/responses/VersionConflict' }, '422': { $ref: '#/components/responses/IllegalTransition' } }
   /mock-interviews/{mockInterviewId}/transition:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     post:
@@ -2243,6 +2251,10 @@ components:
       type: object
       required: [targetStatus]
       properties: { targetStatus: { type: string, enum: [COMPLETED, CANCELED] } }
+    MockInterviewAnswerRequest:
+      type: object
+      required: [content]
+      properties: { content: { type: string, minLength: 1, maxLength: 10000 } }
     MockInterviewSession:
       type: object
       required: [id, projectId, status, version]

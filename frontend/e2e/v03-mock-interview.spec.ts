@@ -15,6 +15,10 @@ test('V0.3 starts a project mock interview without changing the project', async 
   await expect(page.getByRole('heading', { name: '项目模拟面试' })).toBeVisible()
   await expect(page.getByText('我会按项目场景、采取方案、解决问题和结果进行讲解。')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('请说明这个方案的关键取舍。')).toBeVisible()
+  await page.getByLabel('我的作答').fill('我会先说明高峰交易的约束，再解释异步削峰的取舍。')
+  await page.getByRole('button', { name: '保存作答' }).click()
+  await expect(page.getByText('我会先说明高峰交易的约束，再解释异步削峰的取舍。')).toBeVisible()
+  await expect(page.getByText('作答已保存。本切片不会自动生成连续追问或评分。')).toBeVisible()
   await page.getByRole('button', { name: '结束练习' }).click()
   await expect(page.getByText('会话已结束。')).toBeVisible()
   const projects = await (await request.get('/api/projects')).json() as Array<{ id: string; title: string }>
