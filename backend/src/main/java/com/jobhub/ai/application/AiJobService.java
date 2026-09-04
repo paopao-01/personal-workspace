@@ -195,6 +195,14 @@ public class AiJobService {
 		return requireJob(aiJob.getId());
 	}
 
+	@Transactional
+	public AiJob createMockInterview(String sessionId, String projectSnapshot) {
+		AiProvider provider = requireActiveProvider(); String now = time.now(); AiJob job = new AiJob();
+		job.setId(ids.newId()); job.setJobType(AiJobType.MOCK_INTERVIEW); job.setObjectId(sessionId); job.setObjectVersion(0L);
+		job.setStatus(AiJobStatus.QUEUED); job.setProviderId(provider.getId()); job.setProviderType(provider.getProviderType().name()); job.setModel(provider.getModel());
+		job.setPromptVersion(promptVersion(AiJobType.MOCK_INTERVIEW)); job.setAttemptCount(0); job.setInputSnapshot(projectSnapshot); job.setCreatedAt(now); job.setUpdatedAt(now); aiJobMapper.insert(job); submitAfterCommit(job.getId()); return requireJob(job.getId());
+	}
+
 	/** 事务提交后再投递执行器，避免执行器线程读不到未提交的任务行。 */
 	private void submitAfterCommit(String aiJobId) {
 		if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {

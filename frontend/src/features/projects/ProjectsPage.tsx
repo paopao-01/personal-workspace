@@ -22,10 +22,13 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Input, Select, Textarea } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { evidenceTypeLabels, evidenceTypeOptions } from '@/features/projects/projectLabels'
+import { createMockInterview } from '@/api/mockInterviewApi'
+import { useNavigate } from 'react-router-dom'
 
 const URL_OR_PATH_HINT = '证据以外部链接或本地路径引用为主；应用不会自动读取、扫描或上传被引用的文件，路径仅作为文本保存。'
 
 export function ProjectsPage() {
+  const navigate = useNavigate()
   const projectsQuery = useProjects()
   const evidenceQuery = useEvidence()
   const skillsQuery = useSkillProfiles()
@@ -407,6 +410,9 @@ export function ProjectsPage() {
                     ) : null}
                   </div>
                   <div className="requirement-actions">
+                    <Button size="sm" variant="primary" type="button" disabled={pending} onClick={async () => { try { const session = await createMockInterview(project.id); navigate(`/mock-interviews/${session.id}`) } catch (caught) { reportError(caught as Error) } }}>
+                      模拟面试
+                    </Button>
                     <Button
                       size="sm"
                       variant="default"

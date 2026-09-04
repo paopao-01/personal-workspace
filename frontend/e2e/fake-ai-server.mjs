@@ -42,6 +42,9 @@ const TASK_SUGGESTION = [
     rationale: '问题回答存在薄弱点，需要通过练习形成可复用表达。',
   },
 ]
+const MOCK_INTERVIEW = [
+  { type: 'MOCK_INTERVIEW_OPENING', rawText: '我会按项目场景、采取方案、解决问题和结果进行讲解。', rationale: '请说明这个方案的关键取舍。' },
+]
 
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -61,7 +64,9 @@ const server = createServer((req, res) => {
         return
       }
       const requestText = JSON.stringify(body)
-      const content = requestText.includes('LEARNING_TASK')
+      const content = requestText.includes('Java 项目面试官')
+        ? MOCK_INTERVIEW
+        : requestText.includes('LEARNING_TASK')
         ? TASK_SUGGESTION
         : requestText.includes('ANSWER_QUALITY')
         ? ANSWER_QUALITY_ANALYSIS

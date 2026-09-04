@@ -1,5 +1,33 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-04-02
+
+- 目标：启动 V0.3“项目 AI 模拟面试、项目讲解稿与高频追问”能力，并在验证后发布。
+- 状态：**DONE**。
+- 已完成：
+  - 用户已确认 V0.3 优先方向为项目 AI 模拟面试、项目讲解稿和高频追问。
+  - 将本窗口最小垂直切片收敛为：从一个已保存项目案例启动模拟面试，AI 生成项目讲解稿和首个高频追问；用户后续作答、连续追问和自动评分明确留给下一切片。
+  - 审核现有 AI 架构：`ai_job`/`ai_job_item` 仅适用于候选变更，不能将项目讲解稿或追问错误采纳为岗位要求；模拟面试应新增独立会话和轮次聚合，并保留 AI 任务审计关联。
+- 已完成：
+  - OpenAPI、状态机、数据库语义、页面规格与 AT-27 已补齐；V18 以 SQLite 安全重建方式扩展 `ai_job` 枚举并新增会话、轮次表。
+  - 后端实现独立模拟面试会话：项目快照、`MOCK_INTERVIEW` 异步任务审计、首轮讲解稿和追问保存，以及 `DRAFT → ACTIVE → COMPLETED/CANCELED` 专用状态命令。
+  - 项目页新增“模拟面试”入口及会话页轮询与结束/取消操作；生成内容明确不回写用户事实。
+  - AI 集成测试新增 AT-27 主路径并同步测试清理顺序。
+- 未完成：无；本窗口功能与发布回归已完成，待执行 Git 提交、合并与推送。
+- 修改文件：OpenAPI 与四份规格/验收文档、V18、`mockinterview` 后端模块、AI 处理器和服务、AI 集成测试、前端路由/项目入口/模拟面试 API 与页面、本文件。
+- 已运行验证：
+  - `cd backend && mvn clean test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；Flyway V1→V18 成功。
+  - `cd frontend && npm run typecheck && npm run lint && npm run build`：通过（仅既有 chunk-size 提示）。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V18 成功。
+  - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；新增 AT-27 E2E 通过。仅有既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - `git diff --check`：通过。
+- 下一窗口只做：先依序补齐并实现一个最小会话切片：
+  1. 规格：新增 `mock_interview_session` 与 `mock_interview_turn` 语义，`DRAFT → ACTIVE → COMPLETED/CANCELED` 专用命令，以及创建/查询/首题生成接口和 AT 场景。
+  2. 实现：新增 Flyway V18（不可修改 V1~V17）、项目快照输入、独立 `MOCK_INTERVIEW` AI handler、会话与首轮保存；讲解稿和追问只作为会话内容，不改写项目、技能、证据或岗位要求。
+  3. UI：项目页入口与模拟面试页，复用 TanStack Query 轮询 AI 任务，避免串行请求；新增后端集成测试和一个 E2E。
+  4. 已完成本切片；下一窗口仅在用户指定后实现用户作答、连续追问或评分中的一个独立切片。
+- 不要重复做：不要把讲解稿/追问走 `acceptAiJobItem` 的岗位要求路径；不要实现连续追问、回答评分或自动创建学习任务；不要让 AI 静默修改任何用户事实；不要读取证据链接或本地路径。
+
 ### 窗口 2026-09-04-01
 
 - 目标：恢复项目上下文，确定下一个可开发切片；完成发布前全量回归，核对并合并 `dev` 与 `main`。
