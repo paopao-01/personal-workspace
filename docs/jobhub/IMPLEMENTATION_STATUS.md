@@ -17,6 +17,7 @@
   - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V19 成功。
   - `cd frontend && npm run typecheck && npm run lint && npm run build`：全部通过（仅既有 chunk-size 提示）。
   - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；仅既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+- 发布结果：提交 `2c9da32 feat(ai): add mock interview follow ups` 已推送至 `origin/main` 与 `origin/dev`；两个本地分支均与远程同步，工作区干净。
 - 下一窗口只做：由用户指定回答评分的最小切片；先补齐对应 OpenAPI、状态机、数据库语义、页面路径与验收场景。
 - 不要重复做：不要让 AI 评分或连续追问回写项目、技能、证据、岗位要求或任务；不要自动创建学习任务；不要读取证据引用的本地路径或链接。
 
