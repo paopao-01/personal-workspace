@@ -1,5 +1,25 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-02
+
+- 目标：继续 V0.3 项目模拟面试，完成连续追问的最小垂直切片并发布。
+- 状态：**DONE**。
+- 已完成：
+  - 用户每次对当前 AI 追问保存作答后，系统创建独立 `MOCK_INTERVIEW_FOLLOW_UP` 异步审计任务；任务成功且会话保持 `ACTIVE` 时才追加下一条 AI 追问。
+  - V19 安全重建 SQLite 的 AI 任务、模拟面试会话与轮次表，扩展任务枚举并添加最近连续追问任务引用，修正了重建外键仍指向临时旧表的迁移问题。
+  - 模拟面试页在生成期间轮询会话和轮次，生成完成后恢复当前题作答输入；结束或取消会话会取消未终态的连续追问任务。
+  - 更新 AT-28、后端 AI 集成测试和 V0.3 E2E，覆盖连续追问、版本保护与不改写用户事实。
+- 未完成：回答评分和自动学习任务均未实现，留待后续由用户指定单独切片。
+- 修改文件：OpenAPI、状态机、数据库语义、页面规格、验收用例、V19、AI 任务枚举/连续追问 handler/service、模拟面试 domain/controller/service/mapper、AI 集成测试、模拟面试 API/页面、AI 假服务与 V0.3 E2E、本文件。
+- 已运行验证：
+  - `cd backend && mvn clean test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；Flyway V1→V19 成功。首次运行发现 V19 SQLite 外键重建缺陷，修正迁移后通过。
+  - `cd frontend && npm run typecheck && npm run e2e -- e2e/v03-mock-interview.spec.ts --reporter=dot`：通过，1 passed。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V19 成功。
+  - `cd frontend && npm run typecheck && npm run lint && npm run build`：全部通过（仅既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；仅既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+- 下一窗口只做：由用户指定回答评分的最小切片；先补齐对应 OpenAPI、状态机、数据库语义、页面路径与验收场景。
+- 不要重复做：不要让 AI 评分或连续追问回写项目、技能、证据、岗位要求或任务；不要自动创建学习任务；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-05-01
 
 - 目标：继续 V0.3 项目模拟面试的下一最小切片；在验证后发布。

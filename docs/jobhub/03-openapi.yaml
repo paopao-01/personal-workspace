@@ -1178,10 +1178,10 @@ paths:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     post:
       tags: [Ai]
-      summary: 保存用户对首个高频追问的作答；不生成连续追问或评分
+      summary: 保存用户对当前追问的作答，并异步生成下一道追问；不评分
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewAnswerRequest' } } } }
-      responses: { '201': { description: 作答已保存, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewTurn' } } } }, '409': { $ref: '#/components/responses/VersionConflict' }, '422': { $ref: '#/components/responses/IllegalTransition' } }
+      responses: { '202': { description: 作答已保存且连续追问任务已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '409': { $ref: '#/components/responses/VersionConflict' }, '422': { $ref: '#/components/responses/IllegalTransition' } }
   /mock-interviews/{mockInterviewId}/transition:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     post:
@@ -2258,7 +2258,7 @@ components:
     MockInterviewSession:
       type: object
       required: [id, projectId, status, version]
-      properties: { id: { type: string, format: uuid }, projectId: { type: string, format: uuid }, status: { type: string, enum: [DRAFT, ACTIVE, COMPLETED, CANCELED] }, aiJobId: { type: string, format: uuid, nullable: true }, version: { type: integer } }
+      properties: { id: { type: string, format: uuid }, projectId: { type: string, format: uuid }, status: { type: string, enum: [DRAFT, ACTIVE, COMPLETED, CANCELED] }, aiJobId: { type: string, format: uuid, nullable: true }, followUpAiJobId: { type: string, format: uuid, nullable: true }, version: { type: integer } }
     MockInterviewTurn:
       type: object
       required: [id, sessionId, turnNumber, speaker, content, createdAt]

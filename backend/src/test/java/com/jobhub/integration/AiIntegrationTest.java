@@ -41,6 +41,8 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		]""";
 	private static final String MOCK_INTERVIEW_JSON = """
 		[{"type":"MOCK_INTERVIEW_OPENING","rawText":"我会从场景、方案、解决的问题和结果四部分讲解该项目。","rationale":"请解释方案选择时考虑过哪些取舍？"}]""";
+	private static final String MOCK_INTERVIEW_FOLLOW_UP_JSON = """
+		[{"type":"MOCK_INTERVIEW_FOLLOW_UP","rawText":"如果异步削峰后的消息积压，你会如何监控并处理？"}]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -51,7 +53,7 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
 			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String candidates = request.contains("Java 项目面试官") ? MOCK_INTERVIEW_JSON : request.contains("LEARNING_TASK")
+			String candidates = request.contains("MOCK_INTERVIEW_FOLLOW_UP") ? MOCK_INTERVIEW_FOLLOW_UP_JSON : request.contains("Java 项目面试官") ? MOCK_INTERVIEW_JSON : request.contains("LEARNING_TASK")
 				? TASK_SUGGESTION_JSON
 				: request.contains("ANSWER_QUALITY")
 				? ANSWER_QUALITY_JSON
@@ -166,16 +168,17 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		long sessionVersion = JsonProbe.lng(session, "version");
 		String answer = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/answers"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"content\":\"我会先说明流量峰值，再解释异步削峰的取舍。\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class).getBody();
-		assertThat(JsonProbe.str(answer, "speaker")).isEqualTo("USER");
+		assertThat(JsonProbe.str(answer, "followUpAiJobId")).isNotBlank();
 		ResponseEntity<String> staleAnswer = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/answers"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"content\":\"不应保存的重复作答\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class);
 		assertThat(staleAnswer.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		waitForTerminal(JsonProbe.str(answer, "followUpAiJobId"));
 		String answeredSession = restTemplate.getForEntity(url("/mock-interviews/" + sessionId), String.class).getBody();
 		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(answeredSession, "version")), String.class).getBody();
 		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");
 		String turns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
-		assertThat(turns).contains("场景、方案", "取舍", "异步削峰的取舍");
+		assertThat(turns).contains("场景、方案", "取舍", "异步削峰的取舍", "消息积压");
 		assertThat(restTemplate.getForEntity(url("/projects"), String.class).getBody()).contains("订单平台");
 	}
 

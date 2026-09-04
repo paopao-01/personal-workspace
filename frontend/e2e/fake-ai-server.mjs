@@ -45,6 +45,9 @@ const TASK_SUGGESTION = [
 const MOCK_INTERVIEW = [
   { type: 'MOCK_INTERVIEW_OPENING', rawText: '我会按项目场景、采取方案、解决问题和结果进行讲解。', rationale: '请说明这个方案的关键取舍。' },
 ]
+const MOCK_INTERVIEW_FOLLOW_UP = [
+  { type: 'MOCK_INTERVIEW_FOLLOW_UP', rawText: '如果异步削峰后的消息积压，你会如何监控并处理？' },
+]
 
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -64,7 +67,9 @@ const server = createServer((req, res) => {
         return
       }
       const requestText = JSON.stringify(body)
-      const content = requestText.includes('Java 项目面试官')
+      const content = requestText.includes('MOCK_INTERVIEW_FOLLOW_UP')
+        ? MOCK_INTERVIEW_FOLLOW_UP
+        : requestText.includes('Java 项目面试官')
         ? MOCK_INTERVIEW
         : requestText.includes('LEARNING_TASK')
         ? TASK_SUGGESTION
