@@ -1,5 +1,25 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-01
+
+- 目标：继续 V0.3 项目模拟面试的下一最小切片；在验证后发布。
+- 状态：**DONE**。
+- 已完成：
+  - 选择“保存用户对首个高频追问的作答”作为独立切片；不实现连续追问、回答评分或自动创建学习任务。
+  - 新增 `POST /mock-interviews/{mockInterviewId}/answers`：仅允许 `ACTIVE` 会话携带当前版本与幂等键保存一次非空 `USER` 轮次；写入会话版本递增，旧版本、重复作答和非活动会话不产生额外轮次。
+  - 模拟面试页增加作答输入、保存和回显；保存后明确显示本切片不会自动连续追问或评分。
+  - 新增 AT-28，并把后端 AI 集成测试和 V0.3 E2E 扩展为覆盖作答、版本冲突及不改写项目事实。
+- 未完成：连续追问、回答评分及自动学习任务均未实现，留待后续由用户指定单独切片。
+- 修改文件：OpenAPI、状态机、数据库语义、页面规格、验收用例、模拟面试 controller/service/mapper、AI 集成测试、模拟面试 API/页面、V0.3 E2E 与本文件；无数据库结构变化，因此未新增 Flyway 迁移。
+- 已运行验证：
+  - `cd backend && mvn test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors。
+  - `cd frontend && npm run e2e -- e2e/v03-mock-interview.spec.ts --reporter=dot`：1 passed。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V18 成功。
+  - `cd frontend && npm run typecheck && npm run lint && npm run build`：全部通过（仅既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：28 passed。首次完整运行有两个既有复盘 E2E 在环境启动后返回 500，两个用例单独复跑通过，随后完整套件通过；仅既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+- 下一窗口只做：由用户从“连续追问”或“回答评分”中指定一个独立切片；先补齐对应 OpenAPI、状态机、数据库语义、页面路径与验收场景。
+- 不要重复做：不要将作答、讲解稿或追问采纳/回写为项目、技能、证据、岗位要求或任务；不要同时实现连续追问和评分；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-04-02
 
 - 目标：启动 V0.3“项目 AI 模拟面试、项目讲解稿与高频追问”能力，并在验证后发布。
