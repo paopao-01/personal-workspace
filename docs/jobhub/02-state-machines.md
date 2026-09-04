@@ -191,7 +191,19 @@ COMPLETED ──reopen──> DRAFT
 
 知识点合并时，源知识点的题目关联迁移至目标知识点，并以问题 ID 去重；历史名称与合并记录保留。
 
-## 7. 学习任务状态机
+## 7. 模拟面试会话状态机
+
+```text
+DRAFT ──首轮生成成功──> ACTIVE ──complete──> COMPLETED
+DRAFT / ACTIVE ──cancel──> CANCELED
+```
+
+- 创建只接受已保存且未删除的项目案例；服务端将该案例的场景、方案、问题和结果序列化为不可变快照，并创建独立 `MOCK_INTERVIEW` AI 任务。
+- 仅当 AI 任务成功且返回一份讲解稿和一个首个追问时，才保存两个 `AI` 轮次并将会话从 `DRAFT` 变为 `ACTIVE`。失败、取消或无效输出不修改项目、证据、技能、岗位要求或学习任务。
+- `complete` 仅允许 `ACTIVE → COMPLETED`；`cancel` 仅允许 `DRAFT/ACTIVE → CANCELED`，取消尚未终态的 AI 任务。状态变更必须通过专用命令并携带会话当前版本。
+- 本切片不接受用户回答、不生成连续追问、不评分，也不自动创建任何学习任务。
+
+## 8. 学习任务状态机
 
 ```text
 TODO ──start──> IN_PROGRESS ──complete──> COMPLETED

@@ -1155,6 +1155,33 @@ paths:
         '200': { description: 已拒绝, content: { application/json: { schema: { $ref: '#/components/schemas/AiJobItem' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/IllegalTransition' }
+  /mock-interviews:
+    post:
+      tags: [Ai]
+      summary: 从项目案例启动模拟面试并异步生成讲解稿和首个追问
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewCreateRequest' } } } }
+      responses: { '202': { description: 会话已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /mock-interviews/{mockInterviewId}:
+    parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
+    get:
+      tags: [Ai]
+      summary: 查询模拟面试会话；首轮 AI 生成完成时持久化讲解稿和追问并激活会话
+      responses: { '200': { description: 会话, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /mock-interviews/{mockInterviewId}/turns:
+    parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
+    get:
+      tags: [Ai]
+      summary: 查询已保存的模拟面试轮次
+      responses: { '200': { description: 轮次, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MockInterviewTurn' } } } } } }
+  /mock-interviews/{mockInterviewId}/transition:
+    parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
+    post:
+      tags: [Ai]
+      summary: 结束或取消模拟面试
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewTransitionRequest' } } } }
+      responses: { '200': { description: 状态已更新, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '422': { $ref: '#/components/responses/IllegalTransition' } }
 
 components:
   parameters:
@@ -1194,6 +1221,7 @@ components:
     AiProviderId: { name: providerId, in: path, required: true, schema: { type: string, format: uuid } }
     AiJobId: { name: aiJobId, in: path, required: true, schema: { type: string, format: uuid } }
     AiJobItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    MockInterviewId: { name: mockInterviewId, in: path, required: true, schema: { type: string, format: uuid } }
   responses:
     NotFound:
       description: 资源不存在或不可见
@@ -2188,7 +2216,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION, MOCK_INTERVIEW] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }
@@ -2207,6 +2235,22 @@ components:
         payload:
           description: 编辑后的候选内容；省略表示按原文采纳
           $ref: '#/components/schemas/AiItemPayload'
+    MockInterviewCreateRequest:
+      type: object
+      required: [projectId]
+      properties: { projectId: { type: string, format: uuid } }
+    MockInterviewTransitionRequest:
+      type: object
+      required: [targetStatus]
+      properties: { targetStatus: { type: string, enum: [COMPLETED, CANCELED] } }
+    MockInterviewSession:
+      type: object
+      required: [id, projectId, status, version]
+      properties: { id: { type: string, format: uuid }, projectId: { type: string, format: uuid }, status: { type: string, enum: [DRAFT, ACTIVE, COMPLETED, CANCELED] }, aiJobId: { type: string, format: uuid, nullable: true }, version: { type: integer } }
+    MockInterviewTurn:
+      type: object
+      required: [id, sessionId, turnNumber, speaker, content, createdAt]
+      properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, turnNumber: { type: integer }, speaker: { type: string, enum: [AI, USER] }, content: { type: string }, createdAt: { type: string, format: date-time } }
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

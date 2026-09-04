@@ -28,6 +28,8 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM trash_item");
 		jdbc.execute("DELETE FROM data_export");
 		jdbc.execute("DELETE FROM match_report");
+		jdbc.execute("DELETE FROM mock_interview_turn");
+		jdbc.execute("DELETE FROM mock_interview_session");
 		jdbc.execute("DELETE FROM ai_job_item");
 		jdbc.execute("DELETE FROM ai_job");
 		jdbc.execute("DELETE FROM ai_provider");

@@ -15,6 +15,7 @@ import { WeakKnowledgePointsPage } from '@/features/reviews/WeakKnowledgePointsP
 import { TaskListPage } from '@/features/tasks/TaskListPage'
 import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
+import { MockInterviewPage } from '@/features/mockinterviews/MockInterviewPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { SkillsPage } from '@/features/skills/SkillsPage'
@@ -46,6 +47,7 @@ export function AppRouter() {
         <Route path="/tasks" element={<TaskListPage />} />
         <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/mock-interviews/:mockInterviewId" element={<MockInterviewPage />} />
         <Route path="/evidence-attachments" element={<EvidenceAttachmentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

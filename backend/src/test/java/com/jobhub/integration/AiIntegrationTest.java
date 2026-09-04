@@ -39,6 +39,8 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		[
 		  {"type":"LEARNING_TASK","rawText":"完成一次可验证的口述演练。","taskTitle":"补齐缓存一致性回答","priority":"HIGH","estimatedMinutes":45,"learningGoal":"能够解释核心机制和边界条件。","acceptanceCriteria":"能在 3 分钟内完整回答原问题并说明一个边界场景。","verificationMethod":"口述演练并记录验证结果","rationale":"原问题回答存在薄弱点。"}
 		]""";
+	private static final String MOCK_INTERVIEW_JSON = """
+		[{"type":"MOCK_INTERVIEW_OPENING","rawText":"我会从场景、方案、解决的问题和结果四部分讲解该项目。","rationale":"请解释方案选择时考虑过哪些取舍？"}]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -49,7 +51,7 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
 			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String candidates = request.contains("LEARNING_TASK")
+			String candidates = request.contains("Java 项目面试官") ? MOCK_INTERVIEW_JSON : request.contains("LEARNING_TASK")
 				? TASK_SUGGESTION_JSON
 				: request.contains("ANSWER_QUALITY")
 				? ANSWER_QUALITY_JSON
@@ -86,6 +88,11 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 	private String createJob() {
 		return JsonProbe.str(restTemplate.postForEntity(url("/jobs"),
 			TestFixtures.httpJson(TestFixtures.createJobBody("AI验证科技", "P1 AI 岗位")), String.class).getBody(), "id");
+	}
+
+	private String createProject() {
+		return JsonProbe.str(restTemplate.exchange(url("/projects"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"title\":\"订单平台\",\"scenario\":\"订单高峰\",\"approach\":\"异步削峰\",\"problemSolved\":\"降低延迟\",\"result\":\"\"}", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody(), "id");
 	}
 
 	private String createExtraction(String jobId) {
@@ -143,6 +150,26 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 			Thread.sleep(200);
 		}
 		throw new IllegalStateException("AI job did not finish in time: " + aiJobId);
+	}
+
+	@Test
+	void V03_mockInterviewPersistsOpeningWithoutChangingProject() throws Exception {
+		String provider = createActiveProvider("http://127.0.0.1:" + fakeProvider.getAddress().getPort() + "/v1");
+		assertThat(provider).isNotBlank();
+		String projectId = createProject();
+		String created = restTemplate.exchange(url("/mock-interviews"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"projectId\":\"" + projectId + "\"}", "Idempotency-Key", TestFixtures.newKey()), String.class).getBody();
+		String sessionId = JsonProbe.str(created, "id"); String jobId = JsonProbe.str(created, "aiJobId");
+		waitForTerminal(jobId);
+		String session = restTemplate.getForEntity(url("/mock-interviews/" + sessionId), String.class).getBody();
+		assertThat(JsonProbe.str(session, "status")).isEqualTo("ACTIVE");
+		long sessionVersion = JsonProbe.lng(session, "version");
+		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(sessionVersion)), String.class).getBody();
+		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");
+		String turns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
+		assertThat(turns).contains("场景、方案", "取舍");
+		assertThat(restTemplate.getForEntity(url("/projects"), String.class).getBody()).contains("订单平台");
 	}
 
 	@Test
