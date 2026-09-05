@@ -1167,6 +1167,17 @@ paths:
       tags: [Ai]
       summary: 查询所有已完成模拟面试作答评分的只读统计；不推断能力或趋势
       responses: { '200': { description: 评分统计, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewEvaluationSummary' } } } } }
+  /mock-interviews/evaluation-trend:
+    get:
+      tags: [Ai]
+      summary: 对比两个模拟面试评分时间窗口的原始练习数据
+      description: 两个窗口各自至少有两条评分时才计算平均分与平均分差；差值只描述原始练习评分的算术变化，不代表能力等级，也不会创建任务或修改用户事实。
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: compareFrom, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: compareTo, in: query, required: true, schema: { type: string, format: date-time } }
+      responses: { '200': { description: 评分窗口对比, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewEvaluationTrend' } } } }, '400': { $ref: '#/components/responses/ValidationError' } }
   /mock-interviews/{mockInterviewId}:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     get:
@@ -2307,6 +2318,23 @@ components:
         averageScore: { type: number, format: double, nullable: true, description: 少于两条评分时返回 null，避免以单次练习代表整体表现 }
         scoreDistribution: { type: array, items: { $ref: '#/components/schemas/MockInterviewScoreCount' } }
         recentScores: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/MockInterviewRecentScore' } }
+    MockInterviewEvaluationTrend:
+      type: object
+      required: [currentWindow, compareWindow]
+      properties:
+        currentWindow: { $ref: '#/components/schemas/MockInterviewEvaluationWindow' }
+        compareWindow: { $ref: '#/components/schemas/MockInterviewEvaluationWindow' }
+        averageScoreDelta: { type: number, format: double, nullable: true, description: 当前窗口平均分减去对比窗口平均分；任一窗口少于两条评分时为 null }
+    MockInterviewEvaluationWindow:
+      type: object
+      required: [from, to, evaluatedAnswerCount, evaluatedSessionCount, scoreDistribution]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        evaluatedAnswerCount: { type: integer, minimum: 0 }
+        evaluatedSessionCount: { type: integer, minimum: 0 }
+        averageScore: { type: number, format: double, nullable: true, description: 少于两条评分时返回 null }
+        scoreDistribution: { type: array, items: { $ref: '#/components/schemas/MockInterviewScoreCount' } }
     MockInterviewScoreCount:
       type: object
       required: [score, count]

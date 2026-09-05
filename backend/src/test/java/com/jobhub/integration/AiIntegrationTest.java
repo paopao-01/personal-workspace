@@ -206,6 +206,24 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.str(multipleScoreSummary, "averageScore")).isEqualTo("3.0");
 		assertThat(JsonProbe.intVal(multipleScoreSummary, "scoreDistribution.1.count")).isEqualTo(1);
 		assertThat(JsonProbe.intVal(multipleScoreSummary, "recentScores.0.score")).isEqualTo(2);
+		String currentTrendSessionId = UUID.randomUUID().toString();
+		String compareTrendSessionId = UUID.randomUUID().toString();
+		jdbc.update("INSERT INTO mock_interview_session (id,project_id,status,project_snapshot,created_at,updated_at,version) VALUES (?,?, 'COMPLETED', ?,?,?,0)", currentTrendSessionId, projectId, "{}", "2099-10-01T00:00:00Z", "2099-10-01T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_session (id,project_id,status,project_snapshot,created_at,updated_at,version) VALUES (?,?, 'COMPLETED', ?,?,?,0)", compareTrendSessionId, projectId, "{}", "2099-09-01T00:00:00Z", "2099-09-01T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,evaluation_score,evaluation_feedback,evaluation_rationale,evaluation_completed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", UUID.randomUUID().toString(), currentTrendSessionId, 1, "USER", "当前窗口作答一", 4, "反馈", "依据", "2099-10-02T00:00:00Z", "2099-10-02T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,evaluation_score,evaluation_feedback,evaluation_rationale,evaluation_completed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", UUID.randomUUID().toString(), currentTrendSessionId, 2, "USER", "当前窗口作答二", 5, "反馈", "依据", "2099-10-03T00:00:00Z", "2099-10-03T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,evaluation_score,evaluation_feedback,evaluation_rationale,evaluation_completed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", UUID.randomUUID().toString(), compareTrendSessionId, 1, "USER", "对比窗口作答一", 2, "反馈", "依据", "2099-09-02T00:00:00Z", "2099-09-02T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,evaluation_score,evaluation_feedback,evaluation_rationale,evaluation_completed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", UUID.randomUUID().toString(), compareTrendSessionId, 2, "USER", "对比窗口作答二", 3, "反馈", "依据", "2099-09-03T00:00:00Z", "2099-09-03T00:00:00Z");
+		String trend = restTemplate.getForEntity(url("/mock-interviews/evaluation-trend?from=2099-10-01T00:00:00Z&to=2099-10-04T00:00:00Z&compareFrom=2099-09-01T00:00:00Z&compareTo=2099-09-04T00:00:00Z"), String.class).getBody();
+		assertThat(JsonProbe.intVal(trend, "currentWindow.evaluatedAnswerCount")).isEqualTo(2);
+		assertThat(JsonProbe.intVal(trend, "compareWindow.evaluatedAnswerCount")).isEqualTo(2);
+		assertThat(JsonProbe.str(trend, "currentWindow.averageScore")).isEqualTo("4.5");
+		assertThat(JsonProbe.str(trend, "compareWindow.averageScore")).isEqualTo("2.5");
+		assertThat(JsonProbe.str(trend, "averageScoreDelta")).isEqualTo("2.0");
+		assertThat(JsonProbe.intVal(trend, "currentWindow.scoreDistribution.3.count")).isEqualTo(1);
+		String insufficientTrend = restTemplate.getForEntity(url("/mock-interviews/evaluation-trend?from=2099-10-01T00:00:00Z&to=2099-10-03T00:00:00Z&compareFrom=2099-09-01T00:00:00Z&compareTo=2099-09-04T00:00:00Z"), String.class).getBody();
+		assertThat(JsonProbe.str(insufficientTrend, "currentWindow.averageScore")).isEqualTo("null");
+		assertThat(JsonProbe.str(insufficientTrend, "averageScoreDelta")).isEqualTo("null");
 		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(evaluation, "version")), String.class).getBody();
 		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");

@@ -1,18 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { answerMockInterview, evaluateMockInterviewAnswer, getMockInterview, getMockInterviewEvaluationSummary, getMockInterviewTurns, transitionMockInterview } from '@/api/mockInterviewApi'
+import { answerMockInterview, evaluateMockInterviewAnswer, getMockInterview, getMockInterviewEvaluationSummary, getMockInterviewEvaluationTrend, getMockInterviewTurns, transitionMockInterview } from '@/api/mockInterviewApi'
 import { Button } from '@/components/ui/Button'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { Field, Input } from '@/components/ui/Form'
 
 export function MockInterviewPage() {
   const { mockInterviewId: id } = useParams()
   const nav = useNavigate()
   const qc = useQueryClient()
   const [answer, setAnswer] = useState('')
+  const [trendFrom, setTrendFrom] = useState('')
+  const [trendTo, setTrendTo] = useState('')
+  const [compareFrom, setCompareFrom] = useState('')
+  const [compareTo, setCompareTo] = useState('')
+  const [trendParams, setTrendParams] = useState<{from:string;to:string;compareFrom:string;compareTo:string} | null>(null)
   const session = useQuery({ queryKey: ['mock-interview', id], queryFn: () => getMockInterview(id!), enabled: !!id, refetchInterval: query => query.state.data?.status === 'DRAFT' || !!query.state.data?.followUpAiJobId ? 1000 : false })
   const turns = useQuery({ queryKey: ['mock-interview', id, 'turns'], queryFn: () => getMockInterviewTurns(id!), enabled: session.data?.status === 'ACTIVE' || session.data?.status === 'COMPLETED', refetchInterval: query => query.state.data?.some(turn => !!turn.evaluationAiJobId && turn.evaluationScore === null) || !!session.data?.followUpAiJobId ? 1000 : false })
   const summary = useQuery({ queryKey: ['mock-interview', 'evaluation-summary'], queryFn: getMockInterviewEvaluationSummary, refetchInterval: () => turns.data?.some(turn => !!turn.evaluationAiJobId && turn.evaluationScore === null) ? 1000 : false })
+  const trend = useQuery({ queryKey: ['mock-interview', 'evaluation-trend', trendParams], queryFn: () => getMockInterviewEvaluationTrend(trendParams!), enabled: trendParams !== null })
   const latestTurnId = turns.data?.at(-1)?.id
   const latestTurnSpeaker = turns.data?.at(-1)?.speaker
   const evaluatedTurnCount = turns.data?.filter(turn => turn.evaluationScore !== null).length ?? 0
@@ -20,6 +27,7 @@ export function MockInterviewPage() {
     qc.invalidateQueries({ queryKey: ['mock-interview', id] }),
     qc.invalidateQueries({ queryKey: ['mock-interview', id, 'turns'] }),
     qc.invalidateQueries({ queryKey: ['mock-interview', 'evaluation-summary'] }),
+    qc.invalidateQueries({ queryKey: ['mock-interview', 'evaluation-trend'] }),
   ])
   const act = useMutation({ mutationFn: (targetStatus: 'COMPLETED' | 'CANCELED') => transitionMockInterview(id!, session.data!.version, targetStatus), onSuccess: refresh })
   const reply = useMutation({ mutationFn: () => answerMockInterview(id!, session.data!.version, answer), onSuccess: () => { setAnswer(''); return refresh() } })
@@ -43,8 +51,9 @@ export function MockInterviewPage() {
   const awaitingFollowUp = !!s.followUpAiJobId
   return <div>
     <div className="page-header"><div><h1 className="page-title">项目模拟面试</h1><p className="page-subtitle">AI 内容仅用于练习；不会修改项目、技能或任何用户事实。</p></div><Button variant="default" onClick={() => nav('/projects')}>返回项目</Button></div>
-    {summary.data ? <section className="card"><div className="card-body"><strong>评分练习统计</strong><p className="muted">仅汇总已完成的 AI 练习评分，不代表能力等级或改善趋势。</p>{summary.data.averageScore == null ? <p>信息不足：当前仅有 {summary.data.evaluatedAnswerCount} 条已完成评分；至少需要 2 条才显示平均分。</p> : <p>已完成 {summary.data.evaluatedAnswerCount} 条评分，覆盖 {summary.data.evaluatedSessionCount} 个会话，平均分：{summary.data.averageScore?.toFixed(1)}/5。</p>}<p>分布：{summary.data.scoreDistribution.map(item => `${item.score} 分 ${item.count} 条`).join(' · ')}</p>{summary.data.recentScores.length > 0 ? <p className="muted">最近评分：{summary.data.recentScores.map(item => `${item.score}/5`).join('、')}</p> : null}</div></section> : null}
+    {summary.data ? <section className="card"><div className="card-body"><strong>评分练习统计</strong><p className="muted">仅汇总已完成的 AI 练习评分，不代表能力等级。</p>{summary.data.averageScore == null ? <p>信息不足：当前仅有 {summary.data.evaluatedAnswerCount} 条已完成评分；至少需要 2 条才显示平均分。</p> : <p>已完成 {summary.data.evaluatedAnswerCount} 条评分，覆盖 {summary.data.evaluatedSessionCount} 个会话，平均分：{summary.data.averageScore?.toFixed(1)}/5。</p>}<p>分布：{summary.data.scoreDistribution.map(item => `${item.score} 分 ${item.count} 条`).join(' · ')}</p>{summary.data.recentScores.length > 0 ? <p className="muted">最近评分：{summary.data.recentScores.map(item => `${item.score}/5`).join('、')}</p> : null}</div></section> : null}
     {summary.error ? <p className="muted">评分统计暂时无法加载。</p> : null}
+    <section className="card"><div className="card-body"><strong>评分窗口对比</strong><p className="muted">使用本地时区填写两个完整时间窗口。仅在每个窗口至少有两条评分时展示平均分和差值；差值 = 当前窗口 − 对比窗口，只描述原始练习评分变化，不代表能力等级或自动行动。</p><div className="form-row"><Field label="当前开始"><Input aria-label="当前评分窗口开始" type="datetime-local" value={trendFrom} onChange={event => setTrendFrom(event.target.value)} /></Field><Field label="当前结束"><Input aria-label="当前评分窗口结束" type="datetime-local" value={trendTo} onChange={event => setTrendTo(event.target.value)} /></Field></div><div className="form-row"><Field label="对比开始"><Input aria-label="对比评分窗口开始" type="datetime-local" value={compareFrom} onChange={event => setCompareFrom(event.target.value)} /></Field><Field label="对比结束"><Input aria-label="对比评分窗口结束" type="datetime-local" value={compareTo} onChange={event => setCompareTo(event.target.value)} /></Field></div><div className="flex-row"><Button variant="primary" type="button" disabled={!trendFrom || !trendTo || !compareFrom || !compareTo} onClick={() => setTrendParams({from:new Date(trendFrom).toISOString(),to:new Date(trendTo).toISOString(),compareFrom:new Date(compareFrom).toISOString(),compareTo:new Date(compareTo).toISOString()})}>比较评分窗口</Button></div>{trend.data ? <div><p>当前窗口：{trend.data.currentWindow.evaluatedAnswerCount} 条评分，{trend.data.currentWindow.evaluatedSessionCount} 个会话，平均分：{trend.data.currentWindow.averageScore == null ? '信息不足' : `${trend.data.currentWindow.averageScore.toFixed(1)}/5`}。</p><p>对比窗口：{trend.data.compareWindow.evaluatedAnswerCount} 条评分，{trend.data.compareWindow.evaluatedSessionCount} 个会话，平均分：{trend.data.compareWindow.averageScore == null ? '信息不足' : `${trend.data.compareWindow.averageScore.toFixed(1)}/5`}。</p><p>平均分差：{trend.data.averageScoreDelta == null ? '信息不足（每个窗口至少需要 2 条评分）' : `${trend.data.averageScoreDelta > 0 ? '+' : ''}${trend.data.averageScoreDelta.toFixed(1)}`}</p></div> : null}{trend.error ? <p role="alert">评分窗口无效或暂时无法加载，请检查两个完整时间范围。</p> : null}</div></section>
     {s.status === 'DRAFT' ? <section className="card"><div className="card-body"><p>正在根据保存的项目快照生成讲解稿和首个高频追问…</p></div></section> : null}
     {turns.data?.map(turn => <section className="card" key={turn.id}><div className="card-body"><strong>{turn.speaker === 'USER' ? '我的作答' : turn.turnNumber === 1 ? '项目讲解稿' : '高频追问'}</strong><p style={{ whiteSpace: 'pre-wrap' }}>{turn.content}</p>{turn.speaker === 'USER' && turn.evaluationScore !== null ? <div><strong>AI 练习评分：{turn.evaluationScore}/5</strong><p>{turn.evaluationFeedback}</p><p className="muted">评分依据：{turn.evaluationRationale}</p></div> : null}{turn.speaker === 'USER' && turn.evaluationAiJobId && turn.evaluationScore === null ? <p className="muted">正在生成 AI 练习评分…</p> : null}{turn.speaker === 'USER' && !turn.evaluationAiJobId && s.status !== 'CANCELED' ? <Button variant="default" disabled={evaluate.isPending} onClick={() => evaluate.mutate(turn.id)}>获取 AI 评分</Button> : null}</div></section>)}
     {evaluate.error ? <p role="alert">评分请求失败，请重试。</p> : null}

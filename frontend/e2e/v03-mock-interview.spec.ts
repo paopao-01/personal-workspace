@@ -14,6 +14,8 @@ test('V0.3 starts a project mock interview without changing the project', async 
   await page.locator('.requirement-row').filter({ hasText: `支付项目-${suffix}` }).getByRole('button', { name: '模拟面试' }).click()
   await expect(page.getByRole('heading', { name: '项目模拟面试' })).toBeVisible()
   await expect(page.getByText('评分练习统计')).toBeVisible()
+  await expect(page.getByText('评分窗口对比')).toBeVisible()
+  await expect(page.getByRole('button', { name: '比较评分窗口' })).toBeDisabled()
   await expect(page.getByText('信息不足：当前仅有 0 条已完成评分；至少需要 2 条才显示平均分。')).toBeVisible()
   await expect(page.getByText('我会按项目场景、采取方案、解决问题和结果进行讲解。')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('请说明这个方案的关键取舍。')).toBeVisible()

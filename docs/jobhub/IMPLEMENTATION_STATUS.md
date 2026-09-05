@@ -1,5 +1,27 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-06
+
+- 目标：完成 V0.3 模拟面试的评分窗口改善趋势最小垂直切片并发布。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `GET /mock-interviews/evaluation-trend`：调用方提供当前与对比两个完整 UTC 时间窗口后，返回各窗评分数、覆盖会话数、完整 1–5 分分布及样本充足时的平均分；两个平均分均存在时，返回“当前减对比”的 `averageScoreDelta`。
+  - 每窗少于两条已完成评分时，该窗平均分为 `null`，平均分差也为 `null`；时间边界必须是开始早于结束的 ISO-8601 UTC 时间点。
+  - 模拟面试页面提供本地时区双窗口输入和可解释的原始评分对比；明确差值只描述练习评分的算术变化，不代表能力等级或自动行动。
+  - 该查询完全只读，不写入模拟会话、轮次、项目、技能、证据、岗位要求或学习任务；OpenAPI、状态机、页面/数据库语义与 AT-32 已同步。
+- 未完成：不扩展为能力画像、自动学习任务、AI 结论或跨领域自动行动；后续趋势能力须由用户指定独立切片。
+- 修改文件：OpenAPI、状态机、页面/数据库/验收规格，模拟面试趋势 domain/service/mapper/controller，评分集成测试，模拟面试 API/页面与 V0.3 E2E，本文件。
+- 已运行验证：
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint`：通过。
+  - `cd backend && mvn test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；包含 AT-32 双窗口和信息不足断言。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V21 成功。
+  - `cd frontend && npm run build`：通过，仅有既有 chunk-size 提示。
+  - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。普通权限首次启动测试服务失败，提升权限重跑通过。
+  - `git diff --check`：通过。
+- 发布结果：待本窗口提交、合并 `main` 与推送远程。
+- 下一窗口只做：由用户指定一个不超出 V0.3 范围的独立最小切片；先定义 OpenAPI、状态机、页面、验收和数据语义。
+- 不要重复做：不要让评分窗口差值自动改写项目、技能、证据、岗位要求、复盘、学习任务或模拟会话；不要把差值包装为能力等级、确定性趋势结论或自动行动；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-05-05
 
 - 目标：完成复盘分析的回答状态窗口对比最小切片并发布。
