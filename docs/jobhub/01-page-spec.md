@@ -168,7 +168,15 @@
 
 ### P11 设置与数据管理 `/settings`
 
-包含时区、默认提醒节点、导出 JSON、最近删除和恢复。导出前展示数据范围与不包含的密钥/运行日志；恢复前展示影响范围。P0 不提供 CSV、跨端同步或系统级通知设置。
+包含时区、默认提醒节点、通知渠道、导出 JSON、最近删除和恢复。导出前展示数据范围与不包含的密钥/运行日志；恢复前展示影响范围。P0 不提供 CSV、跨端同步或系统级通知设置。
+
+通知渠道区块并列展示 BROWSER、EMAIL、WEBHOOK 三个卡片，每个渠道独立启用开关、配置表单、测试通知按钮和投递状态回显：
+
+- BROWSER：受浏览器通知权限；启用后前端展示系统通知并回执，权限被拒仍保留站内通知。
+- EMAIL：配置 SMTP 主机、端口、用户名、密码、发件/收件地址与 STARTTLS；密码留空表示保留既有凭据；测试通知展示投递 SENT/FAILED 与失败原因。
+- WEBHOOK：配置 webhook URL（必填）、可选 secret（留空保留既有凭据，不回显）与可选 providerType（FEISHU/DINGTALK/WECOM，仅存档透传，不驱动签名）。测试通知由服务端同步 POST 到 URL，按 HTTP 响应展示 SENT/FAILED 与失败原因。
+
+各渠道失败不阻塞其他渠道，站内通知始终保留兜底。WEBHOOK 渠道不接受前端回执，ack 仅 BROWSER。
 
 ### P12 模拟项目面试 `/mock-interviews/:mockInterviewId`
 

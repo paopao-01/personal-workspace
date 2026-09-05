@@ -37,22 +37,25 @@ public class NotificationChannelService {
 	private final ChannelDeliveryMapper deliveryMapper;
 	private final NotificationMapper notificationMapper;
 	private final EmailDeliveryService emailDeliveryService;
+	private final WebhookDeliveryService webhookDeliveryService;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
 	public NotificationChannelService(NotificationChannelMapper channelMapper, ChannelDeliveryMapper deliveryMapper,
-			NotificationMapper notificationMapper, EmailDeliveryService emailDeliveryService, IdGenerator ids,
-			UtcTime time) {
+			NotificationMapper notificationMapper, EmailDeliveryService emailDeliveryService,
+			WebhookDeliveryService webhookDeliveryService, IdGenerator ids, UtcTime time) {
 		this.channelMapper = channelMapper;
 		this.deliveryMapper = deliveryMapper;
 		this.notificationMapper = notificationMapper;
 		this.emailDeliveryService = emailDeliveryService;
+		this.webhookDeliveryService = webhookDeliveryService;
 		this.ids = ids;
 		this.time = time;
 	}
 
 	public List<NotificationChannel> list() {
-		return List.of(requireProjection(ChannelType.BROWSER), requireProjection(ChannelType.EMAIL));
+		return List.of(requireProjection(ChannelType.BROWSER), requireProjection(ChannelType.EMAIL),
+				requireProjection(ChannelType.WEBHOOK));
 	}
 
 	public NotificationChannel get(ChannelType channelType) {
@@ -71,6 +74,26 @@ public class NotificationChannelService {
 		}
 		String now = time.now();
 		String configJson = channelType == ChannelType.EMAIL && merged != null ? toJson(merged) : channel.getConfigJson();
+		return persist(channelType, channel, enabled, configJson, expectedVersion, now);
+	}
+
+	@Transactional
+	public NotificationChannel update(ChannelType channelType, long expectedVersion, boolean enabled,
+			WebhookChannelConfig incomingConfig) {
+		NotificationChannel channel = requireProjection(channelType);
+		WebhookChannelConfig merged = mergeWebhookConfig(channel, incomingConfig);
+		if (channelType == ChannelType.WEBHOOK && enabled) {
+			if (merged == null || isBlank(merged.url())) {
+				throw new BusinessRuleException("启用 WEBHOOK 渠道前必须配置 webhookUrl");
+			}
+		}
+		String now = time.now();
+		String configJson = channelType == ChannelType.WEBHOOK && merged != null ? toJson(merged) : channel.getConfigJson();
+		return persist(channelType, channel, enabled, configJson, expectedVersion, now);
+	}
+
+	private NotificationChannel persist(ChannelType channelType, NotificationChannel channel, boolean enabled,
+			String configJson, long expectedVersion, String now) {
 		if (NOT_PERSISTED_ID.equals(channel.getId())) {
 			// 首次保存：以 0 作为 If-Match-Version；并发创建冲突按版本冲突处理
 			if (expectedVersion != 0) {
@@ -94,7 +117,7 @@ public class NotificationChannelService {
 		}
 	}
 
-	/** 测试通知：站内通知始终创建；EMAIL 同步投递并返回最终状态（未配置则 422），BROWSER 由前端展示后回执。 */
+	/** 测试通知：站内通知始终创建；EMAIL/WEBHOOK 同步投递并返回最终状态（未配置则 422），BROWSER 由前端展示后回执。 */
 	@Transactional
 	public ChannelDelivery test(ChannelType channelType) {
 		if (channelType == ChannelType.EMAIL) {
@@ -103,15 +126,26 @@ public class NotificationChannelService {
 			if (config == null || isBlank(config.smtpHost()) || isBlank(config.toAddress())) {
 				throw new BusinessRuleException("邮件渠道尚未配置 SMTP 主机与收件地址，无法发送测试通知");
 			}
+		} else if (channelType == ChannelType.WEBHOOK) {
+			NotificationChannel channel = channelMapper.selectByType(ChannelType.WEBHOOK);
+			WebhookChannelConfig config = channel == null ? null : parseWebhookConfig(channel.getConfigJson());
+			if (config == null || isBlank(config.url())) {
+				throw new BusinessRuleException("WEBHOOK 渠道尚未配置 webhookUrl，无法发送测试通知");
+			}
 		}
 		String now = time.now();
 		String notificationId = ids.newId();
-		String label = channelType == ChannelType.EMAIL ? "邮件" : "浏览器";
+		String label = channelType == ChannelType.EMAIL ? "邮件"
+				: channelType == ChannelType.WEBHOOK ? "Webhook" : "浏览器";
 		notificationMapper.insert(notificationId, null, "测试通知：" + label,
 				"这是一条 " + label + " 渠道测试通知，发送时间 " + now + "。站内通知始终保留。", now);
 		ChannelDelivery delivery = createDeliveryIfAbsent(notificationId, channelType);
 		if (channelType == ChannelType.EMAIL) {
 			emailDeliveryService.deliver(delivery.getId());
+			return requireDelivery(delivery.getId());
+		}
+		if (channelType == ChannelType.WEBHOOK) {
+			webhookDeliveryService.deliver(delivery.getId());
 			return requireDelivery(delivery.getId());
 		}
 		return delivery;
@@ -177,7 +211,35 @@ public class NotificationChannelService {
 		}
 	}
 
-	private String toJson(EmailChannelConfig config) {
+	private WebhookChannelConfig mergeWebhookConfig(NotificationChannel channel, WebhookChannelConfig incoming) {
+		WebhookChannelConfig stored = parseWebhookConfig(channel.getConfigJson());
+		if (incoming == null) {
+			return stored;
+		}
+		if (stored == null) {
+			return incoming;
+		}
+		// secret 请求中省略/为 null 表示保留既有凭据
+		String secret = incoming.secret() != null ? incoming.secret() : stored.secret();
+		return new WebhookChannelConfig(
+			incoming.url() != null ? incoming.url() : stored.url(),
+			secret,
+			incoming.providerType() != null ? incoming.providerType() : stored.providerType());
+	}
+
+	private WebhookChannelConfig parseWebhookConfig(String configJson) {
+		if (configJson == null || configJson.isBlank()) {
+			return null;
+		}
+		try {
+			return JSON.readValue(configJson, WebhookChannelConfig.class);
+		} catch (Exception ex) {
+			log.warn("Failed to parse webhook channel config, treating as empty", ex);
+			return null;
+		}
+	}
+
+	private String toJson(Object config) {
 		try {
 			return JSON.writeValueAsString(config);
 		} catch (Exception ex) {

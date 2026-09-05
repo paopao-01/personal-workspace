@@ -940,7 +940,7 @@ paths:
     post:
       tags: [Notifications]
       summary: 浏览器通知渠道投递回执（前端展示系统通知后调用；幂等，仅 BROWSER）
-      description: 将该通知的 BROWSER 渠道投递标记为 SENT；不存在时创建 SENT 记录。EMAIL 渠道返回 422。
+      description: 将该通知的 BROWSER 渠道投递标记为 SENT；不存在时创建 SENT 记录。EMAIL 与 WEBHOOK 渠道返回 422。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       responses:
         '204': { description: 已回执（幂等） }
@@ -959,7 +959,8 @@ paths:
       summary: 更新通知渠道（启用/禁用与配置；首次保存以 0 作为 If-Match-Version）
       description: |
         启用 EMAIL 渠道时必须已有 smtpHost 与 toAddress（请求或既有配置中）。
-        password 仅写入不回显：请求中省略或为 null 表示保留既有凭据；是否已设置凭据见 hasCredential。
+        启用 WEBHOOK 渠道时必须已有 webhookUrl（请求或既有配置中）。
+        password 与 webhook secret 仅写入不回显：请求中省略或为 null 表示保留既有凭据；是否已设置凭据见 hasCredential。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
       requestBody:
         required: true
@@ -973,7 +974,7 @@ paths:
     parameters: [ { $ref: '#/components/parameters/ChannelType' } ]
     post:
       tags: [Notifications]
-      summary: 发送测试通知（站内通知始终创建；EMAIL 同步投递并返回结果，BROWSER 由前端展示后回执）
+      summary: 发送测试通知（站内通知始终创建；EMAIL/WEBHOOK 同步投递并返回结果，BROWSER 由前端展示后回执）
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       responses:
         '200': { description: 测试结果, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelTestResult' } } } }
@@ -1265,7 +1266,7 @@ components:
     ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
-    ChannelType: { name: channelType, in: path, required: true, schema: { type: string, enum: [BROWSER, EMAIL] } }
+    ChannelType: { name: channelType, in: path, required: true, schema: { type: string, enum: [BROWSER, EMAIL, WEBHOOK] } }
     AiProviderId: { name: providerId, in: path, required: true, schema: { type: string, format: uuid } }
     AiJobId: { name: aiJobId, in: path, required: true, schema: { type: string, format: uuid } }
     AiJobItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2173,7 +2174,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         notificationId: { type: string, format: uuid }
-        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        channelType: { type: string, enum: [BROWSER, EMAIL, WEBHOOK] }
         status: { type: string, enum: [PENDING, SENT, FAILED] }
         failureReason: { type: string, nullable: true }
         attemptCount: { type: integer }
@@ -2183,16 +2184,27 @@ components:
       type: object
       required: [channelType, enabled, hasCredential, version]
       properties:
-        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        channelType: { type: string, enum: [BROWSER, EMAIL, WEBHOOK] }
         enabled: { type: boolean }
         config:
-          description: 渠道配置；BROWSER 渠道为 null。password 永远不回显。
+          description: 渠道配置；BROWSER 渠道为 null。EMAIL 为 EmailChannelConfig，WEBHOOK 为 WebhookChannelConfig。password 与 webhook secret 永远不回显。
           $ref: '#/components/schemas/NotificationChannelConfig'
-        hasCredential: { type: boolean, description: EMAIL 渠道是否已保存密码 }
+        hasCredential: { type: boolean, description: EMAIL 渠道是否已保存密码；WEBHOOK 渠道是否已保存 secret }
         version: { type: integer }
     NotificationChannelConfig:
+      oneOf:
+        - $ref: '#/components/schemas/EmailChannelConfig'
+        - $ref: '#/components/schemas/WebhookChannelConfig'
+      discriminator:
+        propertyName: channelType
+        mapping:
+          EMAIL: '#/components/schemas/EmailChannelConfig'
+          WEBHOOK: '#/components/schemas/WebhookChannelConfig'
+    EmailChannelConfig:
       type: object
+      required: [channelType]
       properties:
+        channelType: { type: string, const: EMAIL, description: 鉴别字段；请求中可省略，由 path channelType 决定 }
         smtpHost: { type: string, nullable: true }
         smtpPort: { type: integer, nullable: true, minimum: 1, maximum: 65535 }
         username: { type: string, nullable: true }
@@ -2200,6 +2212,14 @@ components:
         fromAddress: { type: string, nullable: true }
         toAddress: { type: string, nullable: true }
         useStartTls: { type: boolean, nullable: true }
+    WebhookChannelConfig:
+      type: object
+      required: [channelType, url]
+      properties:
+        channelType: { type: string, const: WEBHOOK, description: 鉴别字段；请求中可省略，由 path channelType 决定 }
+        url: { type: string, description: webhook 接收端点，必须 http(s) }
+        secret: { type: string, nullable: true, description: 仅写入；响应中永远为 null }
+        providerType: { type: string, nullable: true, enum: [FEISHU, DINGTALK, WECOM], description: 透传存档，本切片不驱动签名或模板 }
     NotificationChannelUpdateRequest:
       type: object
       properties:
@@ -2209,7 +2229,7 @@ components:
       type: object
       required: [channelType, notificationId, deliveries]
       properties:
-        channelType: { type: string, enum: [BROWSER, EMAIL] }
+        channelType: { type: string, enum: [BROWSER, EMAIL, WEBHOOK] }
         notificationId: { type: string, format: uuid }
         deliveries: { type: array, items: { $ref: '#/components/schemas/ChannelDelivery' } }
     AiProvider:

@@ -2,6 +2,7 @@ package com.jobhub.datamanagement.api;
 
 import com.jobhub.datamanagement.application.EmailChannelConfig;
 import com.jobhub.datamanagement.application.NotificationChannelService;
+import com.jobhub.datamanagement.application.WebhookChannelConfig;
 import com.jobhub.datamanagement.domain.ChannelDelivery;
 import com.jobhub.datamanagement.domain.ChannelType;
 import com.jobhub.datamanagement.domain.Notification;
@@ -36,9 +37,15 @@ public class NotificationChannelController {
 		if (version == null) {
 			return ResponseEntity.badRequest().build();
 		}
-		EmailChannelConfig config = request.config() == null ? null : request.config().toEmailConfig();
-		NotificationChannel channel = channelService.update(channelType, version,
-			Boolean.TRUE.equals(request.enabled()), config);
+		NotificationChannel channel;
+		if (channelType == ChannelType.WEBHOOK) {
+			WebhookChannelConfig config = request.webhookConfig() == null ? null
+					: request.webhookConfig().toWebhookConfig();
+			channel = channelService.update(channelType, version, Boolean.TRUE.equals(request.enabled()), config);
+		} else {
+			EmailChannelConfig config = request.config() == null ? null : request.config().toEmailConfig();
+			channel = channelService.update(channelType, version, Boolean.TRUE.equals(request.enabled()), config);
+		}
 		return ResponseEntity.ok(NotificationChannelResponse.from(channel));
 	}
 
@@ -53,7 +60,7 @@ public class NotificationChannelController {
 	@PostMapping("/notifications/{notificationId}/channel-deliveries/{channelType}/ack")
 	public ResponseEntity<Void> ack(@PathVariable String notificationId, @PathVariable ChannelType channelType) {
 		if (channelType != ChannelType.BROWSER) {
-			throw new com.jobhub.common.error.BusinessRuleException("仅 BROWSER 渠道支持回执");
+			throw new com.jobhub.common.error.BusinessRuleException("仅 BROWSER 渠道支持回执；EMAIL 与 WEBHOOK 渠道返回 422");
 		}
 		channelService.ackBrowserDelivery(notificationId);
 		return ResponseEntity.noContent().build();

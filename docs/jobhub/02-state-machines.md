@@ -144,6 +144,18 @@ FAILED ──regenerate──> CANCELED + 新建 PENDING
 - 调度器使用短时租约令牌领取到期提醒；租约有效期内同一提醒只能由一个实例处理，租约过期后才允许其他实例接管。
 - 展示失败不会自动无限重试。用户可通过“重试”命令将 `FAILED` 提醒重新置为 `PENDING`，该命令必须携带提醒版本并保留尝试次数。
 
+### 5.1 渠道投递模式
+
+每条通知按已启用渠道独立生成 `channel_delivery` 记录，`status` 取值为 `PENDING`、`SENT`、`FAILED`，无 `PROCESSING` 或 `CANCELED`，且不随提醒状态机流转。各渠道独立记录发送状态与失败原因，一个渠道失败不阻塞其他渠道，站内通知始终保留兜底。
+
+| 渠道 | 投递模式 | 状态转移 |
+|---|---|---|
+| `BROWSER` | 前端展示系统通知后调用 `ack` 回执 | `PENDING ──ack──> SENT`；`ack` 仅 BROWSER，其他渠道调用返回 422 |
+| `EMAIL` | 调度器异步 SMTP 投递，失败记录原因并递增尝试次数 | `PENDING ──sent──> SENT`；`PENDING ──failed──> PENDING`（重试）或 `FAILED`（达上限） |
+| `WEBHOOK` | 调度器同步 HTTP POST 到用户配置的 URL，按 HTTP 响应判定 | `PENDING ──2xx──> SENT`；`PENDING ──非 2xx 或异常──> PENDING`（重试）或 `FAILED`（达上限） |
+
+`WEBHOOK` 投递成功判定为接收端返回 2xx；非 2xx 或连接/超时异常记录截断后的失败原因并递增 `attempt_count`，达重试上限后置 `FAILED`。`WEBHOOK` 不引入新状态，状态空间与 `EMAIL` 一致。`WEBHOOK` 渠道不接受 `ack`，调用返回 422。
+
 ## 6. 复盘、问题与薄弱点
 
 ### 6.4 AI 问题分类候选

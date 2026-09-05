@@ -4,8 +4,10 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type NotificationChannel = Schemas['NotificationChannel']
 export type NotificationChannelConfig = Schemas['NotificationChannelConfig']
+export type EmailChannelConfig = Schemas['EmailChannelConfig']
+export type WebhookChannelConfig = Schemas['WebhookChannelConfig']
 export type ChannelTestResult = Schemas['ChannelTestResult']
-export type ChannelType = 'BROWSER' | 'EMAIL'
+export type ChannelType = 'BROWSER' | 'EMAIL' | 'WEBHOOK'
 
 export async function getNotificationChannel(
   channelType: ChannelType,

@@ -434,8 +434,25 @@ When 用户选择同一个版本两次
 Then 返回业务规则错误且不产生副作用
 ```
 
+### AT-34 WEBHOOK 渠道投递与凭据保留
+
+```gherkin
+Given 用户已配置 WEBHOOK 渠道的 webhookUrl 与 secret 但尚未启用
+When 用户携带 version=0 启用 WEBHOOK 渠道
+Then 渠道状态为已启用，hasCredential 为 true，响应不回显 secret
+When 一条已到期提醒触发通知生成
+Then 该通知带一条 channelType=WEBHOOK 的 PENDING 投递记录
+When 调度器对该投递执行同步 POST 且接收端返回 2xx
+Then 投递状态变为 SENT 且 sentAt 非空
+When 接收端返回非 2xx 或不可达
+Then 投递记录截断后的 failureReason 并递增 attempt_count，重试达上限后置 FAILED
+And 站内通知始终保留，不影响其他渠道投递
+When 用户对 WEBHOOK 投递调用 ack 回执端点
+Then API 返回 422 且不产生数据副作用
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-33 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-34 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

@@ -5,13 +5,15 @@ import {
   useUpdateNotificationChannel,
 } from '@/api/notifications/useChannelMutations'
 import { useNotificationChannel } from '@/api/notifications/useChannelQueries'
-import type { NotificationChannelConfig } from '@/api/notifications/channelApi'
+import type { NotificationChannelConfig, WebhookChannelConfig } from '@/api/notifications/channelApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
+
+type ChannelData = NonNullable<ReturnType<typeof useNotificationChannel>['data']>
 
 function permissionLabel() {
   if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -70,15 +72,16 @@ function BrowserChannelCard() {
   )
 }
 
-function EmailChannelCard({ channel }: { channel: NonNullable<ReturnType<typeof useNotificationChannel>['data']> }) {
-  const config = channel.config
-  const [smtpHost, setSmtpHost] = useState(config?.smtpHost ?? '')
-  const [smtpPort, setSmtpPort] = useState(config?.smtpPort != null ? String(config.smtpPort) : '')
-  const [username, setUsername] = useState(config?.username ?? '')
+function EmailChannelCard({ channel }: { channel: ChannelData }) {
+  const emailConfig =
+    channel.config && channel.config.channelType === 'EMAIL' ? channel.config : null
+  const [smtpHost, setSmtpHost] = useState(emailConfig?.smtpHost ?? '')
+  const [smtpPort, setSmtpPort] = useState(emailConfig?.smtpPort != null ? String(emailConfig.smtpPort) : '')
+  const [username, setUsername] = useState(emailConfig?.username ?? '')
   const [password, setPassword] = useState('')
-  const [fromAddress, setFromAddress] = useState(config?.fromAddress ?? '')
-  const [toAddress, setToAddress] = useState(config?.toAddress ?? '')
-  const [useStartTls, setUseStartTls] = useState(config?.useStartTls ?? false)
+  const [fromAddress, setFromAddress] = useState(emailConfig?.fromAddress ?? '')
+  const [toAddress, setToAddress] = useState(emailConfig?.toAddress ?? '')
+  const [useStartTls, setUseStartTls] = useState(emailConfig?.useStartTls ?? false)
   const updateChannel = useUpdateNotificationChannel('EMAIL')
   const testChannel = useTestNotificationChannel('EMAIL')
   const [testResult, setTestResult] = useState<{ status: string; failureReason: string | null } | null>(null)
@@ -89,7 +92,8 @@ function EmailChannelCard({ channel }: { channel: NonNullable<ReturnType<typeof 
       enabled: channel.enabled,
     }
     const trimmedPort = smtpPort.trim()
-    body.config = {
+    const emailPayload: Extract<NotificationChannelConfig, { channelType: 'EMAIL' }> = {
+      channelType: 'EMAIL',
       smtpHost: smtpHost.trim() || null,
       smtpPort: trimmedPort ? Number(trimmedPort) : null,
       username: username.trim() || null,
@@ -99,6 +103,7 @@ function EmailChannelCard({ channel }: { channel: NonNullable<ReturnType<typeof 
       toAddress: toAddress.trim() || null,
       useStartTls,
     }
+    body.config = emailPayload
     try {
       await updateChannel.mutateAsync({ version: channel.version, body })
       setPassword('')
@@ -209,8 +214,134 @@ function EmailChannelCard({ channel }: { channel: NonNullable<ReturnType<typeof 
   )
 }
 
+function WebhookChannelCard({ channel }: { channel: ChannelData }) {
+  const webhookConfig =
+    channel.config && channel.config.channelType === 'WEBHOOK' ? channel.config : null
+  const [url, setUrl] = useState(webhookConfig?.url ?? '')
+  const [secret, setSecret] = useState('')
+  const [providerType, setProviderType] = useState<'' | 'FEISHU' | 'DINGTALK' | 'WECOM'>(
+    webhookConfig?.providerType ?? '',
+  )
+  const updateChannel = useUpdateNotificationChannel('WEBHOOK')
+  const testChannel = useTestNotificationChannel('WEBHOOK')
+  const [testResult, setTestResult] = useState<{ status: string; failureReason: string | null } | null>(null)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const payload: WebhookChannelConfig = {
+      channelType: 'WEBHOOK',
+      url: url.trim(),
+      // secret 留空表示保留既有凭据
+      secret: secret ? secret : null,
+      providerType: providerType || null,
+    }
+    try {
+      await updateChannel.mutateAsync({ version: channel.version, body: { enabled: channel.enabled, config: payload } })
+      setSecret('')
+      pushToast('Webhook 渠道配置已保存')
+    } catch (caught) {
+      pushToast(isApiError(caught) || isNetworkError(caught) ? caught.message : '保存失败，请稍后重试', 'error')
+    }
+  }
+
+  const runTest = async () => {
+    setTestResult(null)
+    try {
+      const result = await testChannel.mutateAsync()
+      const delivery = result.deliveries?.[0]
+      if (!delivery) {
+        setTestResult({ status: 'FAILED', failureReason: '未生成投递记录' })
+        return
+      }
+      setTestResult({ status: delivery.status, failureReason: delivery.failureReason ?? null })
+    } catch (caught) {
+      const message = isApiError(caught) || isNetworkError(caught) ? caught.message : '测试失败，请稍后重试'
+      setTestResult({ status: 'FAILED', failureReason: message })
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="requirement-row" style={{ flexWrap: 'wrap' }}>
+        <div className="requirement-main">
+          <span className="requirement-raw">Webhook</span>
+          <span className="muted">
+            到期提醒按已配置的 URL 发起 HTTP POST；secret 仅保存在本地数据库，不参与导出。站内通知始终保留兜底。
+          </span>
+        </div>
+        <div className="requirement-actions">
+          <Badge variant={channel.enabled ? 'success' : 'neutral'}>{channel.enabled ? '已启用' : '未启用'}</Badge>
+          <Button
+            size="sm"
+            variant="ghost"
+            type="button"
+            disabled={updateChannel.isPending}
+            onClick={async () => {
+              try {
+                await updateChannel.mutateAsync({ version: channel.version, body: { enabled: !channel.enabled } })
+                pushToast(channel.enabled ? 'Webhook 渠道已停用' : 'Webhook 渠道已启用')
+              } catch (caught) {
+                pushToast(isApiError(caught) || isNetworkError(caught) ? caught.message : '保存失败，请稍后重试', 'error')
+              }
+            }}
+          >
+            {channel.enabled ? '停用' : '启用'}
+          </Button>
+        </div>
+      </div>
+      <form onSubmit={submit} noValidate style={{ marginTop: 12 }}>
+        <div className="form-row">
+          <Field label="Webhook URL" required>
+            <Input value={url} onChange={(event) => setUrl(event.target.value)} maxLength={500}
+              placeholder="例如 https://oapi.dingtalk.com/robot/send?access_token=..." />
+          </Field>
+        </div>
+        <div className="form-row">
+          <Field label="Secret">
+            <Input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} maxLength={500}
+              placeholder={channel.hasCredential ? '已保存（留空保持不变）' : '可选，作为 X-Webhook-Secret 头透传'}
+              autoComplete="new-password" />
+          </Field>
+          <Field label="平台类型">
+            <select
+              className="input"
+              value={providerType}
+              onChange={(event) => setProviderType(event.target.value as '' | 'FEISHU' | 'DINGTALK' | 'WECOM')}
+              style={{ width: '100%' }}
+            >
+              <option value="">通用（不指定）</option>
+              <option value="FEISHU">飞书</option>
+              <option value="DINGTALK">钉钉</option>
+              <option value="WECOM">企业微信</option>
+            </select>
+          </Field>
+        </div>
+        <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+          <Button variant="default" type="submit" disabled={updateChannel.isPending}>
+            {updateChannel.isPending ? '保存中…' : '保存配置'}
+          </Button>
+          <Button variant="primary" type="button" disabled={testChannel.isPending} onClick={runTest}>
+            {testChannel.isPending ? '发送中…' : '发送测试通知'}
+          </Button>
+        </div>
+        {testResult ? (
+          <p style={{ margin: '12px 0 0' }}>
+            <Badge variant={testResult.status === 'SENT' ? 'success' : testResult.status === 'PENDING' ? 'info' : 'danger'}>
+              {testResult.status === 'SENT' ? '发送成功' : testResult.status === 'PENDING' ? '已入队待投递' : '发送失败'}
+            </Badge>
+            {testResult.failureReason ? (
+              <span className="muted" style={{ marginLeft: 8 }}>{testResult.failureReason}</span>
+            ) : null}
+          </p>
+        ) : null}
+      </form>
+    </div>
+  )
+}
+
 export function NotificationChannelSection() {
   const emailQuery = useNotificationChannel('EMAIL')
+  const webhookQuery = useNotificationChannel('WEBHOOK')
 
   return (
     <section className="card">
@@ -229,6 +360,13 @@ export function NotificationChannelSection() {
           <ErrorState error={emailQuery.error ?? new Error('加载失败')} onRetry={() => emailQuery.refetch()} />
         ) : (
           <EmailChannelCard channel={emailQuery.data} />
+        )}
+        {webhookQuery.isLoading ? (
+          <Spinner label="加载 Webhook 渠道配置…" />
+        ) : webhookQuery.error || !webhookQuery.data ? (
+          <ErrorState error={webhookQuery.error ?? new Error('加载失败')} onRetry={() => webhookQuery.refetch()} />
+        ) : (
+          <WebhookChannelCard channel={webhookQuery.data} />
         )}
       </div>
     </section>

@@ -59,6 +59,17 @@ public interface ChannelDeliveryMapper {
 		""")
 	List<ChannelDelivery> selectPendingEmail(@Param("maxAttempts") int maxAttempts);
 
+	@Select("""
+		SELECT id, notification_id AS notificationId, channel_type AS channelType, status,
+		       failure_reason AS failureReason, attempt_count AS attemptCount, sent_at AS sentAt,
+		       created_at AS createdAt, updated_at AS updatedAt
+		FROM channel_delivery
+		WHERE channel_type='WEBHOOK' AND status='PENDING' AND attempt_count < #{maxAttempts}
+		ORDER BY created_at, id
+		LIMIT 200
+		""")
+	List<ChannelDelivery> selectPendingWebhook(@Param("maxAttempts") int maxAttempts);
+
 	@Update("""
 		UPDATE channel_delivery
 		SET status='SENT', failure_reason=NULL, sent_at=#{now}, updated_at=#{now}

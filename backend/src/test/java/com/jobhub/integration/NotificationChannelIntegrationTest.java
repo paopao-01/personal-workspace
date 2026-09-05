@@ -4,17 +4,26 @@ import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import com.jobhub.integration.support.*;
 import com.jobhub.interview.application.ReminderDispatchService;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * P1 通知渠道（PRD 9.3）：渠道配置/测试通知/渠道投递状态；站内通知始终保留。
+ * WEBHOOK 渠道（AT-34）：通用 HTTP POST 投递，凭据保留，ack 拒绝。
  */
 class NotificationChannelIntegrationTest extends AbstractIntegrationTest {
 
@@ -27,9 +36,25 @@ class NotificationChannelIntegrationTest extends AbstractIntegrationTest {
 	@Autowired
 	private com.jobhub.datamanagement.application.EmailDeliveryService emailDeliveryService;
 
+	@Autowired
+	private com.jobhub.datamanagement.application.WebhookDeliveryService webhookDeliveryService;
+
+	private HttpServer webhookServer;
+	private int webhookPort;
+	private final AtomicInteger webhookStatus = new AtomicInteger(200);
+	private final AtomicInteger webhookHits = new AtomicInteger(0);
+
 	@BeforeEach
 	void resetMail() {
 		greenMail.reset();
+	}
+
+	@AfterEach
+	void stopWebhookServer() {
+		if (webhookServer != null) {
+			webhookServer.stop(0);
+			webhookServer = null;
+		}
 	}
 
 	@Test
@@ -158,10 +183,134 @@ class NotificationChannelIntegrationTest extends AbstractIntegrationTest {
 		assertThat(unconfiguredEmailTest.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
 	}
 
+	@Test
+	void AT34_webhookChannelDeliversViaHttpAndRecordsSent() throws Exception {
+		startWebhookServer(200);
+		String created = putWebhookChannel(0, false, webhookUrl(), "wh-secret", "FEISHU");
+		assertThat(JsonProbe.str(created, "hasCredential")).isEqualTo("true");
+		assertThat(created).doesNotContain("wh-secret");
+		assertThat(JsonProbe.str(created, "channelType")).isEqualTo("WEBHOOK");
+		// WebhookConfigView 带 channelType 鉴别字段
+		assertThat(JsonProbe.str(created, "config.channelType")).isEqualTo("WEBHOOK");
+		assertThat(JsonProbe.str(created, "config.url")).isEqualTo(webhookUrl());
+
+		putWebhookChannel(1, true, webhookUrl(), null, null);
+		createDueInterviewAndDispatch();
+		assertThat(webhookDeliveryService.attemptPending()).isEqualTo(3);
+
+		String notifications = restTemplate.getForEntity(url("/notifications"), String.class).getBody();
+		for (int i = 0; i < 3; i++) {
+			assertThat(JsonProbe.arrStr(notifications, "", i, "deliveries.0.channelType")).isEqualTo("WEBHOOK");
+			assertThat(JsonProbe.arrStr(notifications, "", i, "deliveries.0.status")).isEqualTo("SENT");
+			assertThat(JsonProbe.arrStr(notifications, "", i, "deliveries.0.sentAt")).isNotEqualTo("null");
+		}
+		assertThat(webhookHits.get()).isEqualTo(3);
+		// 站内通知始终保留
+		assertThat(JsonProbe.arrStr(notifications, "", 0, "title")).contains("面试提醒");
+	}
+
+	@Test
+	void AT34_webhookChannelFailureRecordedAndRetried() throws Exception {
+		startWebhookServer(500);
+		putWebhookChannel(0, true, webhookUrl(), null, null);
+		createDueInterviewAndDispatch();
+
+		webhookDeliveryService.attemptPending();
+		webhookDeliveryService.attemptPending();
+		webhookDeliveryService.attemptPending();
+		String afterRetries = restTemplate.getForEntity(url("/notifications"), String.class).getBody();
+		for (int i = 0; i < 3; i++) {
+			assertThat(JsonProbe.arrStr(afterRetries, "", i, "deliveries.0.status")).isEqualTo("FAILED");
+			assertThat(JsonProbe.arrInt(afterRetries, "", i, "deliveries.0.attemptCount")).isEqualTo(3);
+			assertThat(JsonProbe.arrStr(afterRetries, "", i, "deliveries.0.failureReason")).isNotEqualTo("null");
+		}
+		// 站内通知始终保留
+		assertThat(JsonProbe.arrStr(afterRetries, "", 0, "title")).contains("面试提醒");
+	}
+
+	@Test
+	void AT34_webhookConfigValidationAndCredentialRetention() {
+		// 启用 WEBHOOK 但缺 url → 422
+		ResponseEntity<String> invalid = restTemplate.exchange(url("/notification-channels/WEBHOOK"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"enabled\":true,\"webhookConfig\":{\"providerType\":\"FEISHU\"}}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class);
+		assertThat(invalid.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+
+		// 首次保存含 secret → hasCredential=true，不回显
+		String created = putWebhookChannel(0, false, "http://127.0.0.1:18091", "wh-secret", "FEISHU");
+		assertThat(JsonProbe.lng(created, "version")).isEqualTo(1);
+		assertThat(JsonProbe.str(created, "hasCredential")).isEqualTo("true");
+		assertThat(created).doesNotContain("wh-secret");
+
+		// 旧版本 → 409
+		ResponseEntity<String> conflict = restTemplate.exchange(url("/notification-channels/WEBHOOK"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"enabled\":true}", "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", "0"), String.class);
+		assertThat(conflict.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+		// 更新不带 secret → 凭据保留，启用成功
+		String enabled = putWebhookChannel(1, true, "http://127.0.0.1:18091", null, null);
+		assertThat(JsonProbe.str(enabled, "enabled")).isEqualTo("true");
+		assertThat(JsonProbe.str(enabled, "hasCredential")).isEqualTo("true");
+
+		// WEBHOOK 默认投影：未配置时禁用、version 0
+		// （已配置，此处校验 list 包含 WEBHOOK 行）
+		String list = restTemplate.getForEntity(url("/notification-channels"), String.class).getBody();
+		assertThat(list).contains("\"WEBHOOK\"");
+	}
+
+	@Test
+	void AT34_webhookAckRejectedReturns422() {
+		putWebhookChannel(0, true, "http://127.0.0.1:18091", null, null);
+		String notificationId = createDueInterviewAndDispatch();
+		ResponseEntity<String> ack = ackDelivery(notificationId, "WEBHOOK");
+		assertThat(ack.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+	}
+
+	private void startWebhookServer(int status) throws IOException {
+		webhookStatus.set(status);
+		webhookHits.set(0);
+		webhookServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		webhookServer.createContext("/", new HttpHandler() {
+			@Override
+			public void handle(HttpExchange exchange) throws IOException {
+				webhookHits.incrementAndGet();
+				exchange.getResponseHeaders().add("Content-Type", "text/plain");
+				byte[] resp = "ok".getBytes();
+				exchange.sendResponseHeaders(webhookStatus.get(), resp.length);
+				try (OutputStream os = exchange.getResponseBody()) {
+					os.write(resp);
+				}
+			}
+		});
+		webhookServer.start();
+		webhookPort = webhookServer.getAddress().getPort();
+	}
+
+	private String webhookUrl() {
+		return "http://127.0.0.1:" + webhookPort + "/";
+	}
+
 	private String putChannel(String channelType, long version, boolean enabled, String configJson) {
 		String configPart = configJson == null ? "" : ",\"config\":" + configJson;
 		return restTemplate.exchange(url("/notification-channels/" + channelType), HttpMethod.PUT,
 			TestFixtures.httpWithHeaders("{\"enabled\":" + enabled + configPart + "}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(version)),
+			String.class).getBody();
+	}
+
+	private String putWebhookChannel(long version, boolean enabled, String url, String secret, String providerType) {
+		StringBuilder cfg = new StringBuilder(",\"webhookConfig\":{");
+		cfg.append("\"url\":\"").append(url).append("\"");
+		if (secret != null) {
+			cfg.append(",\"secret\":\"").append(secret).append("\"");
+		}
+		if (providerType != null) {
+			cfg.append(",\"providerType\":\"").append(providerType).append("\"");
+		}
+		cfg.append("}");
+		return restTemplate.exchange(url("/notification-channels/WEBHOOK"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"enabled\":" + enabled + cfg + "}",
 				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", String.valueOf(version)),
 			String.class).getBody();
 	}

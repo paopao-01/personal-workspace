@@ -10,7 +10,7 @@
 - 时间：UTC ISO-8601 字符串，字段名以 `_at` 结尾；面试额外保存 IANA `event_time_zone`。
 - 乐观锁：所有可并发编辑的聚合根均有 `version INTEGER NOT NULL DEFAULT 0`。更新必须采用 `WHERE id = :id AND version = :version`，成功后 `version = version + 1`。
 - 删除：业务主表使用 `deleted_at` 软删除；永久删除前写入/读取 `trash_item`，并遵循 30 天保留期。
-- 枚举：P0 在数据库层通过 `CHECK` 固定；Java 枚举和 OpenAPI 枚举必须一一对应。
+- 枚举：P0 在数据库层通过 `CHECK` 固定；Java 枚举和 OpenAPI 枚举必须一一对应。`notification_channel.channel_type` 与 `channel_delivery.channel_type` 的 CHECK 在 V23 迁移中放宽为 `('BROWSER','EMAIL','WEBHOOK')`，以支持通知渠道扩展。
 
 ## 2. 表与聚合边界
 
@@ -24,7 +24,7 @@
 | 面试 | `interview_schedule` | `interview_reminder`、`interview_checklist_item` | 日程状态与结果分离。 |
 | 复盘 | `interview_review` | `interview_question`、`question_knowledge` | 每场面试仅一份当前复盘。 |
 | 学习任务 | `learning_task` | `task_source` | 支持一个任务关联多个问题、岗位和知识点。 |
-| 运维与可追溯 | `notification`、`audit_log`、`idempotency_record`、`data_export`、`trash_item` | — | 记录提醒、关键操作、重复写入和导出。 |
+| 运维与可追溯 | `notification`、`notification_channel`、`channel_delivery`、`audit_log`、`idempotency_record`、`data_export`、`trash_item` | — | 记录提醒、通知渠道配置与各渠道独立投递状态、关键操作、重复写入和导出。 |
 | AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9/V12/V13/V14)、`ai_job_item`(V7/V8/V14) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT`、`QUESTION_CLASSIFICATION`、`ANSWER_QUALITY_ANALYSIS`、`TASK_SUGGESTION` 只保存必要输入快照与候选，均不自动覆盖主数据。任务建议采纳后通过 `task_id` 回链新建学习任务。供应商仅允许永久删除未激活且未被 `ai_job` 引用的配置，已引用配置为保留审计记录。 |
 | 模拟面试（V18–V21） | `mock_interview_session` | `mock_interview_turn` | 会话保存项目不可变快照与 AI 任务审计关联；首轮生成成功后保存讲解稿和首个追问。活动会话可保存用户作答并创建 `MOCK_INTERVIEW_FOLLOW_UP` 审计任务，成功后追加下一条 AI 追问。每个用户作答轮次至多关联一个 `MOCK_INTERVIEW_ANSWER_EVALUATION` 审计任务；成功后在该轮次保存 AI 评分、反馈、依据及完成时间。评分统计与双时间窗口对比均直接聚合已保存评分，不物化能力推断；窗口对比只在每窗至少两条评分时计算平均分及其算术差值。轮次只作为会话练习内容，绝不写回项目、技能、证据、岗位要求或任务。 |
 | 简历版本（V22） | `resume_version` | — | 仅保存用户手工确认的版本名称和内容。对比按去重后的非空文本行直接计算相同、新增与删除，不调用 AI、不判断优劣，也不改写投递记录。 |
@@ -68,6 +68,7 @@
 | 薄弱知识点 | `question_knowledge(knowledge_point_id, question_id)` + 问题的回答状态索引 |
 | 任务列表 | `learning_task(status, due_at, priority)` |
 | 最近删除 | `trash_item(expires_at, deleted_at)` |
+| 渠道投递扫描 | `channel_delivery(channel_type, status)` |
 
 ## 5. 迁移与初始化流程
 
@@ -76,6 +77,14 @@
 3. 在事务中插入单用户默认 `user_profile` 和 `user_setting`，使用 `INSERT OR IGNORE` 保证幂等。
 4. 初始化标准技能、别名与知识点词典。词典须单独迁移，如 `V3__seed_taxonomy.sql`，不得与用户数据混写。
 5. 未来任何表结构或枚举变更均新增版本迁移，禁止修改已经在用户设备执行过的迁移文件。
+
+### 5.1 通知渠道与投递表语义
+
+`notification_channel` 与 `channel_delivery` 由 V5 创建，V23 将 `channel_type` 的 `CHECK` 放宽为 `('BROWSER','EMAIL','WEBHOOK')`（SQLite 不支持直接改 CHECK，V23 走建新表→复制→DROP 旧表→重命名重建两表，保留 `UNIQUE`、外键与索引）。
+
+- `notification_channel(id, channel_type UNIQUE, enabled, config_json, created_at, updated_at, version)`：每个渠道至多一行；`config_json` 仅 EMAIL/WEBHOOK 使用（EMAIL 为 SMTP 配置，WEBHOOK 为 url+secret+providerType）；secret 与 password 仅写入不回显、不导出。
+- `channel_delivery(id, notification_id→notification(id), channel_type, status, failure_reason, attempt_count, sent_at, created_at, updated_at, UNIQUE(notification_id, channel_type))`：同一通知同一渠道至多一条投递；`status ∈ PENDING/SENT/FAILED`；幂等由 `WHERE id AND status='PENDING'` 守护；`idx_channel_delivery_pending(channel_type, status)` 支撑扫描。
+- WEBHOOK 渠道投递为服务端同步 HTTP POST，按 2xx 判 SENT、非 2xx 或异常递增 `attempt_count` 至上限后 FAILED，与 EMAIL 同构，不引入新状态。
 
 ## 6. 备份、导出与恢复
 

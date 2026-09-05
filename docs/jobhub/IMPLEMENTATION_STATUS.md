@@ -1,5 +1,40 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-09
+
+- 目标：实现 V1.0「通知渠道扩展」的最小垂直切片——新增通用 WEBHOOK 通知渠道，复用现有 GET/PUT/test/ack 四端点（仅扩 channelType 取值），不实现 IM 专有签名与消息卡片模板。
+- 状态：**DONE**。
+- 已完成：
+  - 新增 `ChannelType.WEBHOOK`；`NotificationChannelConfig` 拆分为 `EmailChannelConfig` 与 `WebhookChannelConfig` 的 OpenAPI oneOf 鉴别式联合（按 channelType 区分，请求侧按 path channelType 反序列化、响应侧带 channelType const 满足 discriminator，不破坏现有 EMAIL 请求体）。
+  - V23 迁移重建 `notification_channel` 与 `channel_delivery` 两表，把 `channel_type` CHECK 放宽为 `('BROWSER','EMAIL','WEBHOOK')`，保留 UNIQUE、外键、索引与既有数据（仿 V20 重建范式）。
+  - 新增 `WebhookChannelConfig` record 与 `WebhookDeliveryService`（仿 `EmailDeliveryService`）：用 Spring `RestClient`（`SimpleClientHttpRequestFactory` 连接/读取 10s 超时，仿 `OpenAiCompatibleClient`）同步 POST 到用户配置的 URL，body 为 `{title,content}` JSON，secret 非空时作为 `X-Webhook-Secret` 头透传；成功（2xx）markSent，失败（非 2xx 或异常）截断 reason 后 markFailed，复用 `EMAIL_MAX_ATTEMPTS`=3 重试语义。
+  - `ChannelDeliveryScheduler` 并列注入 `WebhookDeliveryService`，`attemptPending()` 追加 `webhookDeliveryService.attemptPending()`（保持单 scheduler 直调既有范式，非策略注册表）；`ChannelDeliveryMapper` 平行加 `selectPendingWebhook`，其余 markSent/markFailed 渠道无关复用。
+  - `NotificationChannelService` 新增 WEBHOOK `update` 重载（url 非空校验 + `mergeWebhookConfig` secret 保留语义仿 password + configJson 序列化分支）、`test` WEBHOOK 同步投递分支与 label；`list` 加 WEBHOOK。
+  - `NotificationChannelController` update 按 path channelType 选 config 转换；ack message 补「EMAIL 与 WEBHOOK」；`NotificationChannelResponse` 加 `WebhookConfigView`（去 secret）与 channelType 鉴别字段；`NotificationChannelUpdateRequest` 加嵌套 `WebhookConfigInput`。
+  - 前端 `channelApi` `ChannelType` 加 WEBHOOK；`NotificationChannelSection` 新增 `WebhookChannelCard`（受控表单：url 必填/secret 留空保持/providerType select FEISHU·DINGTALK·WECOM·空/启用开关/测试通知 Badge）；EMAIL 卡片按 channelType 收窄 config；重新生成 types.ts。
+  - 状态机 §5.1、数据库设计 §5.1、页面规格 P11、技术实施 §4.4、PRD §9.3/P2/V1.0、AT-34 同步更新。
+- 未完成：不实现飞书/钉钉/企业微信专有签名算法（HMAC-SHA256/AES 加签）与消息卡片模板；不拆三个独立渠道；providerType 仅存档透传，不驱动签名或模板分支。
+- 修改文件：
+  - 规格：`02-state-machines.md`、`03-openapi.yaml`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`06-technical-implementation.md`、`jobhub-prd.md`、本文件。
+  - 后端新增：`V23__add_webhook_channel_type.sql`、`application/WebhookChannelConfig.java`、`application/WebhookDeliveryService.java`。
+  - 后端修改：`domain/ChannelType.java`、`infrastructure/ChannelDeliveryMapper.java`、`infrastructure/ChannelDeliveryScheduler.java`、`application/NotificationChannelService.java`、`api/NotificationChannelUpdateRequest.java`、`api/NotificationChannelResponse.java`、`api/NotificationChannelController.java`。
+  - 测试：`NotificationChannelIntegrationTest.java`（扩展 4 个 WEBHOOK 用例，JDK HttpServer 假接收方）；`frontend/e2e/p1-notification-channels-webhook.spec.ts`、`frontend/e2e/fake-webhook-server.mjs`（新增）、`frontend/playwright.config.ts`（加第四 webServer）。
+  - 前端：`src/api/notifications/channelApi.ts`、`src/features/settings/NotificationChannelSection.tsx`、`src/api/generated/types.ts`（重新生成）。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=NotificationChannelIntegrationTest"`：8 tests，0 failures，0 errors；Flyway V1→V23 成功（V23 重建两表 CHECK 放宽）。
+  - `cd backend && mvn clean test`：99 tests，0 failures，0 errors，0 skipped；Flyway V1→V23 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-notification-channels-webhook.spec.ts --reporter=dot`：1 passed（fake-webhook-server 18091 健康，WEBHOOK 投递 SENT、ack 返回 422、站内通知保留、收尾停用渠道与标已读）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：30 个测试，28 passed，2 failed。
+  - `git diff --check`：通过。
+- 验证结果：WEBHOOK 渠道配置/启用校验/凭据保留/同步投递 SENT/失败重试至 FAILED/ack 拒绝 422/站内通知兜底均有集成测试（真实 HttpServer 假接收方）与浏览器级 E2E 覆盖；OpenAPI 变更为 oneOf 鉴别式联合与 enum 扩展（非破坏性，请求侧按 path 反序列化兼容既有 EMAIL 请求体）；数据库变更走 V23 重建迁移。
+- 已知问题：
+  - 全量 E2E 中 `resume-versions.spec.ts`（AT-33）与 `v03-mock-interview.spec.ts` 两个既有用例失败，与本切片无代码关联：`v03-mock-interview` 单独复跑通过（典型的全量共享库/资源竞争既有问题，窗口 2026-08-30-10 曾记录同类）；`resume-versions` 失败点为 `比较版本` 按钮一直 disabled（疑似共享库同名版本残留导致 selectOption 定位歧义）。两者均未触碰简历版本、模拟面试、AI 评分任何代码或 OpenAPI schema，typecheck/build 通过；判定为既有环境不稳定，不阻塞本切片。后续窗口如需可在干净库单独复跑确认。
+  - E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+- 下一窗口只做：先在干净 E2E 库单独复跑 `resume-versions` 与 `v03-mock-interview` 确认是否既有失败；若稳定失败再定位修复。之后由用户指定下一个 V1.0/高级趋势最小切片（候选：加密定时备份、第三方日历同步、不同简历版本与投递渠道效果对比）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要实现飞书/钉钉/企业微信专有签名或消息卡片模板（仍为 P2）；不要拆三个独立渠道；不要引入策略注册表重构；不要让 webhook 投递改写用户事实或读取证据路径；不要修改 V1~V22 既有迁移。
+
 ### 窗口 2026-09-05-08
 
 - 目标：核对当前项目仍未实现的需求，不改动业务实现。

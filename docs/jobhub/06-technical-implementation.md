@@ -113,6 +113,13 @@ jobhub/
 - 数据库、导出文件和日志目录必须可配置；日志不得写入完整 JD、面试回答、证据内容、外部 AI 请求、令牌或本地路径指向的文件内容。
 - 外部链接与本地路径只保存为文本引用，禁止后台扫描、读取或上传。
 
+### 4.4 通知渠道扩展点
+
+- 渠道投递调度由单个 `ChannelDeliveryScheduler` 直调各 `*DeliveryService.attemptPending()`，不使用策略注册表；新增后端投递渠道=新增 `*DeliveryService` + `ChannelDeliveryMapper.selectPending<Channel>` + 调度器 `attemptPending()` 追加一行调用。
+- WEBHOOK 渠道用 Spring `RestClient`（`SimpleClientHttpRequestFactory`，连接/读取超时 10s）同步 POST 到用户配置的 URL，按 2xx 判定 `SENT`、非 2xx 或异常记录截断后的 `failureReason` 并递增 `attempt_count`，达重试上限（与 EMAIL 同为 3）后置 `FAILED`；`markSent`/`markFailed` 与 EMAIL 共用渠道无关的 mapper 方法。
+- 渠道 config 按 `channelType` 分支序列化与合并；secret 仿 password「请求中为 null 表示保留既有凭据」，`hasCredential` 对 WEBHOOK 表示是否已保存 secret；`WebhookConfigView` 不回显 secret。`providerType` 仅存档透传，不驱动签名或消息模板。
+- WEBHOOK 不接受前端 `ack` 回执，`ack` 端点仅 BROWSER，其他渠道返回 422。
+
 ## 5. 前端实现要点
 
 - 页面实现顺序严格遵循页面规格的三条关键路径：首次价值、面试准备、改进闭环。
