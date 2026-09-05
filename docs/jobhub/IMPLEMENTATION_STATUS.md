@@ -18,7 +18,7 @@
   - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V21 成功。
   - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
   - `git diff --check`：通过。
-- 发布结果：待本窗口提交、快进合并至 `main` 并推送 `origin/dev` 与 `origin/main` 后补充提交号。
+- 发布结果：功能提交 `463c011 feat(review): compare answer status windows` 已在 `dev`；本记录提交后将一并推送 `origin/dev`，再快进合并并推送 `origin/main`。
 - 下一窗口只做：由用户指定一个与既有 V0.3 模拟面试独立的下一切片；不得把原始评分或复盘计数升级成能力画像、自动趋势或自动学习任务。
 - 不要重复做：不要让复盘分析或模拟面试评分改写项目、技能、证据、岗位要求、复盘问题或学习任务；不要读取证据引用的本地路径或链接。
 
