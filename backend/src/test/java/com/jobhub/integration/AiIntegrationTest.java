@@ -43,6 +43,8 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		[{"type":"MOCK_INTERVIEW_OPENING","rawText":"我会从场景、方案、解决的问题和结果四部分讲解该项目。","rationale":"请解释方案选择时考虑过哪些取舍？"}]""";
 	private static final String MOCK_INTERVIEW_FOLLOW_UP_JSON = """
 		[{"type":"MOCK_INTERVIEW_FOLLOW_UP","rawText":"如果异步削峰后的消息积压，你会如何监控并处理？"}]""";
+	private static final String MOCK_INTERVIEW_ANSWER_EVALUATION_JSON = """
+		[{"type":"MOCK_INTERVIEW_ANSWER_EVALUATION","rawText":"回答覆盖了场景和方案取舍；可补充具体监控指标。","normalizedName":"4","rationale":"能说明约束和取舍，但缺少可验证的处置细节。"}]""";
 
 	private static HttpServer fakeProvider;
 	private static final AtomicInteger REQUEST_COUNT = new AtomicInteger();
@@ -53,7 +55,7 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		fakeProvider.createContext("/v1/chat/completions", exchange -> {
 			// 把候选 JSON 数组序列化为字符串字面量嵌入 OpenAI 响应，避免手工转义
 			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-			String candidates = request.contains("MOCK_INTERVIEW_FOLLOW_UP") ? MOCK_INTERVIEW_FOLLOW_UP_JSON : request.contains("Java 项目面试官") ? MOCK_INTERVIEW_JSON : request.contains("LEARNING_TASK")
+			String candidates = request.contains("MOCK_INTERVIEW_ANSWER_EVALUATION") ? MOCK_INTERVIEW_ANSWER_EVALUATION_JSON : request.contains("MOCK_INTERVIEW_FOLLOW_UP") ? MOCK_INTERVIEW_FOLLOW_UP_JSON : request.contains("Java 项目面试官") ? MOCK_INTERVIEW_JSON : request.contains("LEARNING_TASK")
 				? TASK_SUGGESTION_JSON
 				: request.contains("ANSWER_QUALITY")
 				? ANSWER_QUALITY_JSON
@@ -174,8 +176,21 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		assertThat(staleAnswer.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 		waitForTerminal(JsonProbe.str(answer, "followUpAiJobId"));
 		String answeredSession = restTemplate.getForEntity(url("/mock-interviews/" + sessionId), String.class).getBody();
+		String turnsBeforeEvaluation = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
+		String answerTurnId = JsonProbe.str(turnsBeforeEvaluation, "2.id");
+		String evaluation = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/turns/" + answerTurnId + "/evaluation"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(answeredSession, "version")), String.class).getBody();
+		assertThat(JsonProbe.lng(evaluation, "version")).isEqualTo(JsonProbe.lng(answeredSession, "version") + 1);
+		ResponseEntity<String> repeatedEvaluation = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/turns/" + answerTurnId + "/evaluation"), HttpMethod.POST,
+			TestFixtures.httpWithHeaders("", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(answeredSession, "version")), String.class);
+		assertThat(repeatedEvaluation.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		String evaluationJobId = jdbc.queryForObject("SELECT evaluation_ai_job_id FROM mock_interview_turn WHERE id=?", String.class, answerTurnId);
+		waitForTerminal(evaluationJobId);
+		String evaluatedTurns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
+		assertThat(JsonProbe.intVal(evaluatedTurns, "2.evaluationScore")).isEqualTo(4);
+		assertThat(JsonProbe.str(evaluatedTurns, "2.evaluationFeedback")).contains("监控指标");
 		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
-			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(answeredSession, "version")), String.class).getBody();
+			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(evaluation, "version")), String.class).getBody();
 		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");
 		String turns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
 		assertThat(turns).contains("场景、方案", "取舍", "异步削峰的取舍", "消息积压");

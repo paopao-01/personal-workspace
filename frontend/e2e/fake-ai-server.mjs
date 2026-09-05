@@ -48,6 +48,9 @@ const MOCK_INTERVIEW = [
 const MOCK_INTERVIEW_FOLLOW_UP = [
   { type: 'MOCK_INTERVIEW_FOLLOW_UP', rawText: '如果异步削峰后的消息积压，你会如何监控并处理？' },
 ]
+const MOCK_INTERVIEW_ANSWER_EVALUATION = [
+  { type: 'MOCK_INTERVIEW_ANSWER_EVALUATION', rawText: '回答覆盖了场景和方案取舍；可补充具体的监控指标与降级动作。', normalizedName: '4', rationale: '能说明约束和取舍，但缺少可验证的处置细节。' },
+]
 
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -67,7 +70,9 @@ const server = createServer((req, res) => {
         return
       }
       const requestText = JSON.stringify(body)
-      const content = requestText.includes('MOCK_INTERVIEW_FOLLOW_UP')
+      const content = requestText.includes('MOCK_INTERVIEW_ANSWER_EVALUATION')
+        ? MOCK_INTERVIEW_ANSWER_EVALUATION
+        : requestText.includes('MOCK_INTERVIEW_FOLLOW_UP')
         ? MOCK_INTERVIEW_FOLLOW_UP
         : requestText.includes('Java 项目面试官')
         ? MOCK_INTERVIEW

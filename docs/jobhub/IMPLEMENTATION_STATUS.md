@@ -1,5 +1,26 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-03
+
+- 目标：完成 V0.3 项目模拟面试“用户作答评分”的最小垂直切片并发布。
+- 状态：**DONE**。
+- 已完成：
+  - 用户可对任一已保存的 `USER` 作答通过专用命令发起一次 AI 练习评分；系统创建独立 `MOCK_INTERVIEW_ANSWER_EVALUATION` 异步审计任务并以会话版本保护重复/旧页面请求。
+  - 任务成功后仅在该作答轮次保存 1–5 分、反馈和评分依据；评分不会改变会话状态、项目、技能、证据、岗位要求或学习任务，也不会自动创建学习任务。
+  - V20 安全重建 SQLite 的 AI 任务、模拟会话与轮次表，增加评分任务枚举、轮次关联任务和评分字段；取消会话会取消未终态评分任务，已完成会话可继续等待评分结果。
+  - 模拟面试页增加“获取 AI 评分”、生成中状态及评分反馈展示；AT-29、后端 AI 集成测试与 V0.3 E2E 同步覆盖评分主路径和版本冲突。
+- 未完成：自动学习任务、跨会话统计或将评分写回用户能力均未实现，留待用户指定单独切片。
+- 修改文件：OpenAPI、状态机、数据库语义、页面规格、验收用例、V20、AI 任务枚举/评分 handler/service、模拟面试 domain/controller/service/mapper、AI 集成测试、模拟面试 API/页面、AI 假服务与 V0.3 E2E、本文件。
+- 已运行验证：
+  - `cd backend && mvn test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；Flyway V1→V20 成功。首次普通权限执行受 Windows `target` 文件锁阻断，提升权限重跑通过。
+  - `cd frontend && npm run typecheck && npm run lint && npm run e2e -- e2e/v03-mock-interview.spec.ts --reporter=dot`：通过，1 passed；首次普通权限启动受 E2E SQLite 文件锁阻断，提升权限重跑通过。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V20 成功。
+  - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
+  - `git diff --check`：通过。
+- 发布结果：待本窗口提交、合并 `main` 并推送后补充提交号与远程同步状态。
+- 下一窗口只做：由用户指定模拟面试的下一独立切片；如选择评分增强，先定义不会回写技能事实或自动建任务的明确契约。
+- 不要重复做：不要让 AI 评分、追问或讲解稿回写项目、技能、证据、岗位要求或任务；不要自动创建学习任务；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-05-02
 
 - 目标：继续 V0.3 项目模拟面试，完成连续追问的最小垂直切片并发布。

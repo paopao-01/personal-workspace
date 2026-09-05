@@ -1182,6 +1182,13 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewAnswerRequest' } } } }
       responses: { '202': { description: 作答已保存且连续追问任务已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '409': { $ref: '#/components/responses/VersionConflict' }, '422': { $ref: '#/components/responses/IllegalTransition' } }
+  /mock-interviews/{mockInterviewId}/turns/{turnId}/evaluation:
+    parameters: [ { $ref: '#/components/parameters/MockInterviewId' }, { $ref: '#/components/parameters/MockInterviewTurnId' } ]
+    post:
+      tags: [Ai]
+      summary: 异步生成一条用户模拟面试作答的练习评分；不修改用户事实或创建任务
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses: { '202': { description: 评分任务已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '409': { $ref: '#/components/responses/VersionConflict' }, '422': { $ref: '#/components/responses/IllegalTransition' } }
   /mock-interviews/{mockInterviewId}/transition:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     post:
@@ -1230,6 +1237,7 @@ components:
     AiJobId: { name: aiJobId, in: path, required: true, schema: { type: string, format: uuid } }
     AiJobItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
     MockInterviewId: { name: mockInterviewId, in: path, required: true, schema: { type: string, format: uuid } }
+    MockInterviewTurnId: { name: turnId, in: path, required: true, schema: { type: string, format: uuid } }
   responses:
     NotFound:
       description: 资源不存在或不可见
@@ -2224,7 +2232,7 @@ components:
       required: [id, jobType, objectId, status, providerType, model, promptVersion, attemptCount, items, createdAt]
       properties:
         id: { type: string, format: uuid }
-        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION, MOCK_INTERVIEW] }
+        jobType: { type: string, enum: [JD_EXTRACTION, RESUME_DRAFT, QUESTION_CLASSIFICATION, ANSWER_QUALITY_ANALYSIS, TASK_SUGGESTION, MOCK_INTERVIEW, MOCK_INTERVIEW_FOLLOW_UP, MOCK_INTERVIEW_ANSWER_EVALUATION] }
         objectId: { type: string, format: uuid }
         status: { type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELED] }
         providerType: { type: string }
@@ -2262,7 +2270,7 @@ components:
     MockInterviewTurn:
       type: object
       required: [id, sessionId, turnNumber, speaker, content, createdAt]
-      properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, turnNumber: { type: integer }, speaker: { type: string, enum: [AI, USER] }, content: { type: string }, createdAt: { type: string, format: date-time } }
+      properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, turnNumber: { type: integer }, speaker: { type: string, enum: [AI, USER] }, content: { type: string }, evaluationAiJobId: { type: string, format: uuid, nullable: true }, evaluationScore: { type: integer, minimum: 1, maximum: 5, nullable: true }, evaluationFeedback: { type: string, nullable: true }, evaluationRationale: { type: string, nullable: true }, createdAt: { type: string, format: date-time } }
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

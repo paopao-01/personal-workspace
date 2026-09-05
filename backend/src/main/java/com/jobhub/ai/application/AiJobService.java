@@ -211,6 +211,14 @@ public class AiJobService {
 		job.setPromptVersion(promptVersion(AiJobType.MOCK_INTERVIEW_FOLLOW_UP)); job.setAttemptCount(0); job.setInputSnapshot(serializeMockFollowUp(projectSnapshot, question, answer)); job.setCreatedAt(now); job.setUpdatedAt(now); aiJobMapper.insert(job); submitAfterCommit(job.getId()); return requireJob(job.getId());
 	}
 
+	@Transactional
+	public AiJob createMockInterviewAnswerEvaluation(String sessionId, String projectSnapshot, String question, String answer) {
+		AiProvider provider = requireActiveProvider(); String now = time.now(); AiJob job = new AiJob();
+		job.setId(ids.newId()); job.setJobType(AiJobType.MOCK_INTERVIEW_ANSWER_EVALUATION); job.setObjectId(sessionId); job.setObjectVersion(0L);
+		job.setStatus(AiJobStatus.QUEUED); job.setProviderId(provider.getId()); job.setProviderType(provider.getProviderType().name()); job.setModel(provider.getModel());
+		job.setPromptVersion(promptVersion(AiJobType.MOCK_INTERVIEW_ANSWER_EVALUATION)); job.setAttemptCount(0); job.setInputSnapshot(serializeMockFollowUp(projectSnapshot, question, answer)); job.setCreatedAt(now); job.setUpdatedAt(now); aiJobMapper.insert(job); submitAfterCommit(job.getId()); return requireJob(job.getId());
+	}
+
 	private String serializeMockFollowUp(String projectSnapshot, String question, String answer) {
 		try { return JSON.writeValueAsString(java.util.Map.of("projectSnapshot", projectSnapshot, "question", question, "answer", answer)); }
 		catch (com.fasterxml.jackson.core.JsonProcessingException ex) { throw new BusinessRuleException("连续追问输入快照序列化失败"); }

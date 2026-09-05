@@ -5,5 +5,6 @@ import com.jobhub.mockinterview.application.MockInterviewService; import com.job
  @PostMapping public ResponseEntity<Response> create(@RequestBody @jakarta.validation.Valid Create r){return ResponseEntity.status(202).body(Response.of(s.create(r.projectId())));}
  @GetMapping("/{id}") public Response get(@PathVariable String id){return Response.of(s.get(id));} @GetMapping("/{id}/turns") public List<MockInterviewTurn> turns(@PathVariable String id){return s.turns(id);}
  @PostMapping("/{id}/answers") public ResponseEntity<Response> answer(@PathVariable String id,@RequestHeader(value="If-Match-Version") long v,@RequestBody @jakarta.validation.Valid Answer r){return ResponseEntity.status(HttpStatus.ACCEPTED).body(Response.of(s.answer(id,r.content(),v)));}
+ @PostMapping("/{id}/turns/{turnId}/evaluation") public ResponseEntity<Response> evaluate(@PathVariable String id,@PathVariable String turnId,@RequestHeader(value="If-Match-Version") long v){return ResponseEntity.status(HttpStatus.ACCEPTED).body(Response.of(s.evaluate(id,turnId,v)));}
  @PostMapping("/{id}/transition") public Response transition(@PathVariable String id,@RequestHeader(value="If-Match-Version") long v,@RequestBody @jakarta.validation.Valid Transition r){return Response.of(s.transition(id,r.targetStatus(),v));}
 }
