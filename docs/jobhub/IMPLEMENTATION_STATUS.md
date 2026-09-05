@@ -1,5 +1,30 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-10
+
+- 目标：承接上一窗口「下一窗口只做」——在干净 E2E 库单独复跑 `resume-versions`（AT-33）与 `v03-mock-interview` 两个失败用例，确认是环境不稳定还是稳定失败；若稳定失败则定位并最小修复。不开发新功能、不进入下一个 V1.0 切片。
+- 状态：**DONE**。
+- 已完成：
+  - 干净库（`backend/target/jobhub-e2e.db`，由 `start-e2e-backend.ps1` 每次启动前删除三个 db 文件后 Flyway 重建 V1→V23）单独复跑：`resume-versions` 3 次重复跑全部失败（`保存版本` 按钮一直 disabled）；`v03-mock-interview` 单跑时序竞态下偶发失败（`AI 练习评分：4/5` 不出现，页面显示「评分请求失败，请重试。」）。两者在干净库仍稳定失败，**否定了上一窗口「疑似共享库同名版本残留 / 全量资源竞争」的判定**，根因为 spec 自身的时序竞态。
+  - `resume-versions` 根因：`createResumeVersion` mutation 的 `onSuccess` 异步清空 `name`/`content` 表单；spec 连续 fill 第二个版本名时，onSuccess 的 `setName('')` 在 fill 之后执行，把刚填的「岗位版」清回空，`!name.trim()` 使「保存版本」按钮恒 disabled。与同名版本残留无关（V22 `name` 无 UNIQUE、`ResumeVersionsPage` `<select>` 不去重仅在全量共享库下放大问题，单跑无残留时也会失败）。
+  - `v03-mock-interview` 根因：保存作答触发 `MOCK_INTERVIEW_FOLLOW_UP` 任务，会话版本递增；spec 紧接着点「获取 AI 评分」时，前端 session 查询尚未 refetch 到最新版本，`evaluateMockInterviewAnswer` 用过期的 `If-Match-Version` 发请求，后端 `VersionConflictException` 返回 409，`evaluate.error` 渲染「评分请求失败」，`AI 练习评分：4/5` 永不出现。
+  - 最小修复（仅改两个 spec，不动业务代码、OpenAPI、迁移、状态机）：
+    - `resume-versions.spec.ts`：保存首个版本后 `await expect(page.getByLabel('版本名称')).toHaveValue('')` 等待 onSuccess 清空表单完成再填第二个版本；版本名加 `Date.now()` 后缀（仿 `v03-mock-interview` 的 suffix 范式）消除全量共享库同名残留歧义；`test.setTimeout(60_000)`。
+    - `v03-mock-interview.spec.ts`：追问可见后，先 `await expect(page.getByRole('button', { name: '保存作答并生成追问' })).toBeVisible()`——该按钮仅在 `session.followUpAiJobId` 已清空（session 查询已 refetch 到最新版本）时渲染——再点「获取 AI 评分」，确保用过的是最新版本号。
+- 未完成：不修复 `ResumeVersionsPage` 的 `<select>` 不去重（属全量共享库遗留增强，非本窗口范围，且单跑已通过）；不改 V22 迁移加 UNIQUE（已执行迁移不可修改）；不动 `MockInterviewPage` 在评分按钮加版本守卫（spec 级修复已足够，UI 级健壮性增强留待用户明确需求）。
+- 修改文件：`frontend/e2e/resume-versions.spec.ts`、`frontend/e2e/v03-mock-interview.spec.ts`、本文件。
+- 已运行验证：
+  - `cd frontend && npm run e2e -- e2e/resume-versions.spec.ts e2e/v03-mock-interview.spec.ts --reporter=dot`：2 passed。
+  - `cd frontend && npm run e2e -- --reporter=dot`：30 passed，0 failed（全量回归绿，含两个修复后的用例）。
+  - 既有 React Router future flag 与 Node `NO_COLOR` 提示不影响断言。
+- 验证结果：两个用例在干净库与全量回归下均稳定通过，根因（spec 时序竞态）已通过 spec 级最小修复消除；无业务代码、OpenAPI、迁移、状态机变更。
+- 已知问题：
+  - 上一窗口「下一窗口只做」记录的两个失败用例根因判定（共享库同名残留 / 全量资源竞争）经本窗口证伪，实际为 spec 自身时序竞态；本窗口已修复并记录在此，以此条为准。
+  - `ResumeVersionsPage` 的 `<select>` 仍不去重，全量共享库下若有同名版本仍可能定位歧义；但 spec 已用 `Date.now()` 后缀规避，不阻塞。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：加密定时备份、第三方日历同步、不同简历版本与投递渠道效果对比）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建这两个 E2E 用例的时序守卫；不要给 V22 `resume_version.name` 加 UNIQUE（已执行迁移不可改）；不要在 `MockInterviewPage` 评分按钮加版本守卫（除非用户明确要求 UI 级健壮性增强）；不要在本窗口扩范围到新功能。
+
 ### 窗口 2026-09-05-09
 
 - 目标：实现 V1.0「通知渠道扩展」的最小垂直切片——新增通用 WEBHOOK 通知渠道，复用现有 GET/PUT/test/ack 四端点（仅扩 channelType 取值），不实现 IM 专有签名与消息卡片模板。
@@ -314,9 +339,9 @@
 - 项目阶段：P1（V0.2）已完成二十个切片；本窗口补齐完成态复盘直接编辑与 OFFER 的真实完成面试前置校验。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：两个既有 E2E 失败用例（resume-versions、v03-mock-interview）已在窗口 2026-09-05-10 经 spec 级最小修复稳定通过；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-08-30（窗口 2026-08-30-12）。
+- 最后更新：2026-09-05（窗口 2026-09-05-10）。
 
 ## 2. 已完成内容
 
