@@ -17,7 +17,7 @@
   - `cd backend && mvn clean test`：27 suites、92 tests，0 failures，0 errors，0 skipped；Flyway V1→V21 成功。
   - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
   - `git diff --check`：通过。
-- 发布结果：代码与交接记录均在本地 `main` 工作区待提交；发布命令因远程仓库的可信性与“先推 dev、后合并 main”的授权范围尚未得到本窗口明确确认而未执行。
+- 发布结果：功能提交 `65baedf feat(ai): add mock interview evaluation summary` 已先推送至 `origin/dev`，再快进合并并推送至 `origin/main`；两个本地分支与远程当前均包含该提交。
 - 下一窗口只做：由用户指定模拟面试的下一独立切片；不得将评分统计扩展为能力标签、自动趋势结论或自动学习任务。
 - 不要重复做：不要让 AI 评分、追问、讲解稿或统计回写项目、技能、证据、岗位要求或任务；不要读取证据引用的本地路径或链接。
 
