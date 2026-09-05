@@ -54,6 +54,7 @@
 - 学习任务建议候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁创建 `learning_task` 和 `task_source`，并在 `ai_job_item.task_id` 保存回链，不自动修改问题或技能。
 - `learning_task` 完成不改变 `user_skill.self_level`，也不删除历史薄弱题。
 - `task_source` 使用多态来源：`QUESTION`、`JOB_REQUIREMENT`、`SKILL`、`KNOWLEDGE_POINT`、`MANUAL`。服务层校验 `source_id` 的真实存在性。
+- 投递渠道与简历版本效果对比（`GET /analytics/channel-effectiveness`）是只读实时聚合，不新增任何表或外键：按 `application_record.channel`（NOT NULL 自由文本）与 `application_record.resume_version`（可空自由文本，与 `resume_version` 表无外键硬关联）的原始填写文本 `GROUP BY`，未填写简历版本归入 `null` 组。计数采用状态近似口径（见状态机 §3.1），不 JOIN `interview_schedule`，不持久化聚合结果，不输出趋势结论。
 
 ## 4. 索引与查询支持
 

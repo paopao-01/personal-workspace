@@ -451,8 +451,24 @@ When 用户对 WEBHOOK 投递调用 ack 回执端点
 Then API 返回 422 且不产生数据副作用
 ```
 
+### AT-35 投递渠道与简历版本效果对比仅呈现原始计数
+
+```gherkin
+Given 渠道 A 有 3 份投递（1 份 INTERVIEWING、1 份 OFFER、1 份 APPLIED），渠道 B 有 1 份投递（APPLIED）
+And 简历版本 X 关联 2 份投递（1 份 OFFER），1 份投递未指定简历版本
+When 用户查询投递渠道与简历版本效果对比
+Then 返回 channelGroups 与 resumeVersionGroups，各组包含 applicationCount、interviewCount、offerCount 原始计数
+And 渠道 A 的 applicationCount=3、interviewCount=2、offerCount=1、offerRate 为 1/3
+And 渠道 B 的 applicationCount=1、offerRate 为 null 并显示信息不足
+And 未指定简历版本组的 resumeVersion 为 null
+And 不返回趋势结论、能力等级、归因或行动建议
+And 投递、面试、简历版本、岗位、技能和证据均不被修改
+When 用户提供只覆盖部分投递的日期范围
+Then 计数随之更新，仍不输出趋势结论
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-34 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-35 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

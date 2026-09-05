@@ -95,6 +95,17 @@ APPLIED / RESUME_PASSED / INTERVIEWING ──reject──> REJECTED
 
 每次变更写入 `application_status_log`。投递处于活动状态时，页面应提示并支持维护下一步行动；行动缺失不阻断状态转换。
 
+### 3.1 效果对比聚合口径（只读，非状态转换）
+
+`GET /analytics/channel-effectiveness` 是只读聚合，不产生状态转移，也不修改任何投递、面试或简历版本。为避免误导，计数采用状态近似口径并在此固定：
+
+- `applicationCount`：`status != 'DRAFT'` 且 `deleted_at IS NULL`（已投递，排除待投递草稿）。
+- `interviewCount`：`status IN ('INTERVIEWING','OFFER')`（已进入面试阶段；不 JOIN `interview_schedule` 统计 COMPLETED 面试）。
+- `offerCount`：`status = 'OFFER'`。
+- `offerRate`：`applicationCount >= 2` 时为 `offerCount / applicationCount`，否则为 `null`（信息不足）。
+
+渠道与简历版本均按 `application_record` 的 `channel`、`resume_version` 字段**原始填写文本**分组，不做归一化、合并或去重；未填写简历版本的投递归入 `resumeVersion` 为 `null` 的组。聚合只输出原始计数与可选 Offer 率，不输出趋势结论、能力等级、归因或行动建议。
+
 ## 4. 面试日程与结果状态机
 
 ### 4.1 日程状态

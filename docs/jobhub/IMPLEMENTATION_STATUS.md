@@ -1,5 +1,38 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-11
+
+- 目标：实现 PRD §10 P2「高级趋势分析和不同简历、渠道的效果对比」的最小只读切片——`GET /analytics/channel-effectiveness` 按投递渠道与简历版本聚合投递/面试/Offer 原始计数，不输出趋势结论、归因或行动建议。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `GET /analytics/channel-effectiveness`（query `from`/`to` 可选 date）与 `ChannelEffectivenessReport`/`ChannelEffectivenessGroup`/`ResumeVersionEffectivenessGroup` schema；描述明示只读原始计数、状态近似口径、`offerRate` 样本不足为 null、不输出趋势结论。
+  - 状态机 §3.1 新增「效果对比聚合口径」节：`applicationCount`=`status!='DRAFT' 且未软删`、`interviewCount`=`status IN ('INTERVIEWING','OFFER')`、`offerCount`=`status='OFFER'`、`offerRate`=`applicationCount>=2` 时 `offerCount/applicationCount` 否则 null；按 `application_record.channel` 与 `resume_version` 原始填写文本分组，不归一化/去重，未指定版本归 null 组；不 JOIN `interview_schedule`。
+  - 数据库设计 §3.3 补一条只读实时聚合说明：不新增表/外键/迁移，按 `channel`（NOT NULL）与 `resume_version`（可空，与 `resume_version` 表无外键硬关联）字符串 GROUP BY，不持久化聚合结果。
+  - 页面规格 P08B 新增「渠道与简历版本效果对比 `/analytics/channel-effectiveness`」；验收 AT-35 新增；PRD §10 P2 项标注最小切片已实现、不输出趋势结论。
+  - 后端新增 `com.jobhub.analytics` 模块 5 文件：`domain/ChannelEffectiveness`（不可变 record，两组聚合 + null offerRate）、`infrastructure/ChannelEffectivenessMapper`+`EffectivenessRow`（注解 SQL 单表 GROUP BY，`SUM(CASE WHEN status...)` 分桶，软删过滤 + 可选 `substr(applied_at,1,10)` 日期过滤，仿 `QuestionMapper.selectAnalysisKnowledgePointStats`）、`application/ChannelEffectivenessService`（`@Transactional(readOnly=true)`，`offerRate` null 语义，`from>to` 抛 `BusinessRuleException`，不写入）、`api/ChannelEffectivenessResponse`（`from(domain)` 工厂，仿 `ReviewAnalysisResponse`）、`api/AnalyticsController`（`GET /api/analytics/channel-effectiveness`）。
+  - 前端新增 `api/analytics/analyticsApi.ts`（`getChannelEffectiveness` + `useChannelEffectiveness`）、`features/analytics/ChannelEffectivenessPage.tsx`（仿 `ReviewAnalysisPage`：日期筛选 + 两张 `<dl>` 计数表 + Offer 率 null→「信息不足」+ muted「不推断趋势或行动」文案 + 空态）、`routes.tsx` + `Sidebar` 加路由 `/analytics/channel-effectiveness` 与「效果对比」入口；重新生成 `types.ts`。
+  - 集成测试 `ChannelEffectivenessIntegrationTest` 3 用例：聚合原始计数（渠道 A 3/2/1 offerRate≈1/3、渠道 B 1/0/0 offerRate=null；简历版本 X 2/2/1 offerRate=0.5、未指定 2/0/0 offerRate=0.0）、空数据返回 0 组、`from>to` 返回 422；断言不出现 `trend`/`趋势结论`/`归因` 字样。
+  - E2E `p1-channel-effectiveness.spec.ts`：API 造多份投递（不同渠道/简历版本，`Date.now()` 后缀隔离）→ UI 查询 → 断言两组原始计数与 Offer 率 + 「信息不足」+「不推断趋势或行动」文案 + 日期过滤。
+- 未完成：不做渠道/简历版本文本归一化、合并或去重（按原始填写文本分组，文档注明限制）；不新增 `application_record.resume_version_id` 外键（与 `resume_version` 表硬关联留待明确需求）；不 JOIN `interview_schedule` 统计 COMPLETED 面试（状态近似口径）；不输出趋势结论/能力等级/归因/预测/行动建议；不引入新依赖或迁移。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端新增：`analytics/domain/ChannelEffectiveness.java`、`analytics/infrastructure/ChannelEffectivenessMapper.java`、`analytics/infrastructure/EffectivenessRow.java`、`analytics/application/ChannelEffectivenessService.java`、`analytics/api/ChannelEffectivenessResponse.java`、`analytics/api/AnalyticsController.java`、`backend/src/test/java/com/jobhub/integration/ChannelEffectivenessIntegrationTest.java`。
+  - 前端：`src/api/analytics/analyticsApi.ts`、`src/features/analytics/ChannelEffectivenessPage.tsx`、`src/app/routes.tsx`、`src/components/layout/Sidebar.tsx`、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-channel-effectiveness.spec.ts`（新增）。
+- 已运行验证：
+  - `cd backend && mvn test "-Dtest=ChannelEffectivenessIntegrationTest"`：3 tests，0 failures，0 errors；Flyway V1→V23 成功。
+  - `cd backend && mvn clean test`：102 tests，0 failures，0 errors，0 skipped；Flyway V1→V23 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-channel-effectiveness.spec.ts --reporter=dot`：1 passed。
+  - `cd frontend && npm run e2e -- --reporter=dot`：31 passed，0 failed。
+  - `git diff --check`：通过。
+- 验证结果：渠道与简历版本效果对比链路（API 造投递不同渠道/版本 → UI 查询 → 原始计数 + Offer 率 + 信息不足 + 不输出结论 + 日期过滤）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点/schema（非破坏性）；无数据库迁移（复用 `application_record.channel` 与 `resume_version` 字段）；只读聚合不改写任何用户事实。
+- 已知问题：
+  - 全量 E2E 首跑时 `p1-requirement-merge` 偶发失败（「候选要求已合并」5s 内不可见），重跑通过，属既有共享库时序问题（与本切片无代码关联，单跑通过）。
+  - E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：加密定时备份、第三方日历同步最小化单向 ICS 订阅）；或先补齐 3 处 OpenAPI 与后端契约不一致（`DELETE /ai-providers` 声明、`ai-jobs` cancel 方法、`GET /notification-channels` 列表端点）。先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建效果对比聚合服务/端点/页面；不要给 `application_record` 加 `resume_version_id` 外键或新迁移；不要做渠道/版本文本归一化或趋势结论；不要 JOIN `interview_schedule` 统计 COMPLETED 面试；不要让聚合改写投递、面试或简历版本数据。
+
 ### 窗口 2026-09-05-10
 
 - 目标：承接上一窗口「下一窗口只做」——在干净 E2E 库单独复跑 `resume-versions`（AT-33）与 `v03-mock-interview` 两个失败用例，确认是环境不稳定还是稳定失败；若稳定失败则定位并最小修复。不开发新功能、不进入下一个 V1.0 切片。
@@ -339,9 +372,9 @@
 - 项目阶段：P1（V0.2）已完成二十个切片；本窗口补齐完成态复盘直接编辑与 OFFER 的真实完成面试前置校验。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：两个既有 E2E 失败用例（resume-versions、v03-mock-interview）已在窗口 2026-09-05-10 经 spec 级最小修复稳定通过；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：投递渠道与简历版本效果对比只读聚合切片（AT-35）已在窗口 2026-09-05-11 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-05（窗口 2026-09-05-10）。
+- 最后更新：2026-09-05（窗口 2026-09-05-11）。
 
 ## 2. 已完成内容
 
