@@ -18,7 +18,7 @@
   - `cd frontend && npm run build`：通过，仅有既有 chunk-size 提示。
   - `cd frontend && npm run e2e -- --reporter=dot`：28 passed；仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。普通权限首次启动测试服务失败，提升权限重跑通过。
   - `git diff --check`：通过。
-- 发布结果：待本窗口提交、合并 `main` 与推送远程。
+- 发布结果：功能提交 `0b5e46e feat(ai): compare mock interview score windows` 已快进合并到本地 `main`；本地 `dev` 与 `main` 均待推送。远程推送被执行环境拦截，需用户明确确认允许向当前 `origin` 外传该提交后再执行。
 - 下一窗口只做：由用户指定一个不超出 V0.3 范围的独立最小切片；先定义 OpenAPI、状态机、页面、验收和数据语义。
 - 不要重复做：不要让评分窗口差值自动改写项目、技能、证据、岗位要求、复盘、学习任务或模拟会话；不要把差值包装为能力等级、确定性趋势结论或自动行动；不要读取证据引用的本地路径或链接。
 
