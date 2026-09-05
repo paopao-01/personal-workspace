@@ -267,9 +267,31 @@ public class ReviewService {
 			weakPointComparison = buildWeakPointComparison(normalizedFrom, normalizedTo, normalizedCompareFrom,
 				normalizedCompareTo, normalizedJobId);
 		}
+		ReviewAnalysis.AnswerStatusComparison answerStatusComparison = normalizedCompareFrom == null || normalizedCompareTo == null
+			? null
+			: buildAnswerStatusComparison(normalizedCompareFrom, normalizedCompareTo, normalizedJobId, totalCount,
+				fullyAnsweredCount, partiallyAnsweredCount, unansweredCount);
 		return new ReviewAnalysis(normalizedFrom, normalizedTo, reviewCount, totalCount, fullyAnsweredCount,
 			partiallyAnsweredCount, unansweredCount, knowledgePointStats, questionTypeStats, withResultCount,
-			passedCount, failedCount, pendingCount, weakPointComparison);
+			passedCount, failedCount, pendingCount, weakPointComparison, answerStatusComparison);
+	}
+	private ReviewAnalysis.AnswerStatusComparison buildAnswerStatusComparison(String compareFrom, String compareTo,
+			String jobId, long currentTotal, long currentFully, long currentPartial, long currentUnanswered) {
+		long compareTotal = 0;
+		long compareFully = 0;
+		long comparePartial = 0;
+		long compareUnanswered = 0;
+		for (AnalysisStatusCountRow row : questionMapper.selectAnalysisQuestionStatusCounts(compareFrom, compareTo, jobId)) {
+			compareTotal += row.getCnt();
+			switch (row.getAnswerStatus()) {
+				case "FULLY_ANSWERED" -> compareFully = row.getCnt();
+				case "PARTIALLY_ANSWERED" -> comparePartial = row.getCnt();
+				case "UNANSWERED" -> compareUnanswered = row.getCnt();
+				default -> { }
+			}
+		}
+		return new ReviewAnalysis.AnswerStatusComparison(compareFrom, compareTo, currentTotal, compareTotal,
+			currentFully, compareFully, currentPartial, comparePartial, currentUnanswered, compareUnanswered);
 	}
 
 	private ReviewAnalysis.WeakPointComparison buildWeakPointComparison(String currentFrom, String currentTo,

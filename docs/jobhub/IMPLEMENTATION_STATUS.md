@@ -1,5 +1,27 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-05
+
+- 目标：完成复盘分析的回答状态窗口对比最小切片并发布。
+- 状态：**DONE**。
+- 已完成：
+  - `GET /reviews/analysis` 在同时提供 `compareFrom` 与 `compareTo` 时，新增当前/对比窗口的题目总数和完全答出、部分答出、未答出原始计数；任一对比日期缺失时明确返回 `null`。
+  - 对比继续按面试开始日期和可选岗位实时只读聚合，不写入问题、复盘、知识点、技能或学习任务，不生成能力标签、趋势结论或学习任务建议。
+  - 复盘分析页面展示对比窗口边界与两窗原始状态计数；OpenAPI、页面/状态/数据库语义和 AT-31 同步更新。
+  - 后端集成测试和复盘分析 E2E 覆盖完整窗口、缺失对比窗口及页面展示。
+- 未完成：无；不将两个原始窗口的差异扩展为能力评定、自动趋势或自动行动。
+- 修改文件：OpenAPI、页面/状态/数据库/验收规格、复盘分析 domain/service/response、复盘 API/query、分析页面、生成类型、集成与 E2E 测试、本文件。
+- 已运行验证：
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint`：通过。
+  - `cd backend && mvn test '-Dtest=ReviewAnalysisIntegrationTest'`：2 tests，0 failures，0 errors；Flyway V1→V21 成功。
+  - `cd frontend && npm run e2e -- e2e/p1-review-analysis.spec.ts --reporter=dot`：1 passed。
+  - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V21 成功。
+  - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
+  - `git diff --check`：通过。
+- 发布结果：待本窗口提交、快进合并至 `main` 并推送 `origin/dev` 与 `origin/main` 后补充提交号。
+- 下一窗口只做：由用户指定一个与既有 V0.3 模拟面试独立的下一切片；不得把原始评分或复盘计数升级成能力画像、自动趋势或自动学习任务。
+- 不要重复做：不要让复盘分析或模拟面试评分改写项目、技能、证据、岗位要求、复盘问题或学习任务；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-05-04
 
 - 目标：完成 V0.3 项目模拟面试的评分增强最小垂直切片并发布。

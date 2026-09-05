@@ -91,6 +91,8 @@ export async function getReviewAnalysis(params?: {
   from?: string
   to?: string
   jobId?: string
+  compareFrom?: string
+  compareTo?: string
 }): Promise<ReviewAnalysis> {
   const res = await apiClient.get<ReviewAnalysis>('/reviews/analysis', {
     params,

@@ -549,7 +549,7 @@ paths:
       summary: 跨面试复盘聚合分析
       description: |
         按面试开始日期范围（可选岗位）聚合全部复盘的问题回答情况、知识点表现、问题类型分布与面试结果汇总。
-        只输出可解释的原始计数与分数片段（分子/分母），不输出趋势性结论；样本量是否足够由界面判断展示。
+        同时提供两个日期窗口的原始回答状态计数和薄弱点计数；只输出可解释的原始计数与分数片段（分子/分母），不输出趋势性结论或能力判断。
       parameters:
         - name: from
           in: query
@@ -1757,7 +1757,7 @@ components:
         questions: { type: array, items: { $ref: '#/components/schemas/InterviewQuestion' } }
     ReviewAnalysis:
       type: object
-      required: [timeRange, reviewCount, questionStats, knowledgePointStats, questionTypeStats, interviewResultSummary, weakPointComparison]
+      required: [timeRange, reviewCount, questionStats, knowledgePointStats, questionTypeStats, interviewResultSummary, weakPointComparison, answerStatusComparison]
       properties:
         timeRange:
           type: object
@@ -1784,6 +1784,28 @@ components:
             - $ref: '#/components/schemas/WeakPointComparison'
           nullable: true
           description: 可选的两个时间窗口薄弱点对比；未提供 compareFrom/compareTo 时为 null。
+        answerStatusComparison:
+          allOf: [ { $ref: '#/components/schemas/AnswerStatusComparison' } ]
+          nullable: true
+          description: 可选的两个时间窗口原始回答状态计数；仅在同时提供 compareFrom 和 compareTo 时返回。
+    AnswerStatusComparison:
+      type: object
+      required: [compareTimeRange, currentTotalCount, compareTotalCount, currentFullyAnsweredCount, compareFullyAnsweredCount, currentPartiallyAnsweredCount, comparePartiallyAnsweredCount, currentUnansweredCount, compareUnansweredCount]
+      properties:
+        compareTimeRange:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date, nullable: true }
+            to: { type: string, format: date, nullable: true }
+        currentTotalCount: { type: integer }
+        compareTotalCount: { type: integer }
+        currentFullyAnsweredCount: { type: integer }
+        compareFullyAnsweredCount: { type: integer }
+        currentPartiallyAnsweredCount: { type: integer }
+        comparePartiallyAnsweredCount: { type: integer }
+        currentUnansweredCount: { type: integer }
+        compareUnansweredCount: { type: integer }
     WeakPointComparison:
       type: object
       required: [compareTimeRange, items]

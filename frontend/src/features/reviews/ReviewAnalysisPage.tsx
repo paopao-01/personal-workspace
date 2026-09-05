@@ -171,7 +171,7 @@ export function ReviewAnalysisPage() {
             </Field>
           </div>
           <div className="form-row">
-            <Field label="对比开始日期" hint="同时填写两个日期后显示薄弱点变化">
+            <Field label="对比开始日期" hint="同时填写两个日期后显示原始回答状态与薄弱点对比">
               <Input type="date" value={compareFrom} onChange={(event) => setCompareFrom(event.target.value)} />
             </Field>
             <Field label="对比结束日期">
@@ -224,6 +224,19 @@ export function ReviewAnalysisPage() {
       ) : (
         <>
           <QuestionStatsSection analysis={analysis} />
+          {analysis.answerStatusComparison ? (
+            <section className="card">
+              <div className="card-header"><h2 className="card-title">回答状态窗口对比</h2></div>
+              <div className="card-body">
+                <p className="muted">
+                  对比窗口：{analysis.answerStatusComparison.compareTimeRange.from ?? '最早'} ~ {analysis.answerStatusComparison.compareTimeRange.to ?? '今天'}；
+                  当前/对比题数：{analysis.answerStatusComparison.currentTotalCount}/{analysis.answerStatusComparison.compareTotalCount}。
+                </p>
+                <p>完全答出：{analysis.answerStatusComparison.currentFullyAnsweredCount}/{analysis.answerStatusComparison.compareFullyAnsweredCount} · 部分答出：{analysis.answerStatusComparison.currentPartiallyAnsweredCount}/{analysis.answerStatusComparison.comparePartiallyAnsweredCount} · 未答出：{analysis.answerStatusComparison.currentUnansweredCount}/{analysis.answerStatusComparison.compareUnansweredCount}</p>
+                <p className="muted">仅展示原始数量，不推断能力或趋势。</p>
+              </div>
+            </section>
+          ) : null}
           <KnowledgePointStatsSection analysis={analysis} />
           <QuestionTypeStatsSection analysis={analysis} />
           {analysis.weakPointComparison ? (

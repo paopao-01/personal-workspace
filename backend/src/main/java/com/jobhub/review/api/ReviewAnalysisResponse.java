@@ -11,7 +11,8 @@ public record ReviewAnalysisResponse(
 	List<KnowledgePointStat> knowledgePointStats,
 		List<QuestionTypeStat> questionTypeStats,
 		InterviewResultSummary interviewResultSummary,
-		WeakPointComparison weakPointComparison
+		WeakPointComparison weakPointComparison,
+		AnswerStatusComparison answerStatusComparison
 ) {
 	public record TimeRange(String from, String to) { }
 
@@ -56,6 +57,17 @@ public record ReviewAnalysisResponse(
 		int currentQuestionCount,
 		int compareQuestionCount
 	) { }
+	public record AnswerStatusComparison(
+			TimeRange compareTimeRange,
+			long currentTotalCount,
+			long compareTotalCount,
+			long currentFullyAnsweredCount,
+			long compareFullyAnsweredCount,
+			long currentPartiallyAnsweredCount,
+			long comparePartiallyAnsweredCount,
+			long currentUnansweredCount,
+			long compareUnansweredCount
+	) { }
 
 	public static ReviewAnalysisResponse from(ReviewAnalysis analysis) {
 		var knowledgePointStats = analysis.knowledgePointStats().stream()
@@ -70,6 +82,13 @@ public record ReviewAnalysisResponse(
 			analysis.weakPointComparison().items().stream().map(item -> new WeakPointComparisonItem(item.knowledgePoint(),
 				item.currentWeightedWeaknessCount(), item.compareWeightedWeaknessCount(), item.delta(),
 				item.currentQuestionCount(), item.compareQuestionCount())).toList());
+		AnswerStatusComparison answerStatusComparison = analysis.answerStatusComparison() == null ? null
+			: new AnswerStatusComparison(
+				new TimeRange(analysis.answerStatusComparison().compareFrom(), analysis.answerStatusComparison().compareTo()),
+				analysis.answerStatusComparison().currentTotalCount(), analysis.answerStatusComparison().compareTotalCount(),
+				analysis.answerStatusComparison().currentFullyAnsweredCount(), analysis.answerStatusComparison().compareFullyAnsweredCount(),
+				analysis.answerStatusComparison().currentPartiallyAnsweredCount(), analysis.answerStatusComparison().comparePartiallyAnsweredCount(),
+				analysis.answerStatusComparison().currentUnansweredCount(), analysis.answerStatusComparison().compareUnansweredCount());
 		return new ReviewAnalysisResponse(
 			new TimeRange(analysis.from(), analysis.to()),
 			analysis.reviewCount(),
@@ -80,7 +99,8 @@ public record ReviewAnalysisResponse(
 			questionTypeStats,
 			new InterviewResultSummary(analysis.reviewCount(), analysis.withResultCount(), analysis.passedCount(),
 				analysis.failedCount(), analysis.pendingCount()),
-			weakPointComparison
+			weakPointComparison,
+			answerStatusComparison
 		);
 	}
 }

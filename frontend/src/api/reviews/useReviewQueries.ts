@@ -49,6 +49,8 @@ export function useReviewAnalysis(params?: {
   from?: string
   to?: string
   jobId?: string
+  compareFrom?: string
+  compareTo?: string
 }) {
   return useQuery<ReviewAnalysis>({
     queryKey: ['reviews', 'analysis', params],

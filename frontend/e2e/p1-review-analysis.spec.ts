@@ -209,6 +209,20 @@ test('P1 full review fields persist and cross-interview analysis aggregates revi
   await expect(projectRow).toContainText('待巩固 1 道')
   await expect(page.getByText('通过 1 / 未通过 1 / 暂不确认 0')).toBeVisible()
 
+  await fillField(page, '对比开始日期', '2025-05-01')
+  await fillField(page, '对比结束日期', '2025-05-31')
+  const comparisonResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/reviews/analysis') &&
+    response.url().includes('compareFrom=2025-05-01') &&
+    response.request().method() === 'GET',
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  expect((await comparisonResponse).status()).toBe(200)
+  await expect(page.getByRole('heading', { name: '回答状态窗口对比' })).toBeVisible()
+  await expect(page.getByText('当前/对比题数：3/3。')).toBeVisible()
+  await expect(page.getByText('完全答出：1/1 · 部分答出：1/1 · 未答出：1/1')).toBeVisible()
+  await expect(page.getByText('仅展示原始数量，不推断能力或趋势。')).toBeVisible()
+
   // 样本外窗口：空状态
   await fillField(page, '开始日期', '2030-01-01')
   await fillField(page, '结束日期', '2030-01-31')

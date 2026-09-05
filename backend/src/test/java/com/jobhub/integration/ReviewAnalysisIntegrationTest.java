@@ -85,6 +85,19 @@ class ReviewAnalysisIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.str(compared, "weakPointComparison.compareTimeRange.to")).isEqualTo("2026-09-14");
 		assertThat(compared).contains("项目表达");
 		assertThat(JsonProbe.arraySize(compared, "weakPointComparison.items")).isGreaterThanOrEqualTo(1);
+		assertThat(JsonProbe.str(compared, "answerStatusComparison.compareTimeRange.from")).isEqualTo("2026-09-01");
+		assertThat(JsonProbe.str(compared, "answerStatusComparison.compareTimeRange.to")).isEqualTo("2026-09-14");
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.currentTotalCount")).isEqualTo(2L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.currentFullyAnsweredCount")).isEqualTo(1L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.currentPartiallyAnsweredCount")).isEqualTo(0L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.currentUnansweredCount")).isEqualTo(1L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.compareTotalCount")).isEqualTo(2L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.compareFullyAnsweredCount")).isEqualTo(1L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.comparePartiallyAnsweredCount")).isEqualTo(1L);
+		assertThat(JsonProbe.lng(compared, "answerStatusComparison.compareUnansweredCount")).isEqualTo(0L);
+
+		String incompleteComparison = restTemplate.getForEntity(url("/reviews/analysis?compareFrom=2026-09-01"), String.class).getBody();
+		assertThat(JsonProbe.str(incompleteComparison, "answerStatusComparison")).isEqualTo("null");
 	}
 
 	@Test
@@ -97,6 +110,7 @@ class ReviewAnalysisIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arraySize(analysis, "knowledgePointStats")).isEqualTo(0);
 		assertThat(JsonProbe.arraySize(analysis, "questionTypeStats")).isEqualTo(0);
 		assertThat(JsonProbe.lng(analysis, "interviewResultSummary.withResultCount")).isEqualTo(0L);
+		assertThat(JsonProbe.str(analysis, "answerStatusComparison")).isEqualTo("null");
 		// JsonProbe 对 JSON null 输出字符串 "null"
 		assertThat(JsonProbe.str(analysis, "timeRange.from")).isEqualTo("null");
 		assertThat(JsonProbe.str(analysis, "timeRange.to")).isEqualTo("null");

@@ -48,6 +48,7 @@
 
 - `interview_review.interview_id` 唯一，保证每场面试只有一份当前复盘。
 - `interview_question.answer_status` 更新后，薄弱点统计实时按问题和知识点聚合，不维护容易过期的冗余累计字段。
+- 复盘分析的回答状态窗口对比使用同一实时聚合查询，不新增能力、趋势或分析结果持久化表；它只读取未删除问题及其关联的面试、投递和岗位。
 - 回答质量分析候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁只更新回答状态、参考答案、错误原因和改进方案，不新增冗余分析结论表。
 - 学习任务建议候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁创建 `learning_task` 和 `task_source`，并在 `ai_job_item.task_id` 保存回链，不自动修改问题或技能。
 - `learning_task` 完成不改变 `user_skill.self_level`，也不删除历史薄弱题。

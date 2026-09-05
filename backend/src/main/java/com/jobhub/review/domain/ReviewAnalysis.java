@@ -20,7 +20,8 @@ public record ReviewAnalysis(
 		long passedCount,
 		long failedCount,
 		long pendingCount,
-		WeakPointComparison weakPointComparison
+		WeakPointComparison weakPointComparison,
+		AnswerStatusComparison answerStatusComparison
 ) {
 	public record KnowledgePointStat(KnowledgePoint knowledgePoint, long questionCount, long fullyAnsweredCount) { }
 
@@ -31,4 +32,18 @@ public record ReviewAnalysis(
 	public record WeakPointComparisonItem(KnowledgePoint knowledgePoint,
 			double currentWeightedWeaknessCount, double compareWeightedWeaknessCount, double delta,
 			int currentQuestionCount, int compareQuestionCount) { }
+
+	/** Raw answer-status counts for two explicitly selected date windows; this is not a capability assessment. */
+	public record AnswerStatusComparison(
+			String compareFrom,
+			String compareTo,
+			long currentTotalCount,
+			long compareTotalCount,
+			long currentFullyAnsweredCount,
+			long compareFullyAnsweredCount,
+			long currentPartiallyAnsweredCount,
+			long comparePartiallyAnsweredCount,
+			long currentUnansweredCount,
+			long compareUnansweredCount
+	) { }
 }
