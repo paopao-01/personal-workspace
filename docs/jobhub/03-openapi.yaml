@@ -1162,6 +1162,11 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewCreateRequest' } } } }
       responses: { '202': { description: 会话已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /mock-interviews/evaluation-summary:
+    get:
+      tags: [Ai]
+      summary: 查询所有已完成模拟面试作答评分的只读统计；不推断能力或趋势
+      responses: { '200': { description: 评分统计, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewEvaluationSummary' } } } } }
   /mock-interviews/{mockInterviewId}:
     parameters: [ { $ref: '#/components/parameters/MockInterviewId' } ]
     get:
@@ -2270,7 +2275,24 @@ components:
     MockInterviewTurn:
       type: object
       required: [id, sessionId, turnNumber, speaker, content, createdAt]
-      properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, turnNumber: { type: integer }, speaker: { type: string, enum: [AI, USER] }, content: { type: string }, evaluationAiJobId: { type: string, format: uuid, nullable: true }, evaluationScore: { type: integer, minimum: 1, maximum: 5, nullable: true }, evaluationFeedback: { type: string, nullable: true }, evaluationRationale: { type: string, nullable: true }, createdAt: { type: string, format: date-time } }
+      properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, turnNumber: { type: integer }, speaker: { type: string, enum: [AI, USER] }, content: { type: string }, evaluationAiJobId: { type: string, format: uuid, nullable: true }, evaluationScore: { type: integer, minimum: 1, maximum: 5, nullable: true }, evaluationFeedback: { type: string, nullable: true }, evaluationRationale: { type: string, nullable: true }, evaluationCompletedAt: { type: string, format: date-time, nullable: true }, createdAt: { type: string, format: date-time } }
+    MockInterviewEvaluationSummary:
+      type: object
+      required: [evaluatedAnswerCount, evaluatedSessionCount, scoreDistribution, recentScores]
+      properties:
+        evaluatedAnswerCount: { type: integer, minimum: 0 }
+        evaluatedSessionCount: { type: integer, minimum: 0 }
+        averageScore: { type: number, format: double, nullable: true, description: 少于两条评分时返回 null，避免以单次练习代表整体表现 }
+        scoreDistribution: { type: array, items: { $ref: '#/components/schemas/MockInterviewScoreCount' } }
+        recentScores: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/MockInterviewRecentScore' } }
+    MockInterviewScoreCount:
+      type: object
+      required: [score, count]
+      properties: { score: { type: integer, minimum: 1, maximum: 5 }, count: { type: integer, minimum: 0 } }
+    MockInterviewRecentScore:
+      type: object
+      required: [sessionId, turnId, score, evaluatedAt]
+      properties: { sessionId: { type: string, format: uuid }, turnId: { type: string, format: uuid }, score: { type: integer, minimum: 1, maximum: 5 }, evaluatedAt: { type: string, format: date-time } }
     PageJob:
       type: object
       required: [items, page, pageSize, total, totalPages]

@@ -1,0 +1,2 @@
+ALTER TABLE mock_interview_turn ADD COLUMN evaluation_completed_at TEXT;
+CREATE INDEX idx_mock_interview_turn_evaluated_at ON mock_interview_turn(evaluation_completed_at DESC);

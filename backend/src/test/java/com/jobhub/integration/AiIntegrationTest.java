@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -189,6 +190,22 @@ class AiIntegrationTest extends AbstractIntegrationTest {
 		String evaluatedTurns = restTemplate.getForEntity(url("/mock-interviews/" + sessionId + "/turns"), String.class).getBody();
 		assertThat(JsonProbe.intVal(evaluatedTurns, "2.evaluationScore")).isEqualTo(4);
 		assertThat(JsonProbe.str(evaluatedTurns, "2.evaluationFeedback")).contains("监控指标");
+		String singleScoreSummary = restTemplate.getForEntity(url("/mock-interviews/evaluation-summary"), String.class).getBody();
+		assertThat(JsonProbe.intVal(singleScoreSummary, "evaluatedAnswerCount")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(singleScoreSummary, "evaluatedSessionCount")).isEqualTo(1);
+		assertThat(JsonProbe.str(singleScoreSummary, "averageScore")).isEqualTo("null");
+		assertThat(JsonProbe.intVal(singleScoreSummary, "scoreDistribution.3.count")).isEqualTo(1);
+		String secondSessionId = UUID.randomUUID().toString();
+		jdbc.update("INSERT INTO mock_interview_session (id,project_id,status,project_snapshot,created_at,updated_at,version) VALUES (?,?, 'COMPLETED', ?,?,?,0)",
+			secondSessionId, projectId, "{}", "2099-09-05T00:00:00Z", "2099-09-05T00:00:00Z");
+		jdbc.update("INSERT INTO mock_interview_turn (id,session_id,turn_number,speaker,content,evaluation_score,evaluation_feedback,evaluation_rationale,evaluation_completed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+			UUID.randomUUID().toString(), secondSessionId, 1, "USER", "第二次独立练习作答", 2, "练习反馈", "练习依据", "2099-09-05T00:00:01Z", "2099-09-05T00:00:00Z");
+		String multipleScoreSummary = restTemplate.getForEntity(url("/mock-interviews/evaluation-summary"), String.class).getBody();
+		assertThat(JsonProbe.intVal(multipleScoreSummary, "evaluatedAnswerCount")).isEqualTo(2);
+		assertThat(JsonProbe.intVal(multipleScoreSummary, "evaluatedSessionCount")).isEqualTo(2);
+		assertThat(JsonProbe.str(multipleScoreSummary, "averageScore")).isEqualTo("3.0");
+		assertThat(JsonProbe.intVal(multipleScoreSummary, "scoreDistribution.1.count")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(multipleScoreSummary, "recentScores.0.score")).isEqualTo(2);
 		String completed = restTemplate.exchange(url("/mock-interviews/" + sessionId + "/transition"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders("{\"targetStatus\":\"COMPLETED\"}", "Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", JsonProbe.str(evaluation, "version")), String.class).getBody();
 		assertThat(JsonProbe.str(completed, "status")).isEqualTo("COMPLETED");

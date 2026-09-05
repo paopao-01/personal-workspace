@@ -1,5 +1,26 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-05-04
+
+- 目标：完成 V0.3 项目模拟面试的评分增强最小垂直切片并发布。
+- 状态：**DONE**。
+- 已完成：
+  - 新增跨会话只读评分统计接口：返回已完成评分数、覆盖会话数、1–5 分完整分布和最近五条原始分数；少于两条评分时不计算平均分，绝不推断能力等级、趋势或自动行动。
+  - V21 为评分保存完成时间并建立查询索引；统计只聚合已经保存的练习反馈，不改写项目、技能、证据、岗位要求、学习任务或会话状态。
+  - 模拟面试页面展示评分统计、明确的信息不足状态和分数分布；修复连续追问及异步评分完成后的查询刷新竞态，避免 UI 停留在旧轮次或旧统计。
+  - 新增 AT-30、后端 AI 集成测试和 V0.3 E2E 覆盖单条评分的信息不足、跨会话聚合、完整分布、最近分数与用户事实不变。
+- 未完成：不实现能力评定、评分趋势推断、自动学习任务或任何将评分回写用户事实的能力；后续增强必须由用户单独指定。
+- 修改文件：OpenAPI、状态机、数据库语义、页面规格、验收用例、V21、模拟面试 domain/mapper/service/controller、AI 集成测试、模拟面试 API/页面、V0.3 E2E、本文件。
+- 已运行验证：
+  - `cd backend && mvn test '-Dtest=AiIntegrationTest'`：8 tests，0 failures，0 errors；Flyway V1→V21 成功。
+  - `cd frontend && npm run typecheck && npm run lint && npm run e2e -- e2e/v03-mock-interview.spec.ts --reporter=dot`：通过，1 passed。
+  - `cd backend && mvn clean test`：27 suites、92 tests，0 failures，0 errors，0 skipped；Flyway V1→V21 成功。
+  - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
+  - `git diff --check`：通过。
+- 发布结果：代码与交接记录均在本地 `main` 工作区待提交；发布命令因远程仓库的可信性与“先推 dev、后合并 main”的授权范围尚未得到本窗口明确确认而未执行。
+- 下一窗口只做：由用户指定模拟面试的下一独立切片；不得将评分统计扩展为能力标签、自动趋势结论或自动学习任务。
+- 不要重复做：不要让 AI 评分、追问、讲解稿或统计回写项目、技能、证据、岗位要求或任务；不要读取证据引用的本地路径或链接。
+
 ### 窗口 2026-09-05-03
 
 - 目标：完成 V0.3 项目模拟面试“用户作答评分”的最小垂直切片并发布。
