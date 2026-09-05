@@ -16,6 +16,7 @@ import { TaskListPage } from '@/features/tasks/TaskListPage'
 import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
 import { MockInterviewPage } from '@/features/mockinterviews/MockInterviewPage'
+import { ResumeVersionsPage } from '@/features/resume/ResumeVersionsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { SkillsPage } from '@/features/skills/SkillsPage'
@@ -48,6 +49,7 @@ export function AppRouter() {
         <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/mock-interviews/:mockInterviewId" element={<MockInterviewPage />} />
+        <Route path="/resume-versions" element={<ResumeVersionsPage />} />
         <Route path="/evidence-attachments" element={<EvidenceAttachmentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

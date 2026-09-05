@@ -1162,6 +1162,23 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewCreateRequest' } } } }
       responses: { '202': { description: 会话已创建, content: { application/json: { schema: { $ref: '#/components/schemas/MockInterviewSession' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /resume-versions:
+    get:
+      tags: [Resume]
+      summary: 查询本地保存的简历版本（最新优先）
+      responses: { '200': { description: 简历版本, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ResumeVersion' } } } } } }
+    post:
+      tags: [Resume]
+      summary: 保存一个人工确认的简历版本
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ResumeVersionCreateRequest' } } } }
+      responses: { '201': { description: 已保存, content: { application/json: { schema: { $ref: '#/components/schemas/ResumeVersion' } } } }, '400': { $ref: '#/components/responses/ValidationError' } }
+  /resume-versions/compare:
+    get:
+      tags: [Resume]
+      summary: 对比两个不同简历版本的非空文本行
+      parameters: [ { name: leftId, in: query, required: true, schema: { type: string, format: uuid } }, { name: rightId, in: query, required: true, schema: { type: string, format: uuid } } ]
+      responses: { '200': { description: 逐行对比, content: { application/json: { schema: { $ref: '#/components/schemas/ResumeVersionComparison' } } } }, '404': { $ref: '#/components/responses/NotFound' }, '422': { $ref: '#/components/responses/BusinessRuleError' } }
   /mock-interviews/evaluation-summary:
     get:
       tags: [Ai]
@@ -2293,6 +2310,22 @@ components:
       type: object
       required: [projectId]
       properties: { projectId: { type: string, format: uuid } }
+    ResumeVersionCreateRequest:
+      type: object
+      required: [name, content]
+      properties: { name: { type: string, minLength: 1, maxLength: 100 }, content: { type: string, minLength: 1, maxLength: 30000 } }
+    ResumeVersion:
+      type: object
+      required: [id, name, content, createdAt, updatedAt, version]
+      properties: { id: { type: string, format: uuid }, name: { type: string }, content: { type: string }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time }, version: { type: integer } }
+    ResumeVersionComparison:
+      type: object
+      required: [leftVersion, rightVersion, lines]
+      properties: { leftVersion: { $ref: '#/components/schemas/ResumeVersion' }, rightVersion: { $ref: '#/components/schemas/ResumeVersion' }, lines: { type: array, items: { $ref: '#/components/schemas/ResumeVersionComparisonLine' } } }
+    ResumeVersionComparisonLine:
+      type: object
+      required: [kind, text]
+      properties: { kind: { type: string, enum: [UNCHANGED, ADDED, REMOVED] }, text: { type: string } }
     MockInterviewTransitionRequest:
       type: object
       required: [targetStatus]

@@ -15,6 +15,7 @@ const items: NavItem[] = [
   { to: '/tasks', label: '学习任务', enabled: true },
   { to: '/skills', label: '技能画像', enabled: true },
   { to: '/projects', label: '项目与证据', enabled: true },
+  { to: '/resume-versions', label: '简历版本', enabled: true },
   { to: '/evidence-attachments', label: '附件引用库', enabled: true },
   { to: '/settings', label: '设置', enabled: true },
 ]
