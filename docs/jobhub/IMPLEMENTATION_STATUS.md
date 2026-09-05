@@ -17,7 +17,7 @@
   - `cd backend && mvn clean test`：27 suites、94 tests，0 failures，0 errors，0 skipped；Flyway V1→V20 成功。
   - `cd frontend && npm run build && npm run e2e -- --reporter=dot`：通过，28 passed；构建仅有既有 chunk-size 提示，E2E 仅有既有 React Router future flag 与 Node `NO_COLOR` 提示。
   - `git diff --check`：通过。
-- 发布结果：待本窗口提交、合并 `main` 并推送后补充提交号与远程同步状态。
+- 发布结果：功能提交 `f109d3e feat(ai): score mock interview answers` 已合并为本地 `main` 提交 `5b07e21 merge: score mock interview answers`。`origin` 为 `https://github.com/paopao-01/personal-workspace.git`；推送因安全策略要求用户再次明确确认该远程可信而暂未执行。
 - 下一窗口只做：由用户指定模拟面试的下一独立切片；如选择评分增强，先定义不会回写技能事实或自动建任务的明确契约。
 - 不要重复做：不要让 AI 评分、追问或讲解稿回写项目、技能、证据、岗位要求或任务；不要自动创建学习任务；不要读取证据引用的本地路径或链接。
 
