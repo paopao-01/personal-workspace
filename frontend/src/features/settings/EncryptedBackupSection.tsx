@@ -18,6 +18,7 @@ import {
   useRestoreBackup,
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
+import { PassphraseStrengthMeter } from './PassphraseStrengthMeter'
 
 const LAST_RUN_STATUS_LABEL: Record<string, string> = {
   SUCCESS: '成功',
@@ -158,6 +159,7 @@ export function EncryptedBackupSection() {
             autoComplete="new-password"
           />
           <p className="form-hint">用于派生加密密钥；提交后立即清空，服务端不保存。</p>
+          <PassphraseStrengthMeter passphrase={passphrase} />
         </Field>
         <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
           <Button
@@ -261,6 +263,7 @@ export function EncryptedBackupSection() {
               aria-label="恢复 passphrase"
               autoComplete="new-password"
             />
+            <PassphraseStrengthMeter passphrase={restorePassphrase} />
           </Field>
           <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
             <Button
@@ -346,6 +349,7 @@ export function EncryptedBackupSection() {
                       aria-label="武装 passphrase"
                       autoComplete="new-password"
                     />
+                    <PassphraseStrengthMeter passphrase={armPassphrase} />
                   </Field>
                   <Button
                     size="sm"

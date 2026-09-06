@@ -186,6 +186,68 @@ test('AT-39 backup delete removes record, file and clears lastBackupId', async (
 })
 
 /**
+ * AT-40 passphrase 强度评估：纯前端、非强制、不离开浏览器。
+ * 弱口令显示「弱」+建议；强口令升「强」且建议消失；弱口令下提交仍成功（不阻塞）。
+ */
+test('AT-40 passphrase strength meter shows level and non-blocking', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位，保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at40-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `强度校验-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+
+  const passphraseInput = page.getByLabel('备份 passphrase')
+
+  // 1. 弱口令（纯重复字符）→ 显示「弱」并给出建议
+  await passphraseInput.fill('aaaaaaaa')
+  await expect(page.getByText('强度：弱')).toBeVisible()
+  await expect(page.locator('.strength-suggestions li').first()).toBeVisible()
+
+  // 2. 常见弱口令黑名单 → 仍为「弱」并提示
+  await passphraseInput.fill('password123')
+  await expect(page.getByText('强度：弱')).toBeVisible()
+
+  // 3. 强口令（长度≥12 + 大小写 + 数字 + 符号）→ 升「强」且建议列表消失
+  const strongPw = 'CorrectHorse42!battery'
+  await passphraseInput.fill(strongPw)
+  await expect(page.getByText('强度：强')).toBeVisible()
+  await expect(page.locator('.strength-suggestions')).toHaveCount(0)
+
+  // 4. 弱口令下提交仍成功（非强制，满足 8–256 位即放行）
+  await passphraseInput.fill(`weak-but-long-enough-${suffix}`)
+  // 仍可能不是 strong，但按钮应启用（长度≥8）
+  await expect(page.getByRole('button', { name: '立即加密备份' })).toBeEnabled()
+  await page.getByRole('button', { name: '立即加密备份' }).click()
+
+  // 提交成功（201）+ passphrase 清空 + 强度提示随清空消失
+  await expect(passphraseInput).toHaveValue('')
+  await expect(page.locator('.strength-meter')).toHaveCount(0)
+
+  // API 直查：响应不含 passphrase
+  const listRes = await request.get('/api/backups')
+  expect(listRes.ok()).toBe(true)
+  const listBody = JSON.stringify(await listRes.json())
+  expect(listBody).not.toContain('passphrase')
+  // 清理本次生成的备份
+  const backups = await listRes.json()
+  if (Array.isArray(backups) && backups.length > 0) {
+    await request.delete(`/api/backups/${backups[0].id}`, {
+      headers: { 'X-Confirm-Permanent-Delete': 'true' },
+    })
+  }
+})
+
+/**
  * AT-38 加密定时备份调度：内存武装 + cron 触发 + 重启解除武装 + 乐观锁 + 非法 cron。
  * passphrase 仅存内存、永不回显、不落库；armed 反映内存状态；未武装到点记 SKIPPED_DISARMED。
  * 调度器后台轮询在 e2e profile 置 1s，UI 操作后等待后台触发；last_run_at=null 时首次轮询

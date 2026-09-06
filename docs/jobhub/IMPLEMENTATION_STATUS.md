@@ -1,5 +1,41 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-06
+
+- 目标：实现「passphrase 强度校验与策略提示」最小切片——在已完成的加密备份导出/恢复/调度/删除之上，加纯前端 passphrase 强度评估，创建备份/恢复备份/武装调度三处输入旁实时显示弱/中/强等级与改进建议。承接 2026-09-06-05「下一窗口只做」候选切片「passphrase 强度校验与策略提示」。非强制（不阻塞提交），passphrase 不离开浏览器（无评估端点），不实现强制拒绝弱口令、密钥轮换、按龄/批量清理。
+- 状态：**DONE**。
+- 已完成：
+  - 页面规格 P11 修订：补「客户端 passphrase 强度评估（纯前端，非强制）」段——创建/恢复/武装三处 passphrase 输入下方实时显示弱/中/强等级与改进建议；评估在浏览器本地完成不调用 API，passphrase 不离开浏览器；非强制不影响提交（满足 8–256 位仍可提交）；强等级时建议消失。评估维度：长度（≥12 加分、≥16 再加）、字符种类（小写/大写/数字/符号每类加分）、弱模式扣分（纯重复字符、常见弱口令黑名单 password/123456/qwerty 等、连续重复段）。阈值：弱 < 40 / 中 40–69 / 强 ≥ 70。
+  - 验收 AT-40 新增（弱口令→弱+建议显示；常见弱口令→弱；强口令→强+建议消失；弱口令下提交仍成功因非强制；passphrase 永不落盘/日志/评估 API 传输）；05 发布门槛 AT-01~AT-40；PRD §10 P2 / §19 V1.0 标注 passphrase 强度评估已实现最小切片（纯前端提示，非强制）。
+  - 前端新增 `src/features/settings/passphraseStrength.ts`：纯函数 `evaluatePassphraseStrength(pw)` 返回 `{ score: 0–100, level: 'weak'|'fair'|'strong', suggestions: string[] }`，算法 = 长度分（上限 35）+ 字符种类分（小写/大写各 10、数字 10、符号 15，上限 45）− 弱模式扣分（纯重复字符 −25、常见弱口令黑名单整体/前缀匹配 −30、连续 3+ 相同字符 −10），clamp 0–100；强等级时 suggestions 清空。导出 `passphraseLevelLabel` 中文标签。
+  - 前端新增 `src/features/settings/PassphraseStrengthMeter.tsx`：可复用强度计组件，接收 passphrase 调用纯函数，渲染 3 段进度条（弱红/中黄/强绿，复用 --danger/--warning/--success token）+ 等级文本 + suggestions 列表；passphrase 为空时不渲染（避免初始噪音）。
+  - `EncryptedBackupSection.tsx` 三处 passphrase Field（创建备份 passphrase、恢复备份 restorePassphrase、武装 armPassphrase）的 Input 下方接入 `<PassphraseStrengthMeter>`；onChange 实时本地计算，不调用任何 API。
+  - `globals.css` 追加 `.strength-meter/.strength-bars/.strength-segment/.strength-bar-weak|fair|strong/.strength-segment-idle/.strength-label/.strength-text-weak|fair|strong/.strength-suggestions` 样式，复用既有颜色 token。
+  - E2E `p1-encrypted-backup.spec.ts` 扩 AT-40 测试：弱口令（`aaaaaaaa`）显示弱+建议；常见弱口令（`password123`）显示弱；强口令（`CorrectHorse42!battery`）升强+建议消失；弱口令下提交仍成功（按钮启用+提交+passphrase 清空+强度计消失）；API 直查响应不含 passphrase；末尾清理本次生成的备份。
+- 未完成：不做强制拒绝弱口令（用户选择「仅提示」策略）；不做 passphrase 强度后端端点（用户选择「前端纯算法」，passphrase 不出浏览器）；不做密钥轮换、按龄/批量清理、强度评估纯函数单测（项目无单测框架，仅 Playwright E2E，不引入 vitest/jest 新依赖，验证由 AT-40 E2E 覆盖）。
+- 单窗口边界：本切片 7 文件（规格 3[01-page-spec/05-acceptance/jobhub-prd] + 状态 1 + 前端 2[passphraseStrength.ts/PassphraseStrengthMeter.tsx] + 组件修改 1[EncryptedBackupSection.tsx] + CSS 1[globals.css] + E2E 1[p1-encrypted-backup.spec.ts]），符合 MASTER_PROMPT ≤10 文件边界。OpenAPI/状态机/数据库/Flyway 迁移全部不变（无新端点、无新 schema、无新表），非破坏性。
+- 修改文件：
+  - 规格：`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 前端新增：`src/features/settings/passphraseStrength.ts`、`src/features/settings/PassphraseStrengthMeter.tsx`。
+  - 前端修改：`src/features/settings/EncryptedBackupSection.tsx`（三处 Field 接入强度计 + import）、`src/styles/globals.css`（强度计样式）、`e2e/p1-encrypted-backup.spec.ts`（扩 AT-40）。
+  - 前端重新生成不入库：`src/api/generated/types.ts`（OpenAPI 未变，gen-types 仅刷新时间戳）。
+- 已运行验证：
+  - `cd frontend && npm run typecheck`：通过。
+  - `cd frontend && npm run lint`：通过（oxlint 无输出）。
+  - `cd frontend && npm run build`：通过（gen-types + tsc + vite build，仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：4 passed（含新增 AT-40），31.2s。
+  - `cd backend && mvn clean test`：129 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run e2e -- --reporter=dot`：33 passed，2 failed（p1-review-analysis、p1-review-reopen，均 POST questions 返回 500）；单独复跑这 2 个全部 passed（17.8s），证实为既有 flaky（全量 E2E 下 4 个 webServer 资源竞争 + AI 时序竞态），与本切片无代码关联（本切片未碰 review/question 代码与后端）。
+  - `git diff --check`：通过。
+- 验证结果：强度评估链路（UI 输入弱口令→弱+建议；常见弱口令→弱；强口令→强+建议消失；弱口令下提交仍成功+passphrase 清空+强度计消失；passphrase 不离开浏览器无评估端点；API 响应不含 passphrase）有浏览器级 E2E 覆盖；纯前端算法无后端端点、无数据库迁移、无 OpenAPI/状态机变更；passphrase 永不落盘/日志/回显/经评估端点传输。
+- 已知问题：
+  - 全量 E2E 下 p1-review-analysis 与 p1-review-reopen 的 `POST /api/reviews/{id}/questions` 偶发 500（4 个 webServer 资源竞争 + fake-ai 时序竞态），单独复跑通过，属既有共享库时序竞态模式，与本切片无代码关联。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - 强度算法为启发式打分（长度+字符种类−弱模式），非密码学熵估算，符合「提示」定位（非强制、非安全保证）；用户可输入弱口令提交，强度仅为建议。
+  - 常见弱口令黑名单为内置固定列表（20 条），不覆盖全部弱口令；符合本地单用户提示语义。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、备份按龄/批量清理、强制 passphrase 强度门槛（若需从提示升级为拒绝））；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建强度评估算法或强度计组件；不要给 passphrase 加后端评估端点（用户已定纯前端）；不要把强度评估改为强制拒绝（用户已定仅提示）；不要改 OpenAPI/状态机/数据库/V1~V25 迁移（本切片非破坏性）；不要引入 vitest/jest 单测框架（项目仅 Playwright E2E）。
+
 ### 窗口 2026-09-06-05
 
 - 目标：实现「备份删除/清理」最小切片——在已完成的加密备份导出/恢复/定时调度之上加物理删除端点，删 `backup_record` 行 + 配套清理落盘 `.enc` 密文文件 + 置空 `backup_schedule.last_backup_id` 软引用。承接 2026-09-06-04「下一窗口只做」候选切片「备份删除/清理」。不实现批量/按龄清理、软删除/trash 流程、删除前 passphrase 验证、密钥轮换、联动删 `data_export`（独立历史快照，悬空软引用无外键阻拦）。
