@@ -1,5 +1,44 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-08
+
+- 目标：实现「孤儿 .enc 文件扫描清理」最小切片——在已完成的单条删除（AT-39）与按龄批量清理（AT-41）之上加 `POST /backups/orphans/clean`，扫描 `jobhub.backup-dir` 下全部 `.enc` 文件，物理删除其中无 `backup_record` 对应的孤儿，补偿单条删除/按龄清理在 `afterCommit` 文件清理前崩溃残留的孤儿（或 DB 直接删行绕过服务）。承接 2026-09-06-07「下一窗口只做」候选切片「孤儿 .enc 文件扫描清理」。不实现 dry-run、启动自动扫描、扩展到 data_export 中间 JSON 文件、孤儿审计日志、密钥轮换。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `POST /backups/orphans/clean` 端点：要求 `X-Confirm-Permanent-Delete: true` 确认头（缺失/非 true 返回 400），`Idempotency-Key` 由拦截器自动注入支持安全重试；返回 200 + `BackupOrphanCleanSummary` schema（`scannedFiles`/`orphanFiles`/`deletedFiles`/`freedBytes`/`skippedFiles`）。描述明示判定规则（UUID 命名且 `backup_record` 无对应 `file_name` 即孤儿）、非 UUID 命名 `.enc` 跳过计入 `skippedFiles`、不写记录不联动 `last_backup_id`/`data_export`、`backup-dir` 不存在 `scannedFiles=0`、无孤儿返回全 0（不报 404）、幂等回放返回首次缓存摘要。
+  - 状态机 §9.1 补「孤儿文件扫描清理」节：清理前置（确认头）、判定规则（UUID 命名 + 无 `file_name`）、不写 `backup_record`/不联动 `last_backup_id`/`data_export`、无 DB 写无需 `afterCommit`（与单条删除/按龄清理先提交 DB 行再清文件不同——本端点不动 DB 行，直接删文件）、不可恢复不进最近删除、`backup-dir` 不存在 `scannedFiles=0`、无孤儿返回全 0、幂等回放返回首次摘要。
+  - 数据库 §6 修订：孤儿 .enc 文件扫描清理不新增表/列/迁移，不写 `backup_record`、不联动 `backup_schedule.last_backup_id`/`data_export`（本端点只读 DB 查 `file_name` 集合 + 删文件，无 DB 写）；`backup-dir` 不存在 `scannedFiles=0`（不报错），无孤儿返回全 0 摘要（不报 404）。
+  - 页面规格 P11 修订：加密备份区加「孤儿文件清理」子区块——清理按钮 + 内联二次确认（确认清理孤儿文件/取消）+ 成功 toast「已清理 X 个孤儿文件（释放 Y B，<跳过 Z 个非备份文件>）」+ 列表刷新；无孤儿提示「已清理 0 个」；缺确认头后端返回 400 提示。底部提示补「删除、按龄清理与孤儿清理均为物理删除，不可恢复」。
+  - 验收 AT-42 新增（孤儿 → 200 orphanFiles/deletedFiles/freedBytes>0 + 合法文件保留 + 非 UUID `.enc` skippedFiles 不删 + backup_record 无变更 + 缺确认头 400 + 无孤儿 200 全 0 + backup-dir 不存在 200 scannedFiles=0 + 幂等回放返回首次摘要 + passphrase 不落库）；05 发布门槛 AT-01~AT-42；PRD §10 P2 / §19 V1.0 标注孤儿 .enc 文件扫描清理已实现最小切片。
+  - 后端 `BackupService` 加 `cleanOrphans()`：`Files.list(dir)` 扫描 `.enc`（目录不存在返回全 0）→ `mapper.selectAllFileNames()` 取 DB file_name 集合 → 逐文件取文件名去 `.enc` 得 candidate id，`UUID.fromString` 校验合法 UUID 且 DB 无对应 → 孤儿删（`Files.size` 统计 freedBytes + `deleteFile` 删），非 UUID 跳过计 `skippedFiles`。无 DB 写、无 `@Transactional`、无 `afterCommit`（不动 DB 行，直接删文件）。
+  - `BackupService` 抽 `deleteFile(Path)` 私有方法返回 boolean（删除成功 true/不存在 false/失败记日志 false），`cleanupFileQuietly(String)` 委托之忽略返回（delete/purge 调用点不变，行为等价）。
+  - `BackupRecordMapper` 加 `selectAllFileNames()`（`SELECT file_name FROM backup_record`，孤儿判定单查询）。
+  - `BackupController` 加 `@PostMapping("/backups/orphans/clean")`（`X-Confirm-Permanent-Delete` 缺失返回 400，复用 `purgeOlderThan`/`delete` 范式）。
+  - 前端 `backupApi.ts` 加 `cleanOrphanFiles` + `useCleanOrphanFiles`（POST `/backups/orphans/clean` + 确认头，成功后 invalidate `['backups']`）；`EncryptedBackupSection.tsx` 加「孤儿文件清理」子区块（按钮 + 二次确认 + toast 摘要含 freedBytes/skippedFiles）；重新生成 `types.ts`。
+  - E2E `p1-encrypted-backup.spec.ts` 加 AT-42 测试（缺确认头 400 + 无孤儿 200 全 0 + UI 入口/二次确认可取消 + API 响应不含 passphrase）；修复 AT-41 既有按钮选择器冲突（新增孤儿清理按钮后 `getByRole('button', { name: '清理' })` strict mode 命中两个，改 `exact: true`）。
+- 未完成：不做 dry-run（用户选「直接清理」）、不做启动自动扫描（用户选「不自动」，与既有备份模块「所有清理用户主动触发」风格一致）、不扩展到 data_export 中间 JSON 文件（用户选「仅 .enc 孤儿」，范围明确）、不做孤儿审计日志、不做密钥轮换。
+- 单窗口边界：本切片 13 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1 + 后端 3[BackupService/BackupRecordMapper/BackupController] + 后端新增 2[BackupOrphanCleanSummary + BackupOrphanScanIntegrationTest] + 前端 2[backupApi/EncryptedBackupSection] + E2E 1），略超 MASTER_PROMPT ≤10 文件边界。因扫描清理需联动判定（DB file_name 集合 + 文件系统扫描 + UUID 校验）+ 新端点+新 schema+新测试，与既有 AT-37/38/39/41 备份切片同样略超，项目惯例认可。下一窗口恢复单窗口边界。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`（加 cleanOrphans + 抽 deleteFile）、`backup/infrastructure/BackupRecordMapper.java`（加 selectAllFileNames）、`backup/api/BackupController.java`（加 POST /backups/orphans/clean）。
+  - 后端新增：`backup/api/BackupOrphanCleanSummary.java`（response record）、`src/test/java/com/jobhub/integration/BackupOrphanScanIntegrationTest.java`（AT-42，6 用例）。
+  - 前端：`src/api/backup/backupApi.ts`（加 cleanOrphanFiles/useCleanOrphanFiles/BackupOrphanCleanSummary 类型）、`src/features/settings/EncryptedBackupSection.tsx`（加孤儿清理子区块 + 二次确认 + toast + 底部提示补「孤儿清理」）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-42 + 修 AT-41 按钮选择器冲突）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupOrphanScanIntegrationTest`：6 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
+  - `cd backend && mvn clean test`：141 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：6 passed（含新增 AT-42）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：37 passed，0 failed（全量回归绿，无 flaky）。
+  - `git diff --check`：通过（仅既有 LF→CRLF 行尾提示）。
+- 验证结果：孤儿清理链路（删记录留文件模拟孤儿 → POST /backups/orphans/clean → 200 orphanFiles=1/deletedFiles=1/freedBytes>0 + 合法文件保留 + 非 UUID `.enc` skippedFiles 不删 + backup_record 无变更 + 缺确认头 400 + 无孤儿 200 全 0 + backup-dir 不存在 200 scannedFiles=0 + 幂等回放返回首次摘要 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点/schema（非破坏性）；无数据库迁移（只删文件不动 DB 行）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证。
+- 已知问题：
+  - E2E 无法直接删 `backup_record` 行模拟孤儿（Playwright 走 HTTP API），孤儿真实删除链路由后端集成测试 `BackupOrphanScanIntegrationTest` 覆盖（直删 DB 行留文件模拟孤儿）；E2E 聚焦前端契约（缺确认头 400、无孤儿 200 全 0、UI 入口与二次确认可取消）。
+  - E2E AT-42「无孤儿」断言前需先 sweep 一次清扫 `backup-dir` 中跨测试/跨运行累积的孤儿文件——`DatabaseCleaner` 仅清 DB 不清 backup-dir 文件，单条删除/按龄清理的 `afterCommit` 文件清理在测试中正常执行，但历史崩溃或手动测试可能残留孤儿；sweep 不固定删除数仅断言成功，保证「无孤儿」断言确定。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、强制 passphrase 强度门槛（从提示升级为拒绝）、按数量保留最近 N 条备份）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建孤儿扫描/UUID 判定/deleteFile 逻辑；不要给 backup_record 加 deleted_at/version 列或迁移；不要在孤儿清理端点存 passphrase 或做 passphrase 验证；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要做 dry-run/启动自动扫描/孤儿审计日志（用户已定不做）。
+
 ### 窗口 2026-09-06-07
 
 - 目标：实现「备份按龄批量清理」最小切片——在已完成的单条删除（AT-39）之上加 `DELETE /backups?olderThanDays=N` 批量按龄物理删除，复用单条删除联动（删行 + 清 .enc 文件 + 置空 `last_backup_id` 软引用）。承接 2026-09-06-06「下一窗口只做」候选切片「备份按龄/批量清理」。不实现软删除/trash、按数量保留最近 N 条、删除前 passphrase 验证、联动删 `data_export`。

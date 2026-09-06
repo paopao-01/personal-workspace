@@ -2,6 +2,7 @@ package com.jobhub.backup.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobhub.backup.api.BackupOrphanCleanSummary;
 import com.jobhub.backup.api.BackupPurgeSummary;
 import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.infrastructure.BackupRecordMapper;
@@ -24,7 +25,10 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * 加密备份生成与恢复：复用 ExportService 标准数据包 → AES-256-GCM 加密 → 落盘 → 记录；
@@ -203,6 +207,75 @@ public class BackupService {
 	}
 
 	/**
+	 * 扫描并清理孤儿 .enc 密文文件：扫描 backup-dir 下全部 .enc 文件，物理删除其中无 backup_record 对应的孤儿。
+	 * 判定规则：备份文件名恒为 {@code <id>.enc}（id 为 UUID），取文件名去 {@code .enc} 得 candidate id；
+	 * 合法 UUID 且 backup_record 中无对应 file_name 的文件即孤儿，删除之；非 UUID 命名的 .enc（如用户随手放入的
+	 * 无关文件）跳过不删，计入 skippedFiles，避免误删。
+	 * 本方法不写 backup_record、不联动 last_backup_id、不联动删 data_export；无 DB 写、无 @Transactional、
+	 * 无 afterCommit（与单条删除/按龄清理先提交 DB 行再清文件不同——本方法不动 DB 行，直接删文件即可）。
+	 * backup-dir 不存在时返回 scannedFiles=0（不报错）；幂等性由 Idempotency-Key 保证（重复回放返回首次缓存摘要）。
+	 */
+	public BackupOrphanCleanSummary cleanOrphans() {
+		Path dir = Paths.get(backupDir);
+		if (!Files.isDirectory(dir)) {
+			return new BackupOrphanCleanSummary(0, 0, 0, 0L, 0);
+		}
+		List<Path> encFiles = new ArrayList<>();
+		try (var stream = Files.list(dir)) {
+			stream.filter(p -> {
+				String name = p.getFileName().toString();
+				return Files.isRegularFile(p) && name.endsWith(".enc");
+			}).forEach(encFiles::add);
+		} catch (Exception ex) {
+			throw new BusinessRuleException("备份目录扫描失败：" + ex.getMessage());
+		}
+
+		Set<String> dbFileNames = Set.copyOf(mapper.selectAllFileNames());
+
+		int scanned = encFiles.size();
+		int orphan = 0;
+		int deleted = 0;
+		int skipped = 0;
+		long freed = 0L;
+		for (Path file : encFiles) {
+			String fileName = file.getFileName().toString();
+			String candidateId = fileName.substring(0, fileName.length() - ".enc".length());
+			if (!looksLikeUuid(candidateId)) {
+				// 非 UUID 命名规则的 .enc 文件（如用户随手放入的无关文件），跳过不删，避免误删
+				skipped++;
+				continue;
+			}
+			if (dbFileNames.contains(fileName)) {
+				// 有对应 backup_record 行，合法备份文件，保留
+				continue;
+			}
+			orphan++;
+			long size = 0L;
+			try {
+				size = Files.size(file);
+			} catch (Exception ignored) {
+				// 文件可能在统计大小与删除之间被外部移除，按 0 计
+			}
+			if (deleteFile(file)) {
+				deleted++;
+				freed += size;
+			}
+		}
+		return new BackupOrphanCleanSummary(scanned, orphan, deleted, freed, skipped);
+	}
+
+	/** 备份 id 由 {@link IdGenerator} 生成为标准 UUID（{@code UUID.randomUUID().toString()}，8-4-4-4-4）。 */
+	private static boolean looksLikeUuid(String candidate) {
+		try {
+			// fromString 对非标准格式（如 "notes"）抛 IllegalArgumentException
+			UUID.fromString(candidate);
+			return true;
+		} catch (IllegalArgumentException ex) {
+			return false;
+		}
+	}
+
+	/**
 	 * 物理删除加密备份记录：删除 backup_record 行 + 清理落盘 .enc 密文文件 + 清空 last_backup_id 软引用。
 	 * 不可恢复，不进入最近删除；passphrase 不参与删除验证（删除即销毁密钥材料）。
 	 * 文件清理在事务提交后执行（在事务内事务后置回调），文件清理失败仅记日志不回滚 DB，
@@ -233,13 +306,19 @@ public class BackupService {
 		if (filePath == null || filePath.isBlank()) {
 			return;
 		}
+		deleteFile(Paths.get(filePath));
+	}
+
+	/** 物理删除文件；不存在视为已删除返回 false（不计入删除数），删除成功返回 true，失败记日志返回 false。 */
+	private boolean deleteFile(Path file) {
 		try {
-			Files.deleteIfExists(Paths.get(filePath));
+			return Files.deleteIfExists(file);
 		} catch (Exception ex) {
 			// 文件清理失败不回滚已提交的 DB 删除，避免悬留已删记录却丢失文件的一致性问题；
 			// 记录日志便于人工排查孤儿文件
 			System.getLogger(BackupService.class.getName())
-				.log(System.Logger.Level.WARNING, "备份密文文件清理失败（记录已删除）：" + filePath, ex);
+				.log(System.Logger.Level.WARNING, "备份密文文件清理失败：" + file, ex);
+			return false;
 		}
 	}
 

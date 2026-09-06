@@ -52,5 +52,9 @@ public interface BackupRecordMapper {
 	@Result(column = "salt", property = "salt", jdbcType = JdbcType.VARBINARY)
 	@Result(column = "iv", property = "iv", jdbcType = JdbcType.VARBINARY)
 	List<BackupRecord> selectByCreatedBefore(@Param("cutoff") String cutoff);
+
+	/** 返回全部现存 backup_record 的 file_name（孤儿扫描判定：.enc 文件名不在该集合即孤儿）。 */
+	@Select("SELECT file_name FROM backup_record")
+	List<String> selectAllFileNames();
 }
 

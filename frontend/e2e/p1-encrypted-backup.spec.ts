@@ -413,14 +413,14 @@ test('AT-41 backup purge by age removes old records and files', async ({ page, r
   await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '按龄批量清理' })).toBeVisible()
   await expect(page.getByLabel('清理阈值天数')).toBeVisible()
-  await expect(page.getByRole('button', { name: '清理' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '清理', exact: true })).toBeVisible()
 
   // UI：点清理 → 内联二次确认（确认/取消）
-  await page.getByRole('button', { name: '清理' }).click()
+  await page.getByRole('button', { name: '清理', exact: true }).click()
   await expect(page.getByRole('button', { name: /确认清理/ })).toBeVisible()
   await expect(page.getByRole('button', { name: '取消' })).toBeVisible()
   await page.getByRole('button', { name: '取消' }).click()
-  await expect(page.getByRole('button', { name: '清理' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '清理', exact: true })).toBeVisible()
 
   // 末尾清理本次产生的全部备份（用按龄清理 1 天前的——created_at 全为「现在」，1 天前无匹配，
   // 故改用单条 DELETE 逐个清理，避免影响其他用例），并断言 API 响应不含 passphrase
@@ -429,6 +429,94 @@ test('AT-41 backup purge by age removes old records and files', async ({ page, r
       headers: { 'X-Confirm-Permanent-Delete': 'true' },
     })
   }
+  const listRes = await request.get('/api/backups')
+  expect(listRes.ok()).toBe(true)
+  const listBody = JSON.stringify(await listRes.json())
+  expect(listBody).not.toContain('passphrase')
+})
+
+/**
+ * AT-42 孤儿 .enc 文件扫描清理：扫描 backup-dir 下全部 .enc，物理删除无 backup_record 对应的孤儿。
+ * UUID 命名且无对应 file_name 的 .enc 即孤儿；非 UUID 命名的 .enc 跳过不删（skippedFiles）；
+ * X-Confirm-Permanent-Delete 确认头防误清；不写记录、不联动 last_backup_id/data_export；
+ * 无孤儿返回全 0（不报 404）；Idempotency-Key 保证幂等回放返回首次摘要。
+ *
+ * 孤儿真实删除链路（删记录留文件 → 清理孤儿）由后端集成测试 BackupOrphanScanIntegrationTest 覆盖
+ * （E2E 无法直接删 backup_record 行模拟孤儿）。本 E2E 聚焦前端契约与入口：缺确认头 400、
+ * 无孤儿 200 全 0、UI 孤儿清理区可见、二次确认可取消。
+ */
+test('AT-42 orphan .enc scan clean removes orphans and keeps legit files', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位，保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at42-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `孤儿清理-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 造 1 份合法加密备份（文件与记录都在）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at42-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 后端契约：
+  //   1. 缺确认头 → 400（不删任何文件）
+  const noConfirm = await request.post('/api/backups/orphans/clean')
+  expect(noConfirm.status()).toBe(400)
+
+  //   2. 先清扫 backup-dir 中累积的孤儿文件（DatabaseCleaner 仅清 DB 不清文件，跨测试/跨运行会残留孤儿），
+  //      使后续「无孤儿」断言确定。此处不固定删除数，仅断言成功。
+  const sweep = await request.post('/api/backups/orphans/clean', {
+    headers: {
+      'X-Confirm-Permanent-Delete': 'true',
+      'Idempotency-Key': `e2e-at42-sweep-${suffix}-${crypto.randomUUID()}`,
+    },
+  })
+  expect(sweep.status()).toBe(200)
+
+  //   3. 无孤儿（合法备份文件与记录都在，目录已无累积孤儿）→ 200 全 0
+  const noOrphan = await request.post('/api/backups/orphans/clean', {
+    headers: {
+      'X-Confirm-Permanent-Delete': 'true',
+      'Idempotency-Key': `e2e-at42-noorphan-${suffix}-${crypto.randomUUID()}`,
+    },
+  })
+  expect(noOrphan.status()).toBe(200)
+  const noOrphanBody = await noOrphan.json()
+  expect(noOrphanBody.orphanFiles).toBe(0)
+  expect(noOrphanBody.deletedFiles).toBe(0)
+  expect(noOrphanBody.freedBytes).toBe(0)
+  // 合法记录仍在
+  const afterRes = await request.get('/api/backups')
+  expect(afterRes.ok()).toBe(true)
+  const afterList = JSON.stringify(await afterRes.json())
+  expect(afterList).toContain(created.id)
+
+  // UI：进入设置页，孤儿清理区可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '孤儿文件清理' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '清理孤儿文件' })).toBeVisible()
+
+  // UI：点清理 → 内联二次确认（确认/取消）
+  await page.getByRole('button', { name: '清理孤儿文件' }).click()
+  await expect(page.getByRole('button', { name: '确认清理孤儿文件' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消' })).toBeVisible()
+  await page.getByRole('button', { name: '取消' }).click()
+  await expect(page.getByRole('button', { name: '清理孤儿文件' })).toBeVisible()
+
+  // 末尾清理本次产生的备份（单条 DELETE），并断言 API 响应不含 passphrase
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
   const listRes = await request.get('/api/backups')
   expect(listRes.ok()).toBe(true)
   const listBody = JSON.stringify(await listRes.json())

@@ -591,8 +591,31 @@ Then 返回 200 且摘要与首次一致（deletedCount 复用首次缓存值，
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
+### AT-42 孤儿 .enc 文件扫描清理（物理删除无 backup_record 对应的落盘密文文件）
+
+```gherkin
+Given backup-dir 下存在无对应 backup_record 行的 .enc 孤儿文件（如进程在删除事务 afterCommit 文件清理前崩溃残留，或 DB 直接删行绕过服务）
+And backup-dir 下同时存在有对应 backup_record 行的合法 .enc 文件
+And backup-dir 下存在非 UUID 命名的 .enc 文件（如用户随手放入的无关文件 notes.enc）
+When 用户在设置页点击「清理孤儿文件」按钮
+Then 弹出内联二次确认「将物理删除无记录对应的孤儿 .enc 文件，不可恢复，是否继续？」
+When 用户确认（POST /api/backups/orphans/clean 携带 X-Confirm-Permanent-Delete: true）
+Then 返回 200 且清理摘要 orphanFiles 等于孤儿数、deletedFiles 等于实际删除数、freedBytes 大于 0
+And backup-dir 下孤儿 .enc 文件不存在，合法 .enc 文件保留，非 UUID 命名的 .enc 文件保留（skippedFiles 计数）
+And backup_record 表无任何变更（本端点不写记录、不联动 last_backup_id、不联动删 data_export）
+When 用户未携带 X-Confirm-Permanent-Delete: true 确认头
+Then 返回 400 ValidationError 且不删除任何文件
+When backup-dir 下无孤儿文件
+Then 返回 200 且 scannedFiles=合法文件数、orphanFiles=0、deletedFiles=0、freedBytes=0（不报 404）
+When backup-dir 不存在
+Then 返回 200 且 scannedFiles=0、orphanFiles=0、deletedFiles=0（不报错）
+When 用户以相同 Idempotency-Key 重复清理（幂等回放）
+Then 返回 200 且摘要与首次一致（幂等回放不重新执行清理、不产生额外副作用）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-41 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-42 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

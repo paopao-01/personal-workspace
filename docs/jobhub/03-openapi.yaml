@@ -1032,6 +1032,30 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ImportResultReport' } } }
         '400': { $ref: '#/components/responses/ValidationError' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /backups/orphans/clean:
+    post:
+      tags: [Backups]
+      summary: 扫描并清理孤儿 .enc 密文文件（物理删除无 backup_record 对应的落盘文件）
+      description: |
+        扫描 `jobhub.backup-dir` 下全部 `.enc` 文件，物理删除其中无对应 `backup_record` 行的孤儿文件。
+        孤儿来源：单条删除/按龄清理的文件清理在事务 `afterCommit` 回调执行，若进程在 DB 提交后、文件清理前崩溃
+        即残留孤儿；或 DB 直接删行绕过服务。判定规则：备份文件名恒为 `<id>.enc`（id 为 UUID），取文件名去
+        `.enc` 得 candidate id，**合法 UUID 且** `backup_record` 中无对应 `file_name` 的行即孤儿，删除之；
+        非 UUID 命名的 `.enc`（如用户随手放入的无关文件）跳过不删，计入 `skippedFiles`，避免误删。
+        本端点不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`；
+        passphrase 不参与清理验证（清理即销毁密钥材料，与单条删除同硬规则）。
+        不可恢复，不进入最近删除（`trash_item`）。要求携带 `X-Confirm-Permanent-Delete: true` 确认头
+        （缺失或非 `true` 返回 400）防误清。`backup-dir` 不存在时返回 `scannedFiles=0`（不报错）。
+        幂等性由 `Idempotency-Key` 保证：重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用。
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - name: X-Confirm-Permanent-Delete
+          in: header
+          required: true
+          schema: { type: boolean, enum: [true] }
+      responses:
+        '200': { description: 清理摘要, content: { application/json: { schema: { $ref: '#/components/schemas/BackupOrphanCleanSummary' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /data-imports/validate:
     post:
       tags: [DataManagement]
@@ -2349,6 +2373,16 @@ components:
         deletedCount: { type: integer, minimum: 0, description: 实际删除的 backup_record 行数 }
         filesCleaned: { type: integer, minimum: 0, description: 清理的 .enc 密文文件数（文件不存在不计数） }
         lastBackupIdCleared: { type: boolean, description: 被删集合是否包含 last_backup_id 指向的记录（true 表示已置空该软引用） }
+    BackupOrphanCleanSummary:
+      type: object
+      required: [scannedFiles, orphanFiles, deletedFiles, freedBytes, skippedFiles]
+      description: 孤儿 .enc 密文文件扫描清理的结果摘要
+      properties:
+        scannedFiles: { type: integer, minimum: 0, description: 扫描到的 backup-dir 下 .enc 文件总数 }
+        orphanFiles: { type: integer, minimum: 0, description: 判定为孤儿的文件数（UUID 命名且 backup_record 无对应 file_name） }
+        deletedFiles: { type: integer, minimum: 0, description: 实际删除的孤儿文件数（文件不存在不计数） }
+        freedBytes: { type: integer, minimum: 0, format: int64, description: 删除前统计的孤儿文件字节数之和 }
+        skippedFiles: { type: integer, minimum: 0, description: 非 UUID 命名规则的 .enc 文件数（跳过不删，避免误删无关文件） }
     DataImportPackage:
       type: object
       required: [format, exportedAt, tables]

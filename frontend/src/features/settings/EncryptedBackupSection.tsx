@@ -13,6 +13,7 @@ import {
   useArmBackupSchedule,
   useBackups,
   useBackupSchedule,
+  useCleanOrphanFiles,
   useCreateBackup,
   useDeleteBackup,
   usePurgeOldBackups,
@@ -41,6 +42,7 @@ export function EncryptedBackupSection() {
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
   const purgeOldBackups = usePurgeOldBackups()
+  const cleanOrphanFiles = useCleanOrphanFiles()
   const [passphrase, setPassphrase] = useState('')
   const [restorePassphrase, setRestorePassphrase] = useState('')
   const [restoreFile, setRestoreFile] = useState<File | null>(null)
@@ -50,6 +52,7 @@ export function EncryptedBackupSection() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [purgeDays, setPurgeDays] = useState('30')
   const [confirmingPurge, setConfirmingPurge] = useState(false)
+  const [confirmingOrphanClean, setConfirmingOrphanClean] = useState(false)
 
   const submit = async () => {
     if (passphrase.trim().length < 8) {
@@ -148,6 +151,20 @@ export function EncryptedBackupSection() {
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
       setConfirmingPurge(false)
+    }
+  }
+
+  const submitOrphanClean = async () => {
+    try {
+      const summary = await cleanOrphanFiles.mutateAsync()
+      setConfirmingOrphanClean(false)
+      pushToast(
+        `已清理 ${summary.deletedFiles} 个孤儿文件（释放 ${formatBytes(summary.freedBytes)}`
+        + `${summary.skippedFiles > 0 ? `，跳过 ${summary.skippedFiles} 个非备份文件` : ''}，不可恢复）`,
+      )
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setConfirmingOrphanClean(false)
     }
   }
 
@@ -306,6 +323,45 @@ export function EncryptedBackupSection() {
           </div>
         </div>
 
+        <div style={{ marginTop: 12 }}>
+          <h3 className="card-subtitle">孤儿文件清理</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            扫描备份目录下无对应记录的孤儿 .enc 密文文件并物理删除。孤儿来源：删除或按龄清理在进程
+            崩溃后残留的文件。本操作不删记录、只删无对应记录的 .enc 文件；非备份命名规则的文件会跳过不删。
+            不可恢复，不进入最近删除。
+          </p>
+          <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+            {confirmingOrphanClean ? (
+              <>
+                <Button
+                  variant="danger"
+                  type="button"
+                  disabled={cleanOrphanFiles.isPending}
+                  onClick={submitOrphanClean}
+                >
+                  {cleanOrphanFiles.isPending ? '清理中…' : '确认清理孤儿文件'}
+                </Button>
+                <Button
+                  variant="default"
+                  type="button"
+                  disabled={cleanOrphanFiles.isPending}
+                  onClick={() => setConfirmingOrphanClean(false)}
+                >
+                  取消
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="danger"
+                type="button"
+                onClick={() => setConfirmingOrphanClean(true)}
+              >
+                清理孤儿文件
+              </Button>
+            )}
+          </div>
+        </div>
+
         <div style={{ marginTop: 16 }}>
           <h3 className="card-subtitle">恢复备份</h3>
           <p className="muted" style={{ marginTop: 0 }}>
@@ -439,7 +495,7 @@ export function EncryptedBackupSection() {
           )}
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除与按龄清理均为物理删除，不可恢复。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除、按龄清理与孤儿清理均为物理删除，不可恢复。
         </p>
       </div>
     </section>
