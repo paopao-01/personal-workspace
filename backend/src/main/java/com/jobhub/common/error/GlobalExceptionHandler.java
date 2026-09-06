@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
@@ -50,6 +51,16 @@ public class GlobalExceptionHandler {
 		List<FieldError> fieldErrors = List.of(new FieldError(ex.getRequestPartName(), "must be present"));
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, "Missing required part: " + ex.getRequestPartName(),
+						traceId, fieldErrors));
+	}
+
+	@ExceptionHandler(MissingServletRequestParameterException.class)
+	public ResponseEntity<ErrorResponse> handleMissingParam(MissingServletRequestParameterException ex) {
+		String traceId = newTraceId();
+		log.warn("Missing required parameter traceId={} param={}", traceId, ex.getParameterName());
+		List<FieldError> fieldErrors = List.of(new FieldError(ex.getParameterName(), "must be present"));
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, "Missing required parameter: " + ex.getParameterName(),
 						traceId, fieldErrors));
 	}
 

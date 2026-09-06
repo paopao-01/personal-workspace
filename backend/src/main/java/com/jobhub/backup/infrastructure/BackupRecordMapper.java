@@ -42,5 +42,15 @@ public interface BackupRecordMapper {
 	/** 物理删除单条备份记录。返回受影响行数，0 表示记录不存在。 */
 	@Delete("DELETE FROM backup_record WHERE id = #{id}")
 	int deleteById(@Param("id") String id);
+
+	/** 按龄清理：返回 created_at 早于阈值的全部记录（含 file_path 供文件清理）。ISO-8601 字符串字典序比较。 */
+	@Select("""
+		SELECT id, created_at, algorithm, pbkdf2_iterations, salt, iv, data_export_id,
+			file_path, file_name, size_bytes
+		FROM backup_record WHERE created_at < #{cutoff} ORDER BY created_at ASC
+		""")
+	@Result(column = "salt", property = "salt", jdbcType = JdbcType.VARBINARY)
+	@Result(column = "iv", property = "iv", jdbcType = JdbcType.VARBINARY)
+	List<BackupRecord> selectByCreatedBefore(@Param("cutoff") String cutoff);
 }
 

@@ -6,6 +6,7 @@ import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.domain.BackupSchedule;
 import com.jobhub.datamanagement.api.ImportResultResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -44,6 +45,24 @@ public class BackupController {
 	@GetMapping("/backups")
 	public List<BackupRecordResponse> list() {
 		return service.list().stream().map(BackupRecordResponse::from).toList();
+	}
+
+	/**
+	 * 按龄批量清理：物理删除 created_at 早于「当前 UTC − olderThanDays 天」的全部备份与 .enc 文件。
+	 * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。返回清理摘要。
+	 */
+	@DeleteMapping("/backups")
+	public ResponseEntity<BackupPurgeSummary> purgeOlderThan(
+			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm,
+			@RequestParam(value = "olderThanDays", required = false) @Min(1) Integer olderThanDays) {
+		if (!Boolean.TRUE.equals(confirm)) {
+			return ResponseEntity.badRequest().build();
+		}
+		if (olderThanDays == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		BackupPurgeSummary summary = service.purgeOlderThan(olderThanDays);
+		return ResponseEntity.ok(summary);
 	}
 
 	@GetMapping("/backups/{backupId}/download")

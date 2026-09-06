@@ -106,6 +106,33 @@ export function useRestoreBackup() {
 }
 
 /**
+ * 按龄批量清理：物理删除早于 olderThanDays 天的全部备份与 .enc 文件。
+ * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。
+ * X-Confirm-Permanent-Delete 确认头防误清；Idempotency-Key 支持安全重试。
+ */
+export async function purgeOldBackups(olderThanDays: number): Promise<BackupPurgeSummary> {
+  const res = await apiClient.delete<BackupPurgeSummary>('/backups', {
+    params: { olderThanDays },
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  return res.data
+}
+
+export type BackupPurgeSummary = Schemas['BackupPurgeSummary']
+
+/** 按龄批量清理；成功后刷新备份列表与调度配置（lastBackupId 可能变化）。 */
+export function usePurgeOldBackups() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupPurgeSummary, Error, number>({
+    mutationFn: purgeOldBackups,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
+  })
+}
+
+/**
  * 定时备份调度配置。armed 反映进程内存武装状态，不回显 passphrase。
  * cron 接受 5/6 字段表达式；服务端归一化为 6 字段存储。
  */

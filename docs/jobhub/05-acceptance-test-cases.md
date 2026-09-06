@@ -566,8 +566,33 @@ And passphrase 在提交后立即清空，强度提示随输入清空一同消�
 And 任何时刻 passphrase 永不落盘、不进日志、不被评估 API 传输（无评估端点）
 ```
 
+### AT-41 备份按龄批量清理（物理删除早于阈值的全部记录与密文文件）
+
+```gherkin
+Given 用户已生成多份加密备份，其中至少 2 份 created_at 早于「当前 UTC − N 天」
+When 用户在设置页历史备份区输入阈值天数 N 并点击「清理」按钮
+Then 弹出内联二次确认「将物理删除 N 天前的全部备份，不可恢复，是否继续？」
+When 用户确认
+Then 返回 200 且清理摘要 deletedCount 等于早于阈值的记录数、filesCleaned 等于清理的 .enc 文件数
+And 备份列表不再包含早于阈值的记录，新于阈值的记录保留
+And backup-dir 下早于阈值的 .enc 文件不存在，新于阈值的保留
+When 被删集合包含 backup_schedule.last_backup_id 指向的记录
+Then last_backup_id 被置空，lastBackupIdCleared=true，armed 内存状态不受影响
+When 用户以 DELETE /api/backups?olderThanDays=N 但未携带 X-Confirm-Permanent-Delete: true 确认头
+Then 返回 400 ValidationError 且不删除任何记录或文件
+When 用户以 DELETE /api/backups（缺 olderThanDays 参数）
+Then 返回 400 ValidationError
+When 用户以 olderThanDays=0 或负数
+Then 返回 400 ValidationError
+When 阈值范围内无匹配备份（deletedCount=0）
+Then 返回 200 且 deletedCount=0，不报 404（空集合法）
+When 用户以相同 Idempotency-Key 重复清理（幂等回放）
+Then 返回 200 且摘要与首次一致（deletedCount 复用首次缓存值，幂等回放不重新执行清理、不产生副作用）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-40 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-41 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

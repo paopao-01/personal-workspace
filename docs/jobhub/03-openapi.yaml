@@ -891,6 +891,32 @@ paths:
         '201': { description: 已生成, content: { application/json: { schema: { $ref: '#/components/schemas/BackupRecord' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+    delete:
+      tags: [Backups]
+      summary: 按龄批量清理加密备份（物理删除早于阈值的全部记录与密文文件）
+      description: |
+        物理删除 `created_at` 早于「当前 UTC − olderThanDays 天」的全部 `backup_record` 行及其落盘 `.enc` 密文文件，
+        不可恢复，不进入最近删除（`trash_item`）。语义同单条删除（`DELETE /backups/{backupId}`）：每行配套清理
+        密文文件（文件不存在视为已清理不报错）；若被删集合包含 `backup_schedule.last_backup_id` 指向的记录，则将该
+        软引用置空（不影响 armed 内存状态与调度配置）；`data_export_id` 软引用行不联动删除（独立历史快照，悬空可接受）。
+        `backup_record` 无 `version` 列，不使用 `If-Match-Version` 乐观锁；要求携带 `X-Confirm-Permanent-Delete: true`
+        确认头以防误清（缺失或非 `true` 返回 400）。必须指定 `olderThanDays`（≥1）作为清理阈值，缺省或 <1 返回 400，
+        防止误清空全部备份。passphrase 不参与清理验证（清理即销毁密钥材料）；passphrase 与派生密钥永不持久化。
+        返回清理摘要（删除记录数、清理文件数、是否置空 last_backup_id），幂等性由 `Idempotency-Key` 保证（重复回放返回相同摘要）。
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - name: olderThanDays
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+          description: 清理阈值天数（≥1），删除 created_at 早于「当前 UTC − N 天」的全部备份
+        - name: X-Confirm-Permanent-Delete
+          in: header
+          required: true
+          schema: { type: boolean, enum: [true] }
+      responses:
+        '200': { description: 清理摘要, content: { application/json: { schema: { $ref: '#/components/schemas/BackupPurgeSummary' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /backups/schedule:
     get:
       tags: [Backups]
@@ -2315,6 +2341,14 @@ components:
         dataExportId: { type: string, format: uuid, description: 关联的标准数据包导出 ID }
         fileName: { type: string, description: 备份文件名，如 <id>.enc }
         sizeBytes: { type: integer, description: 密文文件字节数 }
+    BackupPurgeSummary:
+      type: object
+      required: [deletedCount, filesCleaned, lastBackupIdCleared]
+      description: 按龄批量清理加密备份的结果摘要
+      properties:
+        deletedCount: { type: integer, minimum: 0, description: 实际删除的 backup_record 行数 }
+        filesCleaned: { type: integer, minimum: 0, description: 清理的 .enc 密文文件数（文件不存在不计数） }
+        lastBackupIdCleared: { type: boolean, description: 被删集合是否包含 last_backup_id 指向的记录（true 表示已置空该软引用） }
     DataImportPackage:
       type: object
       required: [format, exportedAt, tables]

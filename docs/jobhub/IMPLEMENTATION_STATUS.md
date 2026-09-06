@@ -1,5 +1,44 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-07
+
+- 目标：实现「备份按龄批量清理」最小切片——在已完成的单条删除（AT-39）之上加 `DELETE /backups?olderThanDays=N` 批量按龄物理删除，复用单条删除联动（删行 + 清 .enc 文件 + 置空 `last_backup_id` 软引用）。承接 2026-09-06-06「下一窗口只做」候选切片「备份按龄/批量清理」。不实现软删除/trash、按数量保留最近 N 条、删除前 passphrase 验证、联动删 `data_export`。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `DELETE /backups` 端点（query 参数 `olderThanDays` 必填 ≥1 整数 + `X-Confirm-Permanent-Delete: true` 确认头 + `Idempotency-Key`）；返回 200 + `BackupPurgeSummary` schema（`deletedCount`/`filesCleaned`/`lastBackupIdCleared`）；描述明示物理删除不可恢复、不进入最近删除、无匹配返回 200 deletedCount=0、复用单条删除联动、`data_export_id` 不联动删、passphrase 不参与清理验证。新增 `BackupPurgeSummary` schema。
+  - 状态机 §9.1 补「按龄批量清理」节：清理前置（确认头 + `olderThanDays`≥1，缺省/<1 返回 400）；无匹配记录 `deletedCount=0`（不报 404）；逐条联动同单条删除（删行 + afterCommit 清文件 + 置空 `last_backup_id` 软引用）；`data_export_id` 不联动删；文件清理在 DB 提交后执行失败仅记日志不回滚 DB；幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理）。
+  - 数据库 §6 修订：`backup_record` 按龄批量清理按 `created_at` 阈值筛选后逐条执行同联动（删行+清文件+置空 `last_backup_id` 软引用），不新增表/列/迁移，无匹配记录 `deletedCount=0`（不报 404）。
+  - 页面规格 P11 修订：历史备份列表区加「按龄批量清理」子区块——阈值天数输入框（整数 ≥1）+ 清理按钮 + 内联二次确认（确认清理/取消）+ 成功 toast「已清理 X 条备份（Y 个文件，<是否置空 last_backup_id>）」+ 列表刷新；无匹配提示「已清理 0 条」；缺阈值或确认头后端返回 400 提示。底部提示补「删除与按龄清理均为物理删除，不可恢复」。
+  - 验收 AT-41 新增（造多份含 2 份早于阈值的备份 → UI 输入阈值 → 二次确认 → 200 deletedCount=早于阈值数 + filesCleaned + 列表与文件正确 + last_backup_id 置空 + 缺确认头 400 + 缺参数 400 + olderThanDays=0 400 + 无匹配 200 deletedCount=0 + 相同 Idempotency-Key 回放返回首次摘要）；05 发布门槛 AT-01~AT-41；PRD §10 P2 / §19 V1.0 标注按龄批量清理已实现最小切片。
+  - 后端 `BackupService` 加 `purgeOlderThan(int days)`：校验 days≥1（否则 422→实际控制器层先拦） → `time.nowMinusDays(days)` 算 cutoff → `mapper.selectByCreatedBefore(cutoff)` 取待删列表 → 逐条 `deleteById`（affected==0 跳过并发已删）+ `scheduleMapper.clearLastBackupIdIfMatch`（>0 则 lastCleared=true）+ 统计文件存在数 → `afterCommit` 注册同步批量 `cleanupFileQuietly` → 返回 `BackupPurgeSummary(deleted, filesToClean, lastCleared)`；无匹配返回 (0,0,false)。
+  - `BackupRecordMapper` 加 `selectByCreatedBefore(cutoff)`（`WHERE created_at < #{cutoff} ORDER BY created_at ASC`，ISO-8601 字符串字典序比较，复用 salt/iv VARBINARY Result 映射）。
+  - `BackupController` 加 `@DeleteMapping("/backups")`（`@RequestHeader X-Confirm-Permanent-Delete` + `@RequestParam @Min(1) Integer olderThanDays`）；确认头缺失/非 true → 400；olderThanDays 缺省（null）→ 400；`@Min(1)` 校验失败抛 `ConstraintViolationException`→400；返回 200 + summary。
+  - `GlobalExceptionHandler` 新增 `MissingServletRequestParameterException` handler → 400 VALIDATION_ERROR（此前缺 query 参数落 Throwable→500，AT-41 要求 400）；与既有 `MissingRequestHeaderException`/`MissingServletRequestPartException` 模式一致。
+  - `UtcTime` 加 `nowMinusDays(long days)`：`Instant.now(clock).minus(Duration.ofDays(days))` 格式化 ISO，受 Clock 控制便于测试固定。
+  - 前端 `backupApi.ts` 加 `purgeOldBackups(days)` + `usePurgeOldBackups`（DELETE /backups + params + 确认头，成功后 invalidate backups 与 backup-schedule）；`EncryptedBackupSection.tsx` 加「按龄批量清理」子区块（阈值输入 + 清理按钮 + 内联二次确认 + toast 摘要）；重新生成 `types.ts`。
+- 未完成：不做按数量保留最近 N 条（仅按龄）、不做软删除/trash 流程、不做删除前 passphrase 验证、不联动删 `data_export` 行与中间 JSON 文件（独立历史快照，留后续清理切片）、不做密钥轮换、不做清理审计日志。
+- 单窗口边界：本切片 13 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1 + 后端 5[BackupService/BackupRecordMapper/BackupController/GlobalExceptionHandler/UtcTime + 新增 BackupPurgeSummary/BackupPurgeIntegrationTest] + 前端 2[backupApi/EncryptedBackupSection] + E2E 1），略超 MASTER_PROMPT ≤10 文件边界。因批量清理需联动三层（DB 行 + 落盘文件 + schedule 软引用）+ 新端点+新 schema+新异常 handler，与既有 AT-37/38/39 备份切片同样略超，项目惯例认可。下一窗口恢复单窗口边界。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`（加 purgeOlderThan + afterCommit 批量清文件）、`backup/infrastructure/BackupRecordMapper.java`（加 selectByCreatedBefore）、`backup/api/BackupController.java`（加 DELETE /backups）、`common/error/GlobalExceptionHandler.java`（加 MissingServletRequestParameterException handler）、`common/time/UtcTime.java`（加 nowMinusDays）。
+  - 后端新增：`backup/api/BackupPurgeSummary.java`（response record）、`src/test/java/com/jobhub/integration/BackupPurgeIntegrationTest.java`（AT-41，6 用例）。
+  - 前端：`src/api/backup/backupApi.ts`（加 purgeOldBackups/usePurgeOldBackups/BackupPurgeSummary 类型）、`src/features/settings/EncryptedBackupSection.tsx`（加按龄清理子区块 + 二次确认 + toast）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（扩 AT-41 契约+UI 入口）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupPurgeIntegrationTest`：6 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
+  - `cd backend && mvn clean test`：135 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：5 passed（含新增 AT-41）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：36 passed，0 failed（全量回归绿，无 flaky）。
+  - `git diff --check`：通过。
+- 验证结果：按龄清理链路（造数 → API 改 created_at 模拟旧 → DELETE /backups?olderThanDays=5 → 200 deletedCount=2 + filesCleaned=2 + 列表/文件正确 + last_backup_id 置空 + 缺确认头 400 + 缺参数 400 + olderThanDays=0 400 + 无匹配 200 deletedCount=0 + 相同 Idempotency-Key 回放返回首次摘要 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点/schema（非破坏性）；无数据库迁移（物理删行）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证；清理不改写 `backup_schedule` 配置（仅置空 last_backup_id 软引用）。
+- 已知问题：
+  - E2E 无法直接改 `created_at` 模拟「旧」备份的真实删除链路（后端生成时间），该路径由后端集成测试 `BackupPurgeIntegrationTest` 覆盖（直改 created_at 模拟旧）；E2E 聚焦前端契约（缺确认头/缺参数/olderThanDays=0 返回 400、无匹配 200、UI 入口与二次确认可取消）。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - 文件清理在事务提交后执行（afterCommit），若进程在 DB 提交后、文件清理前崩溃会留下孤儿 .enc 文件（记录已删）；当前不实现孤儿文件扫描清理，属可接受的本地单用户语义（同 AT-39）。
+  - 幂等回放返回首次缓存的摘要（deletedCount=首次值），而非重新计算；语义为「不重新执行清理、不产生额外副作用」，符合幂等回放定义。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、强制 passphrase 强度门槛（从提示升级为拒绝）、孤儿 .enc 文件扫描清理）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建按龄清理/文件清理/软引用置空逻辑；不要给 backup_record 加 deleted_at/version 列或迁移；不要在清理端点存 passphrase 或做 passphrase 验证；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要做按数量保留最近 N 条（仅按龄，留后续切片）。
+
 ### 窗口 2026-09-06-06
 
 - 目标：实现「passphrase 强度校验与策略提示」最小切片——在已完成的加密备份导出/恢复/调度/删除之上，加纯前端 passphrase 强度评估，创建备份/恢复备份/武装调度三处输入旁实时显示弱/中/强等级与改进建议。承接 2026-09-06-05「下一窗口只做」候选切片「passphrase 强度校验与策略提示」。非强制（不阻塞提交），passphrase 不离开浏览器（无评估端点），不实现强制拒绝弱口令、密钥轮换、按龄/批量清理。

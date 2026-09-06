@@ -278,6 +278,14 @@ ABANDONED ──restore──> TODO
 - `data_export_id` 软引用的导出记录行不联动删除：`data_export` 为独立历史快照，悬空软引用无外键阻拦，保留可追溯。
 - 删除失败不得产生部分副作用：文件已删但记录行未删（或反之）须在事务内回滚到一致状态（文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB，避免悬留记录却丢失文件）。
 
+**按龄批量清理**：`DELETE /backups?olderThanDays=N` 物理删除 `created_at` 早于「当前 UTC − N 天」的全部 `backup_record`，语义同单条删除：
+
+- 清理前置：携带 `X-Confirm-Permanent-Delete: true` 确认头（缺失或非 `true` 返回 400）；必须指定 `olderThanDays`（≥1）作为清理阈值，缺省或 <1 返回 400（防止误清空全部备份）。
+- 无匹配记录返回 `deletedCount=0`（不返回 404，批量操作空集合法）。
+- 逐条联动同单条删除：删 `backup_record` 行 + `afterCommit` 清理 `.enc` 文件（文件不存在视为已清理不报错，不计入 `filesCleaned`）+ 若被删集合含 `last_backup_id` 则置空该软引用（`lastBackupIdCleared=true`）。
+- `data_export_id` 软引用行不联动删除（同单条删除语义）。
+- 文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB（同单条删除）；返回清理摘要（`deletedCount`/`filesCleaned`/`lastBackupIdCleared`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理）。
+
 ## 8. 能力、证据与删除状态
 
 ### 8.1 技能维度

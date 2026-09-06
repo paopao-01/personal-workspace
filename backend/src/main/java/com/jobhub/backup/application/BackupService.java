@@ -2,6 +2,7 @@ package com.jobhub.backup.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobhub.backup.api.BackupPurgeSummary;
 import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.infrastructure.BackupRecordMapper;
 import com.jobhub.backup.infrastructure.BackupScheduleMapper;
@@ -138,6 +139,59 @@ public class BackupService {
 
 	public List<BackupRecord> list() {
 		return mapper.selectList();
+	}
+
+	/**
+	 * 按龄批量清理：物理删除 created_at 早于「当前 UTC − days 天」的全部 backup_record + 落盘 .enc 文件，
+	 * 若被删集合含 last_backup_id 则置空该软引用。语义同单条 delete：文件清理在事务提交后执行
+	 * （afterCommit），文件清理失败仅记日志不回滚 DB。filesCleaned 为删行时文件存在的数量（将在 afterCommit 清理）。
+	 * 不联动删 data_export 行（独立历史快照）。无匹配记录返回 deletedCount=0（不报 404）。
+	 */
+	@Transactional
+	public BackupPurgeSummary purgeOlderThan(int days) {
+		if (days < 1) {
+			throw new BusinessRuleException(com.jobhub.common.error.ErrorCode.VALIDATION_ERROR,
+				"olderThanDays 必须 ≥ 1");
+		}
+		String cutoff = time.nowMinusDays(days);
+		List<BackupRecord> targets = mapper.selectByCreatedBefore(cutoff);
+		if (targets.isEmpty()) {
+			return new BackupPurgeSummary(0, 0, false);
+		}
+
+		int deleted = 0;
+		int filesToClean = 0;
+		boolean lastCleared = false;
+		List<BackupRecord> filesToCleanup = new java.util.ArrayList<>();
+		for (BackupRecord r : targets) {
+			int affected = mapper.deleteById(r.getId());
+			if (affected == 0) {
+				// 并发：记录刚被另一事务删除，跳过
+				continue;
+			}
+			deleted++;
+			if (scheduleMapper.clearLastBackupIdIfMatch(r.getId()) > 0) {
+				lastCleared = true;
+			}
+			Path filePath = Paths.get(r.getFilePath());
+			if (Files.exists(filePath)) {
+				filesToClean++;
+				filesToCleanup.add(r);
+			}
+		}
+
+		final int finalDeleted = deleted;
+		final int finalFilesToClean = filesToClean;
+		final boolean finalLastCleared = lastCleared;
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				for (BackupRecord r : filesToCleanup) {
+					cleanupFileQuietly(r.getFilePath());
+				}
+			}
+		});
+		return new BackupPurgeSummary(finalDeleted, finalFilesToClean, finalLastCleared);
 	}
 
 	public BackupRecord get(String id) {

@@ -15,6 +15,7 @@ import {
   useBackupSchedule,
   useCreateBackup,
   useDeleteBackup,
+  usePurgeOldBackups,
   useRestoreBackup,
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
@@ -39,6 +40,7 @@ export function EncryptedBackupSection() {
   const scheduleQuery = useBackupSchedule()
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
+  const purgeOldBackups = usePurgeOldBackups()
   const [passphrase, setPassphrase] = useState('')
   const [restorePassphrase, setRestorePassphrase] = useState('')
   const [restoreFile, setRestoreFile] = useState<File | null>(null)
@@ -46,6 +48,8 @@ export function EncryptedBackupSection() {
   const [enabled, setEnabled] = useState(false)
   const [armPassphrase, setArmPassphrase] = useState('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [purgeDays, setPurgeDays] = useState('30')
+  const [confirmingPurge, setConfirmingPurge] = useState(false)
 
   const submit = async () => {
     if (passphrase.trim().length < 8) {
@@ -125,6 +129,25 @@ export function EncryptedBackupSection() {
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
       setConfirmingDeleteId(null)
+    }
+  }
+
+  const submitPurge = async () => {
+    const days = Number(purgeDays)
+    if (!Number.isInteger(days) || days < 1) {
+      pushToast('阈值天数需为 ≥1 的整数', 'error')
+      return
+    }
+    try {
+      const summary = await purgeOldBackups.mutateAsync(days)
+      setConfirmingPurge(false)
+      pushToast(
+        `已清理 ${summary.deletedCount} 条备份（${summary.filesCleaned} 个文件`
+        + `${summary.lastBackupIdCleared ? '，已置空最近备份引用' : ''}，不可恢复）`,
+      )
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setConfirmingPurge(false)
     }
   }
 
@@ -233,6 +256,54 @@ export function EncryptedBackupSection() {
               ))}
             </div>
           )}
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <h3 className="card-subtitle">按龄批量清理</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            物理删除创建时间早于阈值的全部备份及其 .enc 密文文件，不可恢复，不进入最近删除。
+            若被删集合包含最近一次定时备份引用，将置空该软引用。
+          </p>
+          <Field label="清理阈值（天）" required hint="整数 ≥1，删除创建时间早于 N 天前的全部备份">
+            <Input
+              type="number"
+              min={1}
+              value={purgeDays}
+              onChange={(event) => setPurgeDays(event.target.value)}
+              placeholder="30"
+              aria-label="清理阈值天数"
+            />
+          </Field>
+          <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+            {confirmingPurge ? (
+              <>
+                <Button
+                  variant="danger"
+                  type="button"
+                  disabled={purgeOldBackups.isPending}
+                  onClick={submitPurge}
+                >
+                  {purgeOldBackups.isPending ? '清理中…' : `确认清理 ${purgeDays} 天前`}
+                </Button>
+                <Button
+                  variant="default"
+                  type="button"
+                  disabled={purgeOldBackups.isPending}
+                  onClick={() => setConfirmingPurge(false)}
+                >
+                  取消
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="danger"
+                type="button"
+                onClick={() => setConfirmingPurge(true)}
+              >
+                清理
+              </Button>
+            )}
+          </div>
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -368,7 +439,7 @@ export function EncryptedBackupSection() {
           )}
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除为物理删除，不可恢复。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除与按龄清理均为物理删除，不可恢复。
         </p>
       </div>
     </section>

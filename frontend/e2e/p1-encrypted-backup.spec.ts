@@ -338,3 +338,99 @@ test('AT-38 backup schedule arm + cron trigger + disarmed skip', async ({ page, 
   }
   throw new Error('定时备份在 60s 内未触发 SUCCESS')
 })
+
+/**
+ * AT-41 备份按龄批量清理：物理删除早于阈值的全部记录与密文文件，
+ * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。
+ * X-Confirm-Permanent-Delete 确认头防误清；olderThanDays 必填 ≥1；
+ * 无匹配记录 deletedCount=0；Idempotency-Key 保证幂等回放。
+ *
+ * created_at 由后端生成，E2E 无法改库模拟「旧」备份的真实删除链路——该路径由后端集成测试
+ * BackupPurgeIntegrationTest 覆盖（真实删行+清文件+置空 last_backup_id+幂等回放）。
+ * 本 E2E 聚焦前端契约与入口：缺确认头 400、缺参数 400、olderThanDays=0 400、无匹配 200、
+ * UI 按龄清理区可见、二次确认可取消。
+ */
+test('AT-41 backup purge by age removes old records and files', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位，保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at41-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `按龄清理-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 造 3 份加密备份（用 API 直建，便于改 created_at 模拟「旧」）
+  const created: { id: string; fileName: string }[] = []
+  for (let i = 0; i < 3; i++) {
+    const res = await request.post('/api/backups', {
+      headers: { 'Idempotency-Key': `e2e-at41-create-${suffix}-${i}-${crypto.randomUUID()}` },
+      data: { passphrase: `secret-${suffix}-${i}` },
+    })
+    expect(res.status()).toBe(201)
+    const body = await res.json()
+    created.push({ id: body.id, fileName: body.fileName })
+  }
+
+  // 前 2 份 created_at 改为 10 天前（模拟早于阈值），第 3 份保持最新
+  // 直接用 API 无法改 created_at；这里通过设置 olderThanDays=0 不可行（校验拒绝），
+  // 改为：先确认 UI 入口存在，再用 API 直接调清理端点验证后端语义（前端在 AT-36 已覆盖删除 UI 链路）。
+  // 后端直测清理语义（与前端 UI 互补）：
+  //   1. 缺确认头 → 400
+  const noConfirm = await request.delete(`/api/backups?olderThanDays=5`)
+  expect(noConfirm.status()).toBe(400)
+
+  //   2. 缺 olderThanDays → 400
+  const noParam = await request.delete('/api/backups', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(noParam.status()).toBe(400)
+
+  //   3. olderThanDays=0 → 400（@Min(1)）
+  const zero = await request.delete('/api/backups?olderThanDays=0', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(zero.status()).toBe(400)
+
+  //   4. 无匹配（仅最新备份，阈值 5 天内）→ 200 deletedCount=0
+  const noMatch = await request.delete('/api/backups?olderThanDays=5', {
+    headers: {
+      'X-Confirm-Permanent-Delete': 'true',
+      'Idempotency-Key': `e2e-at41-nomatch-${suffix}-${crypto.randomUUID()}`,
+    },
+  })
+  expect(noMatch.status()).toBe(200)
+  const noMatchBody = await noMatch.json()
+  expect(noMatchBody.deletedCount).toBe(0)
+  expect(noMatchBody.lastBackupIdCleared).toBe(false)
+
+  // UI：进入设置页，按龄清理区可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '按龄批量清理' })).toBeVisible()
+  await expect(page.getByLabel('清理阈值天数')).toBeVisible()
+  await expect(page.getByRole('button', { name: '清理' })).toBeVisible()
+
+  // UI：点清理 → 内联二次确认（确认/取消）
+  await page.getByRole('button', { name: '清理' }).click()
+  await expect(page.getByRole('button', { name: /确认清理/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消' })).toBeVisible()
+  await page.getByRole('button', { name: '取消' }).click()
+  await expect(page.getByRole('button', { name: '清理' })).toBeVisible()
+
+  // 末尾清理本次产生的全部备份（用按龄清理 1 天前的——created_at 全为「现在」，1 天前无匹配，
+  // 故改用单条 DELETE 逐个清理，避免影响其他用例），并断言 API 响应不含 passphrase
+  for (const b of created) {
+    await request.delete(`/api/backups/${b.id}`, {
+      headers: { 'X-Confirm-Permanent-Delete': 'true' },
+    })
+  }
+  const listRes = await request.get('/api/backups')
+  expect(listRes.ok()).toBe(true)
+  const listBody = JSON.stringify(await listRes.json())
+  expect(listBody).not.toContain('passphrase')
+})

@@ -187,6 +187,7 @@
 - 点击按钮以输入的 passphrase 触发 `POST /api/backups`；成功后刷新备份列表并提示「已生成 <fileName>」。
 - passphrase 输入框在提交后立即清空，仅写入不回显；列表与详情不显示 passphrase、不显示解密内容。
 - 备份列表（最新优先）展示创建时间（用户时区）、文件名、大小与下载按钮（`GET /backups/{id}/download`）。每条记录提供删除按钮：点击后内联二次确认（「删除后不可恢复，是否继续？」），确认后以 `DELETE /api/backups/{id}` 携带 `X-Confirm-Permanent-Delete: true` 头删除；成功后提示「已删除 <fileName>」并刷新列表。删除为物理删除，不可恢复，不进入最近删除。
+- 按龄批量清理：历史备份列表区提供「清理 N 天前」输入框（整数 ≥1）与「清理」按钮，点击后内联二次确认（「将物理删除 N 天前的全部备份，不可恢复，是否继续？」），确认后以 `DELETE /api/backups?olderThanDays=N` 携带 `X-Confirm-Permanent-Delete: true` 头清理；成功后提示「已清理 X 条备份（Y 个文件，<是否置空 last_backup_id>）」并刷新列表。无匹配记录时提示「已清理 0 条」；缺阈值或确认头时后端返回 400 并提示。
 - 恢复入口：在同一区块提供文件选择（`.enc`）与 passphrase 输入框（type=password，min 8）及「恢复备份」按钮。点击后以 `multipart/form-data` 上传文件与 passphrase 调用 `POST /api/backups/restore`；成功后展示恢复结果摘要（inserted/skippedIdentical/skippedConflict/skippedMissingParent/failed），失败按错误码提示「passphrase 错误或文件损坏」「备份文件格式无效」等。passphrase 输入框在提交后立即清空，仅写入不回显；恢复为幂等操作，重复恢复同一备份提示全部重复跳过。本切片不实现定时调度。
 - passphrase 短于 8 位返回校验错误。
 - 客户端 passphrase 强度评估（纯前端，非强制）：创建备份、恢复备份、武装调度三处 passphrase 输入框下方实时显示强度等级（弱/中/强）与改进建议列表。评估在浏览器本地完成，不调用任何 API，passphrase 不离开浏览器；不影响提交行为——即使评估为弱，只要满足 8–256 位长度限制仍可提交（强度仅为提示，不阻塞）。建议随强度提升逐步消失（达到「强」时不再显示建议）。评估维度：长度（≥12 加分、≥16 再加）、字符种类（小写/大写/数字/符号四类，每类加分）、弱模式扣分（纯重复字符、常见弱口令黑名单如 `password`/`123456`/`qwerty`、连续重复段）。阈值：弱 < 40 / 中 40–69 / 强 ≥ 70。
