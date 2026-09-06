@@ -56,6 +56,16 @@ public class BackupController {
 			.body(content);
 	}
 
+	@DeleteMapping("/backups/{backupId}")
+	public ResponseEntity<Void> delete(@PathVariable String backupId,
+			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm) {
+		if (!Boolean.TRUE.equals(confirm)) {
+			return ResponseEntity.badRequest().build();
+		}
+		service.delete(backupId);
+		return ResponseEntity.noContent().build();
+	}
+
 	@PostMapping(
 		value = "/backups/restore",
 		consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

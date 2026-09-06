@@ -38,6 +38,17 @@ export function downloadBackup(id: string, fileName: string): void {
   document.body.removeChild(link)
 }
 
+/**
+ * 删除加密备份记录：物理删除记录行与落盘 .enc 文件，不可恢复，不进入最近删除。
+ * 携带 X-Confirm-Permanent-Delete 确认头防误删；passphrase 不参与删除验证。
+ * Idempotency-Key 由拦截器自动注入，支持安全重试。
+ */
+export async function deleteBackup(id: string): Promise<void> {
+  await apiClient.delete(`/backups/${id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+}
+
 export function useBackups() {
   return useQuery<BackupRecord[], Error>({
     queryKey: BACKUPS_KEY,
@@ -51,6 +62,18 @@ export function useCreateBackup() {
     mutationFn: createBackup,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+    },
+  })
+}
+
+/** 删除加密备份；成功后刷新备份列表与调度配置（lastBackupId 可能变化）。 */
+export function useDeleteBackup() {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: deleteBackup,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
     },
   })
 }

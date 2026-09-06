@@ -253,7 +253,7 @@ ABANDONED ──restore──> TODO
 
 ## 9. 备份记录
 
-备份记录为追加型只读历史，无状态转换。生成后不可修改或删除（删除留待后续切片）。恢复为无状态只读转换：上传 .enc 文件 + passphrase → 解密 → 行级幂等恢复，不改写任何 `backup_record`，也不产生恢复记录。
+备份记录为追加型只读历史，无状态转换。生成后不可修改；删除为物理删除（hard delete），不可恢复，不进入最近删除（`trash_item`）：经 `DELETE /backups/{backupId}` 物理删除记录行并配套清理落盘密文文件，须携带 `X-Confirm-Permanent-Delete: true` 确认头。恢复为无状态只读转换：上传 .enc 文件 + passphrase → 解密 → 行级幂等恢复，不改写任何 `backup_record`，也不产生恢复记录。
 
 - passphrase 经 PBKDF2（随机 16B salt、10 万次迭代）派生 AES-256-GCM 密钥加密标准数据包；passphrase 与派生密钥永不落盘、不回显、不进日志。
 - `salt` 与 `iv` 随记录持久化，以供未来恢复切片从用户 passphrase 重新派生密钥；`data_export_id` 软引用导出记录，不加外键。
@@ -265,7 +265,18 @@ ABANDONED ──restore──> TODO
   - 武装（`armed`）为进程内存状态：用户经 `POST /backups/schedule/arm` 注入 passphrase 后存于 volatile 内存，永不落盘、不回显、不进日志；应用重启自动解除武装（`armed=false`），需用户重新武装。
   - 调度器固定间隔轮询：`enabled=true` 且 `armed=true` 且 cron 到点（距上次运行已过最近一个 cron 周期）时，复用 `BackupService.create(passphrase)` 生成加密备份；成功追写 `backup_record` 并更新 `last_run_*`，失败记 `last_run_status=FAILED`+`last_run_error`，不产生部分 `backup_record` 或残留密文文件。
   - `enabled=true` 但 `armed=false`（未武装，含重启后）到点记 `last_run_status=SKIPPED_DISARMED`，不生成备份。
-  - `backup_record` 仍为追加型只读历史，本切片不做删除/清理；定时生成与手动生成记录同表共存。
+  - `backup_record` 仍为追加型只读历史，定时生成与手动生成记录同表共存；定时生成记录可被删除端点物理删除（语义同手动生成记录）。
+
+### 9.1 备份删除
+
+删除为物理销毁操作，不可恢复，不进入最近删除（`trash_item`，不套用 §8.2 软删除流程）：
+
+- 删除前置：`backup_record` 行存在（不存在返回 404）；携带 `X-Confirm-Permanent-Delete: true` 确认头（缺失或非 `true` 返回 400）。
+- `backup_record` 无 `version` 列，删除不使用 `If-Match-Version` 乐观锁；删除即销毁，幂等性由 `Idempotency-Key` 保证（重复删除同一资源命中幂等回放，未命中则资源已不存在返回 404）。
+- passphrase 不参与删除验证：删除即销毁密文与 salt/iv 密钥材料，无需再用 passphrase 校验。
+- 删除联动：物理删除 `backup_record` 行；配套清理 `jobhub.backup-dir` 下的 `.enc` 密文文件（文件不存在视为已清理，不报错）；若被删 id 等于 `backup_schedule.last_backup_id`，将该软引用置空（不影响 armed 内存状态与调度配置）。
+- `data_export_id` 软引用的导出记录行不联动删除：`data_export` 为独立历史快照，悬空软引用无外键阻拦，保留可追溯。
+- 删除失败不得产生部分副作用：文件已删但记录行未删（或反之）须在事务内回滚到一致状态（文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB，避免悬留记录却丢失文件）。
 
 ## 8. 能力、证据与删除状态
 

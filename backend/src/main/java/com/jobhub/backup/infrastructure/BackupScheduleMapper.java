@@ -52,4 +52,8 @@ public interface BackupScheduleMapper {
 		""")
 	int updateLastRun(@Param("lastRunAt") String lastRunAt, @Param("lastRunStatus") String lastRunStatus,
 			@Param("lastRunError") String lastRunError, @Param("lastBackupId") String lastBackupId);
+
+	/** 删除备份联动：若 last_backup_id 指向被删 id 则置空，不 bump version（系统写）。返回受影响行数。 */
+	@Update("UPDATE backup_schedule SET last_backup_id = NULL WHERE id = 'singleton' AND last_backup_id = #{id}")
+	int clearLastBackupIdIfMatch(@Param("id") String id);
 }

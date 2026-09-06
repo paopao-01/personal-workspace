@@ -530,8 +530,29 @@ Then 不生成备份，last_run_status=SKIPPED_DISARMED
 And 任何时刻数据库不存储 passphrase 或派生密钥，armed 仅反映内存状态
 ```
 
+### AT-39 加密备份删除（物理删除 + 落盘文件清理 + 软引用置空）
+
+```gherkin
+Given 用户已生成一份加密备份（.enc 文件）且 backup-dir 下存在对应 <id>.enc 文件
+When 用户在设置页「加密备份」区点击该记录的删除按钮并确认
+Then 返回 204 且备份列表不再包含该记录
+And backup-dir 下 <id>.enc 文件不存在
+When 用户以 GET /api/backups/{id}/download 查询该已删除备份
+Then 返回 404 NotFound
+When 用户以 DELETE /api/backups/{id} 删除不存在的备份 ID
+Then 返回 404 NotFound
+When 用户以 DELETE /api/backups/{id} 删除但未携带 X-Confirm-Permanent-Delete: true 确认头
+Then 返回 400 ValidationError 且不删除任何记录或文件
+Given 被删备份 id 等于 backup_schedule.last_backup_id
+When 用户删除该备份
+Then 返回 204 且 backup_schedule.last_backup_id 置空，armed 内存状态不受影响
+When 用户以相同 Idempotency-Key 重复删除同一已删除备份（幂等回放）
+Then 返回 204（幂等回放，不产生副作用）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-38 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-39 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
