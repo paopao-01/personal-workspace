@@ -66,6 +66,8 @@ public class BackupService {
 
 	@Transactional
 	public BackupRecord create(String passphrase) {
+		// 强度门槛（强制）：弱口令（score<40）在加密前拦截，返回 400，不落盘不进日志。
+		PassphraseStrengthValidator.requireAcceptable(passphrase);
 		DataExport export = exportService.create("JSON");
 		if (!"SUCCEEDED".equals(export.getStatus())) {
 			throw new BusinessRuleException("数据包生成失败：" + export.getFailureReason());

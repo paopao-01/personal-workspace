@@ -258,6 +258,8 @@ ABANDONED ──restore──> TODO
 - passphrase 经 PBKDF2（随机 16B salt、10 万次迭代）派生 AES-256-GCM 密钥加密标准数据包；passphrase 与派生密钥永不落盘、不回显、不进日志。
 - `salt` 与 `iv` 随记录持久化，以供未来恢复切片从用户 passphrase 重新派生密钥；`data_export_id` 软引用导出记录，不加外键。
 - 备份生成失败不得产生部分 `backup_record` 记录或残留密文文件。
+- **passphrase 强度门槛（强制，V1.0 最小切片）**：创建备份（`POST /backups`）与武装调度器（`POST /backups/schedule/arm`）在入口按与前端纯函数同一算法评估 passphrase 强度，阈值弱<40/中40–69/强≥70（维度：长度分上限 35、字符种类分上限 45、弱模式扣分；常见弱口令黑名单 20 条）。`score<40`（弱）返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥40` 与失败规则（长度不足/缺字符种类/命中弱模式），不进行后续加密/落盘/武装。强度评估在内存进行，passphrase 不落盘、不进日志、不回显；不新增评估端点（passphrase 本就要传给加密端点派生密钥，无额外传输；与 AT-40 纯前端提示算法一致、阈值对齐）。算法维度与黑名单以本节为单一事实来源，前后端实现以此为准防漂移。
+- 恢复端点（`POST /backups/restore`）**不**强制强度门槛：passphrase 已与既有备份绑定（用于解密历史密文），强制无意义且会锁死门槛上线前用弱口令创建的历史备份；解密失败仍按 422（GCM 认证失败）处理，与强度无关。
 - 恢复端点接收上传的 .enc 文件（密文布局 `salt(16) || iv(12) || ciphertext+gcmTag`）+ passphrase，从文件头拆出 salt/iv，按生成端相同 PBKDF2 参数派生密钥并 AES-256-GCM 解密；GCM 认证失败即 passphrase 错误或文件损坏，返回 422，不进行任何恢复。
 - 解密得到的明文须为标准 JSON 数据包（`{format, exportedAt, tables}`）；恢复语义与标准数据恢复一致：只插入缺失行，重复/冲突/缺父级行跳过并列出，不覆盖、不修改已有行（用户事实优先），重复恢复同一备份天然幂等。
 - 定时备份调度（V25 `backup_schedule` 单行配置）：
