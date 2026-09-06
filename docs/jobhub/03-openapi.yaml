@@ -965,6 +965,12 @@ paths:
         '204': { description: 已回执（幂等） }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /notification-channels:
+    get:
+      tags: [Notifications]
+      summary: 查询所有通知渠道配置（含未配置渠道的默认禁用与版本 0）
+      responses:
+        '200': { description: 渠道配置列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/NotificationChannel' } } } } }
   /notification-channels/{channelType}:
     parameters: [ { $ref: '#/components/parameters/ChannelType' } ]
     get:
@@ -1034,6 +1040,19 @@ paths:
       responses:
         '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/AiProvider' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+    delete:
+      tags: [Ai]
+      summary: 删除供应商配置（不可恢复，不进入最近删除）
+      description: |
+        只有非激活且未被 ai_job.provider_id 引用的供应商可以删除，删除必须携带当前版本。
+        激活中的供应商必须先切换到其他供应商；已有任务引用的供应商必须保留以维持任务审计与失败重试所需的配置关联。
+        版本冲突、业务规则拒绝或幂等冲突均不得产生部分删除。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/IfMatchVersion' } ]
+      responses:
+        '204': { description: 已删除 }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/VersionConflict' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
@@ -1125,7 +1144,9 @@ paths:
       responses:
         '200': { description: 任务详情, content: { application/json: { schema: { $ref: '#/components/schemas/AiJob' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-    delete:
+  /ai-jobs/{aiJobId}/cancel:
+    parameters: [ { $ref: '#/components/parameters/AiJobId' } ]
+    post:
       tags: [Ai]
       summary: 取消任务（QUEUED/RUNNING → CANCELED；已完成任务返回 422）
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]

@@ -1,5 +1,28 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-01
+
+- 目标：补齐交接记录列出的 3 处 OpenAPI 与后端契约不一致——`DELETE /ai-providers/{providerId}` 声明、`ai-jobs` cancel 方法、`GET /notification-channels` 列表端点。不开发新功能、不动业务代码、不新增迁移。
+- 状态：**DONE**。
+- 已完成：
+  - `03-openapi.yaml` 在 `/ai-providers/{providerId}` 下补 `delete` 操作：tags `[Ai]`，summary「删除供应商配置（不可恢复，不进入最近删除）」，description 转录状态机 §6.4（非激活且未被 `ai_job.provider_id` 引用可删、携带当前版本、版本冲突/业务规则/幂等冲突不得部分删除），parameters `IdempotencyKey`+`IfMatchVersion`，responses 204/404/409/422。对齐后端 `AiProviderController.delete` 与 AT-17D。
+  - `03-openapi.yaml` 将 `/ai-jobs/{aiJobId}` 的 `delete`（取消任务）移除，新增 `/ai-jobs/{aiJobId}/cancel` POST 操作（与 `/retry` 同范式），summary「取消任务（QUEUED/RUNNING → CANCELED；已完成任务返回 422）」，parameters `AiJobId`+`IdempotencyKey`，responses 200/404/422(IllegalTransition)。对齐后端 `AiJobController.cancel`（POST `/api/ai-jobs/{aiJobId}/cancel`）与 06-technical §「状态转换走 POST .../cancel 命令接口」约定。
+  - `03-openapi.yaml` 在 `/notification-channels/{channelType}` 之前新增 `GET /notification-channels` 列表端点：返回 `NotificationChannel` 数组，summary「查询所有通知渠道配置（含未配置渠道的默认禁用与版本 0）」。对齐后端 `NotificationChannelController.list()`。
+- 未完成：不修改后端业务代码（三处端点均已实现，仅缺 OpenAPI 声明）；不新增数据库迁移或依赖；不动状态机/数据库设计/页面规格（本切片仅契约文档与实现对齐）；不补 E2E（既有 `p1-notification-channels` 已覆盖 list 含 WEBHOOK 行，既有 `AiIntegrationTest` AT-17D 与 cancel 用例已覆盖后端行为）。
+- 修改文件：`docs/jobhub/03-openapi.yaml`、`frontend/src/api/generated/types.ts`（重新生成，不入库）、本文件。
+- 已运行验证：
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd backend && mvn clean test`：102 tests，0 failures，0 errors，0 skipped；Flyway V1→V23 成功。
+  - `cd frontend && npx playwright test --reporter=dot`：31 passed，0 failed（首跑 2 个既有用例偶发失败，单独复跑 2 passed，属既有共享库时序问题，与本切片无代码关联——本切片仅改 OpenAPI 文档，不改任何业务代码）。
+  - `git diff --check`：通过。
+- 验证结果：三处契约不一致已消除，OpenAPI 路由与后端 Controller 一一对应；重新生成的 `types.ts` 正确反映新增的 `delete`/`cancel` POST/`notification-channels` GET 端点；前后端静态检查、后端全量集成测试与全量 E2E 均通过。
+- 已知问题：
+  - 全量 E2E 首跑时 `p1-ai-answer-quality` 与 `p1-notifications` 偶发失败（通知角标/回答分析时序竞态），单独复跑通过，属既有共享库时序问题，与本切片无代码关联（本切片仅改 OpenAPI 文档）。
+  - E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：加密定时备份、第三方日历同步最小化单向 ICS 订阅）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建本窗口的三处 OpenAPI 声明；不要给 cancel 任务加 DELETE 方法（命令接口约定用 POST）；不要为 GET /notification-channels 新增后端实现（已存在）；不要在本窗口扩范围到新功能。
+
 ### 窗口 2026-09-05-11
 
 - 目标：实现 PRD §10 P2「高级趋势分析和不同简历、渠道的效果对比」的最小只读切片——`GET /analytics/channel-effectiveness` 按投递渠道与简历版本聚合投递/面试/Offer 原始计数，不输出趋势结论、归因或行动建议。
