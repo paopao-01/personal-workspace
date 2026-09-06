@@ -522,3 +522,107 @@ test('AT-42 orphan .enc scan clean removes orphans and keeps legit files', async
   const listBody = JSON.stringify(await listRes.json())
   expect(listBody).not.toContain('passphrase')
 })
+
+/**
+ * AT-43 备份按数量保留清理：保留最近 N 条，物理删除其余全部记录与密文文件，
+ * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。
+ * keepLast 必填 ≥1；keepLast ≥ 总数 deletedCount=0；keepLast 与 olderThanDays 互斥；
+ * 缺确认头 400；Idempotency-Key 保证幂等回放。
+ *
+ * created_at 由后端生成，E2E 无法改库模拟「真实保留最近 N 条」的删除链路——该路径由后端集成测试
+ * BackupRetainIntegrationTest 覆盖（真实删行+清文件+置空 last_backup_id+幂等回放）。本 E2E 聚焦
+ * 前端契约与入口：缺确认头 400、keepLast=0 400、两参数互斥 400、缺参数 400、N≥总数 200 全 0、
+ * UI 按数量保留区可见、二次确认可取消。
+ */
+test('AT-43 backup keep last N retains newest and deletes the rest', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位，保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at43-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `按数量保留-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok(), `POST /api/jobs returned ${jobRes.status()}`).toBe(true)
+
+  // 造 2 份加密备份（用 API 直建，便于 N≥总数 断言）
+  const created: { id: string; fileName: string }[] = []
+  for (let i = 0; i < 2; i++) {
+    const res = await request.post('/api/backups', {
+      headers: { 'Idempotency-Key': `e2e-at43-create-${suffix}-${i}-${crypto.randomUUID()}` },
+      data: { passphrase: `secret-${suffix}-${i}` },
+    })
+    expect(res.status()).toBe(201)
+    const body = await res.json()
+    created.push({ id: body.id, fileName: body.fileName })
+  }
+
+  // 后端契约：
+  //   1. 缺确认头 → 400（不删任何记录）
+  const noConfirm = await request.delete('/api/backups?keepLast=2')
+  expect(noConfirm.status()).toBe(400)
+
+  //   2. keepLast=0 → 400（@Min(1)）
+  const zero = await request.delete('/api/backups?keepLast=0', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(zero.status()).toBe(400)
+
+  //   3. keepLast 与 olderThanDays 互斥 → 400
+  const both = await request.delete('/api/backups?keepLast=2&olderThanDays=5', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(both.status()).toBe(400)
+
+  //   4. 缺两个参数 → 400
+  const none = await request.delete('/api/backups', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(none.status()).toBe(400)
+
+  //   5. N ≥ 总数（2 份备份，keepLast=10）→ 200 deletedCount=0，全部保留
+  const noMatch = await request.delete('/api/backups?keepLast=10', {
+    headers: {
+      'X-Confirm-Permanent-Delete': 'true',
+      'Idempotency-Key': `e2e-at43-nomatch-${suffix}-${crypto.randomUUID()}`,
+    },
+  })
+  expect(noMatch.status()).toBe(200)
+  const noMatchBody = await noMatch.json()
+  expect(noMatchBody.deletedCount).toBe(0)
+  expect(noMatchBody.lastBackupIdCleared).toBe(false)
+  // 记录仍在
+  const afterRes = await request.get('/api/backups')
+  expect(afterRes.ok()).toBe(true)
+  const afterList = JSON.stringify(await afterRes.json())
+  expect(afterList).toContain(created[0].id)
+  expect(afterList).toContain(created[1].id)
+
+  // UI：进入设置页，按数量保留区可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '按数量保留' })).toBeVisible()
+  await expect(page.getByLabel('保留条数')).toBeVisible()
+  await expect(page.getByRole('button', { name: '保留最近 N 条' })).toBeVisible()
+
+  // UI：点保留 → 内联二次确认（确认/取消）
+  await page.getByRole('button', { name: '保留最近 N 条' }).click()
+  await expect(page.getByRole('button', { name: /确认保留最近/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消' })).toBeVisible()
+  await page.getByRole('button', { name: '取消' }).click()
+  await expect(page.getByRole('button', { name: '保留最近 N 条' })).toBeVisible()
+
+  // 末尾清理本次产生的全部备份（单条 DELETE，避免影响其他用例），并断言 API 响应不含 passphrase
+  for (const b of created) {
+    await request.delete(`/api/backups/${b.id}`, {
+      headers: { 'X-Confirm-Permanent-Delete': 'true' },
+    })
+  }
+  const listRes = await request.get('/api/backups')
+  expect(listRes.ok()).toBe(true)
+  const listBody = JSON.stringify(await listRes.json())
+  expect(listBody).not.toContain('passphrase')
+})

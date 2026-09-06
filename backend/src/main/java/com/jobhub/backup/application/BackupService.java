@@ -198,6 +198,61 @@ public class BackupService {
 		return new BackupPurgeSummary(finalDeleted, finalFilesToClean, finalLastCleared);
 	}
 
+	/**
+	 * 按数量保留：保留最近 keepLast 条（按 created_at DESC，即 {@link #list()} 既有顺序），
+	 * 物理删除其余全部 backup_record + 落盘 .enc 文件，若被删集合含 last_backup_id 则置空该软引用。
+	 * 语义同按龄清理与单条 delete：文件清理在事务提交后执行（afterCommit），文件清理失败仅记日志不回滚 DB。
+	 * 不联动删 data_export 行（独立历史快照）。keepLast ≥ 现有总数时无备份被删，返回 deletedCount=0（不报 404）。
+	 */
+	@Transactional
+	public BackupPurgeSummary purgeKeepingLast(int keepLast) {
+		if (keepLast < 1) {
+			throw new BusinessRuleException(com.jobhub.common.error.ErrorCode.VALIDATION_ERROR,
+				"keepLast 必须 ≥ 1");
+		}
+		List<BackupRecord> all = mapper.selectList(); // 已 created_at DESC
+		if (all.size() <= keepLast) {
+			// 保留集覆盖全部，无备份被删
+			return new BackupPurgeSummary(0, 0, false);
+		}
+		// 前 keepLast 条为保留集，其余为删除目标
+		List<BackupRecord> targets = new ArrayList<>(all.subList(keepLast, all.size()));
+
+		int deleted = 0;
+		int filesToClean = 0;
+		boolean lastCleared = false;
+		List<BackupRecord> filesToCleanup = new java.util.ArrayList<>();
+		for (BackupRecord r : targets) {
+			int affected = mapper.deleteById(r.getId());
+			if (affected == 0) {
+				// 并发：记录刚被另一事务删除，跳过
+				continue;
+			}
+			deleted++;
+			if (scheduleMapper.clearLastBackupIdIfMatch(r.getId()) > 0) {
+				lastCleared = true;
+			}
+			Path filePath = Paths.get(r.getFilePath());
+			if (Files.exists(filePath)) {
+				filesToClean++;
+				filesToCleanup.add(r);
+			}
+		}
+
+		final int finalDeleted = deleted;
+		final int finalFilesToClean = filesToClean;
+		final boolean finalLastCleared = lastCleared;
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				for (BackupRecord r : filesToCleanup) {
+					cleanupFileQuietly(r.getFilePath());
+				}
+			}
+		});
+		return new BackupPurgeSummary(finalDeleted, finalFilesToClean, finalLastCleared);
+	}
+
 	public BackupRecord get(String id) {
 		BackupRecord record = mapper.selectById(id);
 		if (record == null) {

@@ -893,23 +893,35 @@ paths:
         '422': { $ref: '#/components/responses/BusinessRuleError' }
     delete:
       tags: [Backups]
-      summary: 按龄批量清理加密备份（物理删除早于阈值的全部记录与密文文件）
+      summary: 批量清理加密备份（按龄 olderThanDays 或按数量 keepLast，二选一）
       description: |
-        物理删除 `created_at` 早于「当前 UTC − olderThanDays 天」的全部 `backup_record` 行及其落盘 `.enc` 密文文件，
-        不可恢复，不进入最近删除（`trash_item`）。语义同单条删除（`DELETE /backups/{backupId}`）：每行配套清理
-        密文文件（文件不存在视为已清理不报错）；若被删集合包含 `backup_schedule.last_backup_id` 指向的记录，则将该
-        软引用置空（不影响 armed 内存状态与调度配置）；`data_export_id` 软引用行不联动删除（独立历史快照，悬空可接受）。
+        批量物理删除 `backup_record` 行及其落盘 `.enc` 密文文件，不可恢复，不进入最近删除（`trash_item`）。
+        语义同单条删除（`DELETE /backups/{backupId}`）：每行配套清理密文文件（文件不存在视为已清理不报错）；
+        若被删集合包含 `backup_schedule.last_backup_id` 指向的记录，则将该软引用置空（不影响 armed 内存状态
+        与调度配置）；`data_export_id` 软引用行不联动删除（独立历史快照，悬空可接受）。
         `backup_record` 无 `version` 列，不使用 `If-Match-Version` 乐观锁；要求携带 `X-Confirm-Permanent-Delete: true`
-        确认头以防误清（缺失或非 `true` 返回 400）。必须指定 `olderThanDays`（≥1）作为清理阈值，缺省或 <1 返回 400，
-        防止误清空全部备份。passphrase 不参与清理验证（清理即销毁密钥材料）；passphrase 与派生密钥永不持久化。
-        返回清理摘要（删除记录数、清理文件数、是否置空 last_backup_id），幂等性由 `Idempotency-Key` 保证（重复回放返回相同摘要）。
+        确认头以防误清（缺失或非 `true` 返回 400）。
+
+        两种互斥清理条件，有且仅有一个：
+        - `olderThanDays`（≥1）：按龄清理，删除 `created_at` 早于「当前 UTC − N 天」的全部备份；
+        - `keepLast`（≥1）：按数量保留，保留最近 N 条（按 `created_at DESC`），删除其余全部。
+
+        同时缺省、同时出现、或任一 <1 均返回 400，防止误清空全部备份。`keepLast ≥ 现有总数` 时无备份被删，
+        返回 200 `deletedCount=0`（不报 404，空集合法）。passphrase 不参与清理验证（清理即销毁密钥材料）；
+        passphrase 与派生密钥永不持久化。返回清理摘要（删除记录数、清理文件数、是否置空 last_backup_id），
+        幂等性由 `Idempotency-Key` 保证（重复回放返回相同摘要，不重新执行清理）。
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - name: olderThanDays
           in: query
-          required: true
+          required: false
           schema: { type: integer, minimum: 1 }
-          description: 清理阈值天数（≥1），删除 created_at 早于「当前 UTC − N 天」的全部备份
+          description: 按龄清理阈值天数（≥1），删除 created_at 早于「当前 UTC − N 天」的全部备份；与 keepLast 互斥
+        - name: keepLast
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+          description: 按数量保留阈值（≥1），保留最近 N 条（created_at DESC）并删除其余；与 olderThanDays 互斥
         - name: X-Confirm-Permanent-Delete
           in: header
           required: true
@@ -2368,7 +2380,7 @@ components:
     BackupPurgeSummary:
       type: object
       required: [deletedCount, filesCleaned, lastBackupIdCleared]
-      description: 按龄批量清理加密备份的结果摘要
+      description: 批量清理加密备份的结果摘要（按龄 olderThanDays 或按数量 keepLast 通用）
       properties:
         deletedCount: { type: integer, minimum: 0, description: 实际删除的 backup_record 行数 }
         filesCleaned: { type: integer, minimum: 0, description: 清理的 .enc 密文文件数（文件不存在不计数） }

@@ -48,20 +48,26 @@ public class BackupController {
 	}
 
 	/**
-	 * 按龄批量清理：物理删除 created_at 早于「当前 UTC − olderThanDays 天」的全部备份与 .enc 文件。
-	 * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。返回清理摘要。
+	 * 批量清理加密备份：按龄（olderThanDays）或按数量（keepLast）二选一。
+	 * olderThanDays：物理删除 created_at 早于「当前 UTC − N 天」的全部备份；
+	 * keepLast：保留最近 N 条（created_at DESC），删除其余全部。
+	 * 两者互斥，有且仅有一个；复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。
 	 */
 	@DeleteMapping("/backups")
-	public ResponseEntity<BackupPurgeSummary> purgeOlderThan(
+	public ResponseEntity<BackupPurgeSummary> purgeBackups(
 			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm,
-			@RequestParam(value = "olderThanDays", required = false) @Min(1) Integer olderThanDays) {
+			@RequestParam(value = "olderThanDays", required = false) @Min(1) Integer olderThanDays,
+			@RequestParam(value = "keepLast", required = false) @Min(1) Integer keepLast) {
 		if (!Boolean.TRUE.equals(confirm)) {
 			return ResponseEntity.badRequest().build();
 		}
-		if (olderThanDays == null) {
+		// 两个清理条件互斥：有且仅有一个
+		if ((olderThanDays == null && keepLast == null) || (olderThanDays != null && keepLast != null)) {
 			return ResponseEntity.badRequest().build();
 		}
-		BackupPurgeSummary summary = service.purgeOlderThan(olderThanDays);
+		BackupPurgeSummary summary = olderThanDays != null
+			? service.purgeOlderThan(olderThanDays)
+			: service.purgeKeepingLast(keepLast);
 		return ResponseEntity.ok(summary);
 	}
 

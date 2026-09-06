@@ -16,6 +16,7 @@ import {
   useCleanOrphanFiles,
   useCreateBackup,
   useDeleteBackup,
+  useKeepLastBackups,
   usePurgeOldBackups,
   useRestoreBackup,
   useUpdateBackupSchedule,
@@ -42,6 +43,7 @@ export function EncryptedBackupSection() {
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
   const purgeOldBackups = usePurgeOldBackups()
+  const keepLastBackups = useKeepLastBackups()
   const cleanOrphanFiles = useCleanOrphanFiles()
   const [passphrase, setPassphrase] = useState('')
   const [restorePassphrase, setRestorePassphrase] = useState('')
@@ -52,6 +54,8 @@ export function EncryptedBackupSection() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [purgeDays, setPurgeDays] = useState('30')
   const [confirmingPurge, setConfirmingPurge] = useState(false)
+  const [keepLast, setKeepLast] = useState('5')
+  const [confirmingKeepLast, setConfirmingKeepLast] = useState(false)
   const [confirmingOrphanClean, setConfirmingOrphanClean] = useState(false)
 
   const submit = async () => {
@@ -151,6 +155,25 @@ export function EncryptedBackupSection() {
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
       setConfirmingPurge(false)
+    }
+  }
+
+  const submitKeepLast = async () => {
+    const n = Number(keepLast)
+    if (!Number.isInteger(n) || n < 1) {
+      pushToast('保留条数需为 ≥1 的整数', 'error')
+      return
+    }
+    try {
+      const summary = await keepLastBackups.mutateAsync(n)
+      setConfirmingKeepLast(false)
+      pushToast(
+        `已保留最近 ${n} 条，清理 ${summary.deletedCount} 条备份（${summary.filesCleaned} 个文件`
+        + `${summary.lastBackupIdCleared ? '，已置空最近备份引用' : ''}，不可恢复）`,
+      )
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setConfirmingKeepLast(false)
     }
   }
 
@@ -318,6 +341,54 @@ export function EncryptedBackupSection() {
                 onClick={() => setConfirmingPurge(true)}
               >
                 清理
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <h3 className="card-subtitle">按数量保留</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            保留最近 N 条备份（按创建时间倒序），物理删除其余全部备份及其 .enc 密文文件，不可恢复，
+            不进入最近删除。若被删集合包含最近一次定时备份引用，将置空该软引用。
+          </p>
+          <Field label="保留条数（N）" required hint="整数 ≥1，保留最近 N 条并删除其余">
+            <Input
+              type="number"
+              min={1}
+              value={keepLast}
+              onChange={(event) => setKeepLast(event.target.value)}
+              placeholder="5"
+              aria-label="保留条数"
+            />
+          </Field>
+          <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+            {confirmingKeepLast ? (
+              <>
+                <Button
+                  variant="danger"
+                  type="button"
+                  disabled={keepLastBackups.isPending}
+                  onClick={submitKeepLast}
+                >
+                  {keepLastBackups.isPending ? '清理中…' : `确认保留最近 ${keepLast} 条`}
+                </Button>
+                <Button
+                  variant="default"
+                  type="button"
+                  disabled={keepLastBackups.isPending}
+                  onClick={() => setConfirmingKeepLast(false)}
+                >
+                  取消
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="danger"
+                type="button"
+                onClick={() => setConfirmingKeepLast(true)}
+              >
+                保留最近 N 条
               </Button>
             )}
           </div>
@@ -495,7 +566,7 @@ export function EncryptedBackupSection() {
           )}
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除、按龄清理与孤儿清理均为物理删除，不可恢复。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除、按龄清理、按数量保留与孤儿清理均为物理删除，不可恢复。
         </p>
       </div>
     </section>

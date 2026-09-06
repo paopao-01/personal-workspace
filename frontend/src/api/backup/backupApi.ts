@@ -134,6 +134,31 @@ export function usePurgeOldBackups() {
 }
 
 /**
+ * 按数量保留：保留最近 N 条（created_at DESC），物理删除其余全部备份与 .enc 文件。
+ * 复用单条删除联动（删行 + 清文件 + 置空 last_backup_id 软引用）。
+ * X-Confirm-Permanent-Delete 确认头防误清；Idempotency-Key 支持安全重试。
+ */
+export async function keepLastBackups(keepLast: number): Promise<BackupPurgeSummary> {
+  const res = await apiClient.delete<BackupPurgeSummary>('/backups', {
+    params: { keepLast },
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  return res.data
+}
+
+/** 按数量保留清理；成功后刷新备份列表与调度配置（lastBackupId 可能变化）。 */
+export function useKeepLastBackups() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupPurgeSummary, Error, number>({
+    mutationFn: keepLastBackups,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
+  })
+}
+
+/**
  * 孤儿 .enc 文件扫描清理：扫描 backup-dir 下全部 .enc，物理删除无 backup_record 对应的孤儿。
  * 不写记录、不联动 last_backup_id/data_export；passphrase 不参与清理验证。
  * X-Confirm-Permanent-Delete 确认头防误清；Idempotency-Key 由拦截器自动注入，支持安全重试。
