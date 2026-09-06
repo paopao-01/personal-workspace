@@ -1,5 +1,42 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-03
+
+- 目标：实现「加密备份恢复」切片——上传 .enc 文件 + passphrase，解密后复用 `ImportService` 行级幂等恢复；数据库丢失后仍可凭文件与 passphrase 恢复，具备灾难恢复能力。承接 2026-09-06-02「下一窗口只做」恢复切片。不实现定时调度与备份删除。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `POST /backups/restore`（`multipart/form-data`：file binary + passphrase text），复用 `ImportResultReport` 响应；描述明示密文布局 `salt(16)||iv(12)||ciphertext+gcmTag`、PBKDF2 派生、行级幂等恢复、passphrase 不持久化、数据库丢失后仍可恢复。
+  - 状态机 §9 备份记录节补恢复语义：无状态只读转换，不改写 `backup_record`，GCM 认证失败即 422 不恢复，解密明文须为标准 JSON 数据包，恢复语义与标准数据恢复一致（只插缺失行，不覆盖）。
+  - 数据库 §6 补恢复为无状态只读转换说明：不新增表/迁移、不写 `backup_record`，从文件头拆 salt/iv 解密委托 `ImportService.restore`。
+  - 页面规格 P11 加「恢复备份」入口：文件选择（`.enc`）+ passphrase + 恢复按钮 + 恢复结果摘要 toast；提交后清空 passphrase；不实现定时与删除。
+  - 验收 AT-37 新增（上传恢复 + 缺失行插入 + 幂等 + 错误 passphrase 422 + 截断文件 422 + 短 passphrase 400）；05 发布门槛 AT-01~AT-37；PRD §10 P2 / §19 V1.0 标注恢复已实现。
+  - 后端 `BackupService` 加 `restore(MultipartFile, passphrase)`：校验非空/长度 → 按密文布局拆 salt(16)/iv(12)/ciphertext → `EncryptionService.decrypt`（GCM 校验失败转 422「passphrase 错误或备份文件损坏」）→ `ObjectMapper.readTree` 解析标准 JSON（失败 422）→ `ImportService.restore` 行级幂等恢复；注入 `ImportService` 依赖。`BackupController` 加 `POST /backups/restore`（`@RequestPart file` + `@RequestPart passphrase` 带 `@NotBlank @Size(min=8,max=256)`），`@Validated` 触发 `ConstraintViolationException`。
+  - `GlobalExceptionHandler` 新增 `MissingServletRequestPartException`（400，缺 part）与 `ConstraintViolationException`（400，part 校验失败）处理；`IdempotencyBodyCachingFilter` 跳过 multipart 请求（缓存会消费输入流破坏 `MultipartFile` 解析，恢复幂等由业务层行级语义保证）。
+  - `application.yml` 加 `spring.servlet.multipart.max-file-size=50MB / max-request-size=55MB`。
+  - 前端 `backupApi.ts` 加 `restoreBackup(file, passphrase)` + `useRestoreBackup`（FormData，显式置 `Content-Type: null` 让浏览器生成 multipart boundary，避免 apiClient 默认 `application/json` 覆盖）；`EncryptedBackupSection.tsx` 加恢复 UI（文件选择 + passphrase + 恢复按钮 + 提交后清空 passphrase + toast 摘要）。
+  - `DatabaseCleaner` 补 `DELETE FROM backup_record` 与 `DELETE FROM resume_version`（V24/V22 表此前漏清，导致 AT-33 在非 clean 的全量回归中因 `resume_version` 残留计数 8≠2 而失败）。
+- 未完成：不做定时调度——下一切片；不做备份删除/清理、passphrase 强度校验（仅长度）、密钥轮换、多密钥、恢复预览（dry-run）、恢复报告持久化（`ImportResultResponse` 自带 reportId，瞬态返回）。
+- 单窗口边界：本切片约 13 文件（规格 6 + 后端 4[BackupService/BackupController/GlobalExceptionHandler/IdempotencyBodyCachingFilter] + application.yml + 测试 1[BackupRestoreIntegrationTest] + 前端 2[backupApi/EncryptedBackupSection] + DatabaseCleaner + E2E 1 + 状态 1），符合 MASTER_PROMPT 单窗口边界（恢复切片为既有模块扩展，非新四层骨架）。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`、`backup/api/BackupController.java`、`common/error/GlobalExceptionHandler.java`、`common/idempotency/IdempotencyBodyCachingFilter.java`、`application.yml`、`src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`。
+  - 后端新增：`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（AT-37，4 用例）。
+  - 前端：`src/api/backup/backupApi.ts`、`src/features/settings/EncryptedBackupSection.tsx`、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（扩 AT-37 API + UI）、`e2e/p1-data-import.spec.ts`（修文件选择器 selector 适配新增的 .enc 输入）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupRestoreIntegrationTest`：4 tests，0 failures；Flyway V1→V24 成功。
+  - `cd backend && mvn clean test`：113 tests，0 failures，0 errors，0 skipped；Flyway V1→V24 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npx playwright test --reporter=dot`：32 passed，0 failed（含扩展 AT-37）。
+  - `git diff --check`：通过。
+- 验证结果：恢复链路（造数 → 生成备份 → 清空业务表 → 上传 .enc + passphrase 恢复 → 200 + 缺失行 inserted>0 + 不回显 passphrase + 重复恢复 inserted=0 幂等 + 错误 passphrase 422 + 截断文件 422 + 短 passphrase 400 + UI 文件选择/恢复按钮 disabled/启用/提交清空/完成 toast）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点（非破坏性）；无数据库迁移（恢复瞬态）；passphrase 与派生密钥不落盘、不回显、不进日志；恢复不改写 `backup_record`。
+- 已知问题：
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+  - 早期 debug 用 `JOBHUB_DB_PATH=./target/jobhub-restore-debug.db` 启动的进程若未退出会锁住该文件，导致 `mvn clean` 删除失败；需确认无残留 java 进程后再 clean（本窗口验证时已清理）。
+  - 恢复端点 multipart 请求不经 `IdempotencyBodyCachingFilter` 缓存（有意跳过），故幂等记录的请求指纹不含 multipart body；前端每次调用生成新 key，恢复幂等性由 `ImportService` 行级语义保证（重复恢复同一备份全部重复跳过），而非依赖幂等回放。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：加密定时备份调度、第三方日历同步最小化单向 ICS 订阅、备份删除/清理）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建解密/恢复逻辑；不要给 `backup_record` 加恢复记录列或迁移；不要在恢复端点存 passphrase；不要在 `IdempotencyBodyCachingFilter` 缓存 multipart body；不要改 V1~V23 既有迁移。
+
 ### 窗口 2026-09-06-02
 
 - 目标：实现 V1.0「加密定时备份」最小切片——手动触发生成加密备份文件，复用标准数据包导出经 PBKDF2 派生 AES-256-GCM 加密落盘；不实现恢复与定时调度。

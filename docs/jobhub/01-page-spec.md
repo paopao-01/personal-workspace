@@ -187,7 +187,8 @@
 - 点击按钮以输入的 passphrase 触发 `POST /api/backups`；成功后刷新备份列表并提示「已生成 <fileName>」。
 - passphrase 输入框在提交后立即清空，仅写入不回显；列表与详情不显示 passphrase、不显示解密内容。
 - 备份列表（最新优先）展示创建时间（用户时区）、文件名、大小与下载按钮（`GET /backups/{id}/download`）。
-- 本切片不提供恢复（解密重新导入）入口与定时调度，留待后续切片；passphrase 短于 8 位返回校验错误。
+- 恢复入口：在同一区块提供文件选择（`.enc`）与 passphrase 输入框（type=password，min 8）及「恢复备份」按钮。点击后以 `multipart/form-data` 上传文件与 passphrase 调用 `POST /api/backups/restore`；成功后展示恢复结果摘要（inserted/skippedIdentical/skippedConflict/skippedMissingParent/failed），失败按错误码提示「passphrase 错误或文件损坏」「备份文件格式无效」等。passphrase 输入框在提交后立即清空，仅写入不回显；恢复为幂等操作，重复恢复同一备份提示全部重复跳过。本切片不实现定时调度与备份删除。
+- passphrase 短于 8 位返回校验错误。
 
 ### P12 模拟项目面试 `/mock-interviews/:mockInterviewId`
 

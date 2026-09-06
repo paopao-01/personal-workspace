@@ -96,3 +96,4 @@
 - 本地数据库文件、导出 JSON 和附件引用均应提醒用户自行备份；应用不自动读取或上传本地路径指向的内容。
 - `evidence_attachment` 随证据业务数据进入 JSON/CSV 导出与恢复；删除采用软删除并进入最近删除，恢复只恢复该引用记录，不会恢复或触碰引用位置指向的文件。
 - 加密备份记录 `backup_record`（V24）为追加型只读历史，无状态/版本字段，生成后不可修改或删除（删除留待后续切片）。`backup_record(id, created_at, algorithm, pbkdf2_iterations, salt, iv, data_export_id, file_path, file_name, size_bytes)`：`salt` 与 `iv` 落库以供未来恢复切片从用户 passphrase 经 PBKDF2 重新派生 AES-256-GCM 密钥；passphrase 与派生密钥**永不**持久化；`data_export_id` 软引用 `data_export.id`，不加外键硬约束（与 `resume_version` 同范式）。密文文件布局为 `salt(16) || iv(12) || ciphertext+gcmTag`，落盘于 `jobhub.backup-dir`（默认 `./data/backups`）。
+- 加密备份恢复为无状态只读转换，不新增表或迁移，不写 `backup_record`：恢复端点接收上传的 .enc 文件与 passphrase，从密文文件头（`salt(16) || iv(12)`）拆出 salt/iv，按生成端相同 PBKDF2 参数派生密钥并 AES-256-GCM 解密，明文须为标准 JSON 数据包，再委托标准数据恢复（`ImportService.restore`）行级幂等恢复，仅插入缺失行，不覆盖已有行。因此数据库丢失（`backup_record` 清空）后仍可凭 .enc 文件与 passphrase 恢复。

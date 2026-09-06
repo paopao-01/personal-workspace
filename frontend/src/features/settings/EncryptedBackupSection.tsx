@@ -12,17 +12,21 @@ import {
   formatBytes,
   useBackups,
   useCreateBackup,
+  useRestoreBackup,
 } from '@/api/backup/backupApi'
 
 /**
  * 设置页「加密备份」区块：输入 passphrase 手动触发生成加密备份，
- * 列表展示历史备份与下载。passphrase 仅写入不回显，提交后清空。
- * 本切片不提供恢复入口与定时调度。
+ * 列表展示历史备份与下载，并提供上传 .enc 文件 + passphrase 的行级幂等恢复。
+ * passphrase 仅写入不回显，提交后清空。
  */
 export function EncryptedBackupSection() {
   const backupsQuery = useBackups()
   const createBackup = useCreateBackup()
+  const restoreBackup = useRestoreBackup()
   const [passphrase, setPassphrase] = useState('')
+  const [restorePassphrase, setRestorePassphrase] = useState('')
+  const [restoreFile, setRestoreFile] = useState<File | null>(null)
 
   const submit = async () => {
     if (passphrase.trim().length < 8) {
@@ -35,6 +39,36 @@ export function EncryptedBackupSection() {
       pushToast(`已生成加密备份 ${created.fileName}（${formatBytes(created.sizeBytes)}）`)
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
+    }
+  }
+
+  const submitRestore = async () => {
+    if (!restoreFile) {
+      pushToast('请选择 .enc 备份文件', 'error')
+      return
+    }
+    if (restorePassphrase.trim().length < 8) {
+      pushToast('passphrase 至少 8 位', 'error')
+      return
+    }
+    try {
+      const report = await restoreBackup.mutateAsync({
+        file: restoreFile,
+        passphrase: restorePassphrase,
+      })
+      setRestorePassphrase('')
+      setRestoreFile(null)
+      pushToast(
+        `恢复完成：插入 ${report.inserted} 行，重复跳过 ${report.skippedIdentical}，`
+        + `冲突 ${report.skippedConflict}，缺父级 ${report.skippedMissingParent}，失败 ${report.failed}`,
+      )
+      // 成功后清空 passphrase 与文件选择（仅写入不回显）
+      setRestorePassphrase('')
+      setRestoreFile(null)
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      // 出错也清空 passphrase，绝不残留
+      setRestorePassphrase('')
     }
   }
 
@@ -111,8 +145,53 @@ export function EncryptedBackupSection() {
             </div>
           )}
         </div>
+
+        <div style={{ marginTop: 16 }}>
+          <h3 className="card-subtitle">恢复备份</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            选择此前下载的 .enc 备份文件并输入生成时使用的 passphrase，解密后行级幂等恢复：
+            只插入缺失行，重复/冲突/缺父级行跳过，不覆盖任何已有数据。数据库丢失后仍可凭文件与
+            passphrase 恢复。
+          </p>
+          <Field label="备份文件" required>
+            <input
+              type="file"
+              accept=".enc,application/octet-stream"
+              onChange={(event) => setRestoreFile(event.target.files?.[0] ?? null)}
+              aria-label="选择加密备份文件"
+            />
+            <p className="form-hint">
+              {restoreFile ? `已选择 ${restoreFile.name}（${formatBytes(restoreFile.size)}）` : '仅接受 .enc 加密备份文件'}
+            </p>
+          </Field>
+          <Field label="passphrase" required>
+            <Input
+              type="password"
+              value={restorePassphrase}
+              onChange={(event) => setRestorePassphrase(event.target.value)}
+              placeholder="至少 8 位"
+              maxLength={256}
+              aria-label="恢复 passphrase"
+              autoComplete="new-password"
+            />
+          </Field>
+          <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+            <Button
+              variant="default"
+              type="button"
+              disabled={
+                restoreBackup.isPending
+                || !restoreFile
+                || restorePassphrase.trim().length < 8
+              }
+              onClick={submitRestore}
+            >
+              {restoreBackup.isPending ? '恢复中…' : '恢复备份'}
+            </Button>
+          </div>
+        </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在未来恢复切片中解密；当前不提供恢复入口。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；定时调度与备份删除留待后续切片。
         </p>
       </div>
     </section>

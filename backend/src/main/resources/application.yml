@@ -18,6 +18,10 @@ spring:
     execute-in-transaction: false
   mvc:
     throw-exception-if-no-handler-found: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 55MB
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml

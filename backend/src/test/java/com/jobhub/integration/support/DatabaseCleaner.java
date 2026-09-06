@@ -26,6 +26,8 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM idempotency_record");
 		jdbc.execute("DELETE FROM audit_log");
 		jdbc.execute("DELETE FROM trash_item");
+		jdbc.execute("DELETE FROM backup_record");
+		jdbc.execute("DELETE FROM resume_version");
 		jdbc.execute("DELETE FROM data_export");
 		jdbc.execute("DELETE FROM match_report");
 		jdbc.execute("DELETE FROM mock_interview_turn");

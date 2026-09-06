@@ -1,6 +1,7 @@
 package com.jobhub.common.error;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
 import java.util.List;
@@ -39,6 +41,27 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, msg, traceId,
 						List.of(new FieldError(ex.getHeaderName(), "must be present"))));
+	}
+
+	@ExceptionHandler(MissingServletRequestPartException.class)
+	public ResponseEntity<ErrorResponse> handleMissingPart(MissingServletRequestPartException ex) {
+		String traceId = newTraceId();
+		log.warn("Missing required part traceId={} part={}", traceId, ex.getRequestPartName());
+		List<FieldError> fieldErrors = List.of(new FieldError(ex.getRequestPartName(), "must be present"));
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, "Missing required part: " + ex.getRequestPartName(),
+						traceId, fieldErrors));
+	}
+
+	@ExceptionHandler(ConstraintViolationException.class)
+	public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
+		List<FieldError> fieldErrors = ex.getConstraintViolations().stream()
+				.map(cv -> new FieldError(cv.getPropertyPath().toString(), cv.getMessage()))
+				.collect(Collectors.toList());
+		String traceId = newTraceId();
+		log.warn("Constraint violation traceId={} errors={}", traceId, fieldErrors);
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, "Request validation failed", traceId, fieldErrors));
 	}
 
 	@ExceptionHandler(ResourceNotFoundException.class)

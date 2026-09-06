@@ -486,8 +486,26 @@ When 用户下载不存在的备份 ID
 Then 返回 404 NotFound
 ```
 
+### AT-37 加密备份恢复（上传 .enc + passphrase，行级幂等）
+
+```gherkin
+Given 用户已生成一份加密备份（.enc 文件）且数据库有部分业务数据
+When 用户清空业务数据后（或在新实例上）以 multipart 上传该 .enc 文件与正确 passphrase 调用 POST /api/backups/restore
+Then 返回 200 且响应为恢复结果报告，包含 status、inserted（>0）、各表 inserted/skipped 计数
+And 响应不包含 passphrase 字样，数据库不存储 passphrase 或派生密钥
+And 已清空的缺失行被重新插入，原有未清空行保持不变（不覆盖）
+When 用户以相同 .enc 文件与 passphrase 再次恢复
+Then inserted=0 且 skippedIdentical=首次 inserted，恢复幂等
+When 用户以错误 passphrase 恢复同一 .enc 文件
+Then 返回 422 BusinessRuleError 且不进行任何数据插入
+When 用户上传小于 28 字节（缺 salt/iv）的文件
+Then 返回 422 且提示文件格式无效
+When 用户未上传文件或 passphrase 短于 8 位
+Then 返回 400 ValidationError
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-36 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-37 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

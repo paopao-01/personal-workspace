@@ -6,6 +6,7 @@ import type { components } from '@/api/generated/types'
 
 type Schemas = components['schemas']
 export type BackupRecord = Schemas['BackupRecord']
+export type RestoreReport = Schemas['ImportResultReport']
 
 const BACKUPS_KEY = ['backups'] as const
 
@@ -49,6 +50,33 @@ export function useCreateBackup() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
     },
+  })
+}
+
+/**
+ * 恢复加密备份：上传 .enc 文件 + passphrase，解密后行级幂等恢复。
+ * 用 FormData 让浏览器设置 multipart boundary（勿手动设 Content-Type——
+ * apiClient 请求拦截器对写操作默认注入 application/json，会覆盖 multipart boundary，
+ * 此处显式删除 Content-Type 让浏览器/XHR 按 FormData 自动生成）。
+ * passphrase 仅写入不回显、不持久化。恢复为幂等操作，重复恢复同一备份提示全部重复跳过。
+ */
+export async function restoreBackup(file: File, passphrase: string): Promise<RestoreReport> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('passphrase', passphrase)
+  const res = await apiClient.post<RestoreReport>('/backups/restore', form, {
+    headers: {
+      'Idempotency-Key': newIdempotencyKey(),
+      // 删除默认注入的 application/json，让浏览器按 FormData 设 multipart/form-data; boundary=...
+      'Content-Type': null as unknown as string,
+    },
+  })
+  return res.data
+}
+
+export function useRestoreBackup() {
+  return useMutation<RestoreReport, Error, { file: File; passphrase: string }>({
+    mutationFn: ({ file, passphrase }) => restoreBackup(file, passphrase),
   })
 }
 

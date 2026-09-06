@@ -68,7 +68,7 @@ test('P1 data import validates, previews and restores an exported package', asyn
 
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: '数据导入与恢复' })).toBeVisible()
-  await page.locator('input[type="file"]').setInputFiles({
+  await page.locator('input[type="file"][accept*="application/json"]').setInputFiles({
     name: 'jobhub-package.json',
     mimeType: 'application/json',
     buffer: Buffer.from(json, 'utf-8'),

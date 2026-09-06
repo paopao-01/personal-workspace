@@ -899,6 +899,41 @@ paths:
       responses:
         '200': { description: 加密备份文件, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+  /backups/restore:
+    post:
+      tags: [Backups]
+      summary: 恢复加密备份（上传 .enc 文件 + passphrase，解密后行级幂等恢复）
+      description: |
+        接收 multipart/form-data：file 为加密备份 .enc 文件（application/octet-stream），
+        passphrase 为文本。按 .enc 密文布局（salt(16) || iv(12) || ciphertext+gcmTag）拆分，
+        用 PBKDF2（同生成端参数）从 passphrase 派生 AES-256-GCM 密钥解密，解析为标准 JSON 数据包，
+        再委托标准数据恢复（ImportService.restore）执行行级幂等恢复：仅插入缺失行，重复/冲突/缺父级行跳过并列出，
+        不覆盖任何已有行（用户事实优先）。passphrase 与派生密钥永不持久化、不回显、不进日志。
+        数据库丢失（backup_record 清空）后仍可凭 .enc 文件与 passphrase 恢复，具备灾难恢复能力。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, passphrase]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 加密备份 .enc 文件
+                passphrase:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+                  description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 解密密钥，永不回显或存储
+      responses:
+        '200':
+          description: 恢复结果报告（复用标准数据恢复结果，inserted/skipped/failed 与问题明细）
+          content: { application/json: { schema: { $ref: '#/components/schemas/ImportResultReport' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /data-imports/validate:
     post:
       tags: [DataManagement]

@@ -28,7 +28,10 @@ public class IdempotencyBodyCachingFilter extends OncePerRequestFilter {
 	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
 			throws ServletException, IOException {
 		String key = request.getHeader(HEADER);
-		if (key != null && !key.isBlank() && hasBody(request)) {
+		// multipart 请求不缓存原始请求体：缓存会消费输入流，破坏后续 getParts()/MultipartFile 解析。
+		// 恢复端点等 multipart 写操作由业务层（如 ImportService.restore 行级幂等）保证语义幂等，
+		// 幂等记录的请求指纹不含 multipart body（可接受：前端每次调用生成新 key，不依赖回放）。
+		if (key != null && !key.isBlank() && hasBody(request) && !isMultipart(request)) {
 			CachedBodyHttpServletRequest wrappedReq = new CachedBodyHttpServletRequest(request);
 			ContentCachingResponseWrapper wrappedResp = new ContentCachingResponseWrapper(response);
 			try {
@@ -45,5 +48,10 @@ public class IdempotencyBodyCachingFilter extends OncePerRequestFilter {
 		String method = request.getMethod();
 		return "POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)
 				|| "PATCH".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method);
+	}
+
+	private boolean isMultipart(HttpServletRequest request) {
+		String contentType = request.getContentType();
+		return contentType != null && contentType.toLowerCase().startsWith("multipart/");
 	}
 }
