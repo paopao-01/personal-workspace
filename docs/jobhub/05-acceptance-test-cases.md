@@ -641,8 +641,33 @@ Then 返回 200 且摘要与首次一致（deletedCount 复用首次缓存值，
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
+### AT-44 恢复后自动孤儿清理联动
+
+```gherkin
+Given backup-dir 下存在孤儿 .enc 文件（合法 UUID 命名但 backup_record 无对应 file_name，模拟 afterCommit 崩溃残留或 DB 直接删行）
+And 用户持有一份合法加密备份 .enc 文件与正确 passphrase
+When 用户在设置页恢复入口上传 .enc 文件并输入 passphrase，点击「恢复备份」（POST /api/backups/restore）
+Then 返回 200 且响应含恢复结果摘要（inserted/skippedIdentical/skippedConflict/skippedMissingParent/failed）
+And 响应含 orphanCleanSummary 字段，其中 orphanFiles ≥ 1、deletedFiles ≥ 1、freedBytes > 0
+And backup-dir 下孤儿 .enc 文件已被物理删除，合法（有 backup_record 对应）的 .enc 文件保留
+And backup_record 无任何变更（恢复不写 backup_record，自动清理只删文件不动 DB）
+When 恢复前 backup-dir 下无孤儿 .enc 文件（全部为合法备份或非 UUID 文件）
+Then 返回 200 且 orphanCleanSummary 为全 0 摘要（scannedFiles 反映扫描总数，orphanFiles=0、deletedFiles=0）
+When 用户上传错误的 passphrase 或损坏的 .enc 文件（GCM 认证失败）
+Then 返回 422 且不触发孤儿清理（响应不含 orphanCleanSummary 或恢复失败不产生清理副作用）
+When 恢复时 backup-dir 不存在
+Then 返回 200 且 orphanCleanSummary.scannedFiles=0、orphanFiles=0（自动清理不报错，恢复结果不受影响）
+When backup-dir 下存在非 UUID 命名的 .enc 文件（如用户随手放入的无关文件）
+Then 自动清理跳过该文件（计入 orphanCleanSummary.skippedFiles，不删除）
+When 用户以相同 Idempotency-Key 重复恢复（幂等回放）
+Then 返回 200 且响应（含 orphanCleanSummary）与首次一致（幂等回放不重新执行恢复与清理、不产生额外副作用）
+And 自动清理失败时不影响已提交的恢复结果（恢复已成功，orphanCleanSummary 反映尽力清理的结果）
+And 恢复端点无需 X-Confirm-Permanent-Delete 确认头（恢复非销毁性操作）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-43 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-44 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

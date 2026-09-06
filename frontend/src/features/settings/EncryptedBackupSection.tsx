@@ -88,9 +88,17 @@ export function EncryptedBackupSection() {
       })
       setRestorePassphrase('')
       setRestoreFile(null)
+      const orphan = report.orphanCleanSummary
+      const orphanSuffix =
+        orphan && orphan.deletedFiles > 0
+          ? `｜同时清理 ${orphan.deletedFiles} 个孤儿文件（释放 ${formatBytes(orphan.freedBytes)}`
+            + (orphan.skippedFiles > 0 ? `，跳过 ${orphan.skippedFiles} 个非备份文件` : '')
+            + '）'
+          : ''
       pushToast(
         `恢复完成：插入 ${report.inserted} 行，重复跳过 ${report.skippedIdentical}，`
-        + `冲突 ${report.skippedConflict}，缺父级 ${report.skippedMissingParent}，失败 ${report.failed}`,
+        + `冲突 ${report.skippedConflict}，缺父级 ${report.skippedMissingParent}，失败 ${report.failed}`
+        + orphanSuffix,
       )
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
