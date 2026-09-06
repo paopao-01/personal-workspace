@@ -119,6 +119,7 @@ export async function purgeOldBackups(olderThanDays: number): Promise<BackupPurg
 }
 
 export type BackupPurgeSummary = Schemas['BackupPurgeSummary']
+export type BackupOrphanCleanSummary = Schemas['BackupOrphanCleanSummary']
 
 /** 按龄批量清理；成功后刷新备份列表与调度配置（lastBackupId 可能变化）。 */
 export function usePurgeOldBackups() {
@@ -128,6 +129,29 @@ export function usePurgeOldBackups() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
       void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
+  })
+}
+
+/**
+ * 孤儿 .enc 文件扫描清理：扫描 backup-dir 下全部 .enc，物理删除无 backup_record 对应的孤儿。
+ * 不写记录、不联动 last_backup_id/data_export；passphrase 不参与清理验证。
+ * X-Confirm-Permanent-Delete 确认头防误清；Idempotency-Key 由拦截器自动注入，支持安全重试。
+ */
+export async function cleanOrphanFiles(): Promise<BackupOrphanCleanSummary> {
+  const res = await apiClient.post<BackupOrphanCleanSummary>('/backups/orphans/clean', null, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  return res.data
+}
+
+/** 孤儿文件清理；成功后刷新备份列表（孤儿清理不影响记录，但文件视图可同步）。 */
+export function useCleanOrphanFiles() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupOrphanCleanSummary, Error, void>({
+    mutationFn: cleanOrphanFiles,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
     },
   })
 }

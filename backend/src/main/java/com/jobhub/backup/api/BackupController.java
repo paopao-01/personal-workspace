@@ -65,6 +65,20 @@ public class BackupController {
 		return ResponseEntity.ok(summary);
 	}
 
+	/**
+	 * 扫描并清理孤儿 .enc 密文文件：物理删除 backup-dir 下无 backup_record 对应的 .enc 文件。
+	 * 不写记录、不联动 last_backup_id/data_export；passphrase 不参与清理验证。要求 X-Confirm-Permanent-Delete 确认头。
+	 */
+	@PostMapping("/backups/orphans/clean")
+	public ResponseEntity<BackupOrphanCleanSummary> cleanOrphans(
+			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm) {
+		if (!Boolean.TRUE.equals(confirm)) {
+			return ResponseEntity.badRequest().build();
+		}
+		BackupOrphanCleanSummary summary = service.cleanOrphans();
+		return ResponseEntity.ok(summary);
+	}
+
 	@GetMapping("/backups/{backupId}/download")
 	public ResponseEntity<byte[]> download(@PathVariable String backupId) {
 		BackupRecord record = service.get(backupId);

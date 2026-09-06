@@ -286,6 +286,15 @@ ABANDONED ──restore──> TODO
 - `data_export_id` 软引用行不联动删除（同单条删除语义）。
 - 文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB（同单条删除）；返回清理摘要（`deletedCount`/`filesCleaned`/`lastBackupIdCleared`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理）。
 
+**孤儿文件扫描清理**：`POST /backups/orphans/clean` 扫描 `jobhub.backup-dir` 下全部 `.enc` 文件，物理删除其中无 `backup_record` 对应的孤儿文件，补偿单条删除/按龄清理在 `afterCommit` 文件清理前崩溃残留的孤儿（或 DB 直接删行绕过服务）：
+
+- 清理前置：携带 `X-Confirm-Permanent-Delete: true` 确认头（缺失或非 `true` 返回 400）。
+- 判定规则：备份文件名恒为 `<id>.enc`（id 为 UUID），取文件名去 `.enc` 得 candidate id；**合法 UUID 且** `backup_record` 中无对应 `file_name` 的行即孤儿，删除之；非 UUID 命名的 `.enc`（如用户随手放入的无关文件）跳过不删，计入 `skippedFiles`，避免误删。
+- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`：本端点只读 DB（查 `file_name` 集合）+ 删文件，无 DB 写，无需 `afterCommit`（与单条删除/按龄清理先提交 DB 行再清文件不同——本端点不动 DB 行，直接删文件即可）。
+- 不可恢复，不进入最近删除（`trash_item`）；passphrase 不参与清理验证（同单条删除硬规则）。
+- `backup-dir` 不存在时 `scannedFiles=0`（不报错）；无孤儿时返回全 0 摘要（不报 404，空集合法）。
+- 返回清理摘要（`scannedFiles`/`orphanFiles`/`deletedFiles`/`freedBytes`/`skippedFiles`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用）。
+
 ## 8. 能力、证据与删除状态
 
 ### 8.1 技能维度
