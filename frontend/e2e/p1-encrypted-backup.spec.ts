@@ -122,6 +122,70 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
 })
 
 /**
+ * AT-39 加密备份删除：物理删除记录行 + 落盘 .enc 文件清理 + last_backup_id 软引用置空。
+ * 不可恢复、不进入最近删除；X-Confirm-Permanent-Delete 确认头防误删；passphrase 不参与删除验证。
+ */
+test('AT-39 backup delete removes record, file and clears lastBackupId', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位，保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at39-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `删除备份-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 生成一份加密备份
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at39-create-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+  expect(created.id).toBeDefined()
+
+  // UI：进入设置页，历史备份列表出现该记录与删除按钮
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+  const row = page.locator('.requirement-row', { hasText: created.fileName }).first()
+  await expect(row).toBeVisible({ timeout: 20_000 })
+  await expect(row.getByRole('button', { name: '删除' })).toBeVisible()
+
+  // 缺确认头：API 直查返回 400（不删除）
+  const noConfirmRes = await request.delete(`/api/backups/${created.id}`)
+  expect(noConfirmRes.status()).toBe(400)
+
+  // 点击删除按钮 → 内联二次确认
+  await row.getByRole('button', { name: '删除' }).click()
+  await expect(row.getByRole('button', { name: '确认删除' })).toBeVisible()
+  // 取消可回退
+  await row.getByRole('button', { name: '取消' }).click()
+  await expect(row.getByRole('button', { name: '删除' })).toBeVisible()
+
+  // 再次点击删除并确认
+  await row.getByRole('button', { name: '删除' }).click()
+  await row.getByRole('button', { name: '确认删除' }).click()
+  await expect(page.getByText(`已删除 ${created.fileName}`)).toBeVisible({ timeout: 10_000 })
+
+  // 列表不再包含该记录
+  await expect(page.locator('.requirement-row', { hasText: created.fileName })).toHaveCount(0)
+
+  // API 直查：下载该已删备份返回 404
+  const dlRes = await request.get(`/api/backups/${created.id}/download`)
+  expect(dlRes.status()).toBe(404)
+
+  // 删不存在 ID 返回 404
+  const missingRes = await request.delete(`/api/backups/99999999-9999-9999-9999-999999999999`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+  expect(missingRes.status()).toBe(404)
+})
+
+/**
  * AT-38 加密定时备份调度：内存武装 + cron 触发 + 重启解除武装 + 乐观锁 + 非法 cron。
  * passphrase 仅存内存、永不回显、不落库；armed 反映内存状态；未武装到点记 SKIPPED_DISARMED。
  * 调度器后台轮询在 e2e profile 置 1s，UI 操作后等待后台触发；last_run_at=null 时首次轮询

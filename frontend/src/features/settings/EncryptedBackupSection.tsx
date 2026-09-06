@@ -14,6 +14,7 @@ import {
   useBackups,
   useBackupSchedule,
   useCreateBackup,
+  useDeleteBackup,
   useRestoreBackup,
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
@@ -33,6 +34,7 @@ export function EncryptedBackupSection() {
   const backupsQuery = useBackups()
   const createBackup = useCreateBackup()
   const restoreBackup = useRestoreBackup()
+  const deleteBackup = useDeleteBackup()
   const scheduleQuery = useBackupSchedule()
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
@@ -42,6 +44,7 @@ export function EncryptedBackupSection() {
   const [cron, setCron] = useState('0 3 * * *')
   const [enabled, setEnabled] = useState(false)
   const [armPassphrase, setArmPassphrase] = useState('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
 
   const submit = async () => {
     if (passphrase.trim().length < 8) {
@@ -113,6 +116,17 @@ export function EncryptedBackupSection() {
     }
   }
 
+  const submitDelete = async (id: string, fileName: string) => {
+    try {
+      await deleteBackup.mutateAsync(id)
+      setConfirmingDeleteId(null)
+      pushToast(`已删除 ${fileName}（不可恢复）`)
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setConfirmingDeleteId(null)
+    }
+  }
+
   if (backupsQuery.isLoading) {
     return <Spinner label="加载备份记录…" />
   }
@@ -181,6 +195,37 @@ export function EncryptedBackupSection() {
                     >
                       下载
                     </Button>
+                    {confirmingDeleteId === record.id ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          type="button"
+                          disabled={deleteBackup.isPending}
+                          onClick={() => submitDelete(record.id, record.fileName)}
+                        >
+                          {deleteBackup.isPending ? '删除中…' : '确认删除'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          type="button"
+                          disabled={deleteBackup.isPending}
+                          onClick={() => setConfirmingDeleteId(null)}
+                        >
+                          取消
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        type="button"
+                        onClick={() => setConfirmingDeleteId(record.id)}
+                      >
+                        删除
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -319,7 +364,7 @@ export function EncryptedBackupSection() {
           )}
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；备份删除/清理留待后续切片。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除为物理删除，不可恢复。
         </p>
       </div>
     </section>

@@ -1,5 +1,41 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-05
+
+- 目标：实现「备份删除/清理」最小切片——在已完成的加密备份导出/恢复/定时调度之上加物理删除端点，删 `backup_record` 行 + 配套清理落盘 `.enc` 密文文件 + 置空 `backup_schedule.last_backup_id` 软引用。承接 2026-09-06-04「下一窗口只做」候选切片「备份删除/清理」。不实现批量/按龄清理、软删除/trash 流程、删除前 passphrase 验证、密钥轮换、联动删 `data_export`（独立历史快照，悬空软引用无外键阻拦）。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `DELETE /backups/{backupId}` 端点：返回 204，要求 `X-Confirm-Permanent-Delete: true` 确认头（缺失/非 true 返回 400），`Idempotency-Key` 支持安全重试，`backup_record` 无 version 列故不使用 `If-Match-Version`，passphrase 不参与删除验证（删除即销毁密钥材料），`data_export_id` 软引用行不联动删。描述明示物理删除不可恢复、不进入最近删除、若被删 id==last_backup_id 则置空、不影响 armed 内存状态。
+  - 状态机 §9 修订：`backup_record` 语义从「追加型只读历史，删除留待后续切片」扩展为「生成后不可修改；删除为物理删除（hard delete），不可恢复，不进入最近删除」。新增 §9.1 备份删除节：删除前置（404/400 确认头）、不使用乐观锁、passphrase 不参与删除验证、联动清理落盘文件与置空 last_backup_id、data_export_id 不联动删、文件清理在事务提交后执行失败仅记日志不回滚 DB（避免悬留已删记录却丢失文件）。
+  - 数据库 §6 修订：`backup_record` 仍为追加型只读历史，删除为物理删除，不新增 `deleted_at`/`version` 列（不新增迁移，V24/V25 不变）；删除记录时配套清理 `file_path` 指向的 `.enc` 文件与置空 `last_backup_id` 软引用；`data_export_id` 软引用行不联动删（独立历史快照，悬空可接受）。`backup_schedule` 的 `last_backup_id` 软引用被删备份指向时须置空，不阻塞删除。
+  - 页面规格 P11 修订：历史备份列表项加删除按钮（内联二次确认 → DELETE + `X-Confirm-Permanent-Delete` → 成功 toast「已删除 <fileName>」+ 列表刷新）；移除「本切片不实现定时调度与备份删除」「本切片不实现备份删除/清理」表述，底部提示改为「删除为物理删除，不可恢复」。
+  - 验收 AT-39 新增（删除 → 204 + 列表消失 + 下载 404 + .enc 文件不存在 + 删不存在 ID 404 + 缺确认头 400 + 删 last_backup_id 指向的备份后置空 + 相同 Idempotency-Key 幂等回放 204 + passphrase 不落库）；05 发布门槛 AT-01~AT-39；PRD §10 P2 / §19 V1.0 标注备份删除已实现最小切片。
+  - 后端 `BackupService` 加 `delete(String id)`：`selectById` 不存在抛 `ResourceNotFoundException`(404) → `mapper.deleteById`（affected==0 抛 404 防并发）→ `scheduleMapper.clearLastBackupIdIfMatch(id)` 置空软引用 → `TransactionSynchronizationManager.registerSynchronization` 在 `afterCommit` 清理落盘文件（`Files.deleteIfExists`，失败仅记日志不回滚已提交 DB）。注入 `BackupScheduleMapper` 新依赖。`BackupRecordMapper` 加 `@Delete deleteById`；`BackupScheduleMapper` 加 `@Update clearLastBackupIdIfMatch`；`BackupController` 加 `@DeleteMapping("/backups/{backupId}")`（`X-Confirm-Permanent-Delete` 缺失返回 400，复用 `TrashController.purge` 范式）。
+  - 文件清理时序：DB 删除在 `@Transactional` 内，文件清理在事务 `afterCommit` 回调执行——避免悬留已删记录却残留文件的一致性问题；文件已不存在视为已清理不报错；清理失败仅记日志不回滚 DB（记录已删，孤儿文件可后续人工排查）。
+  - 前端 `backupApi.ts` 加 `deleteBackup(id)` + `useDeleteBackup`（成功后 invalidate `['backups']` 与 `['backup-schedule']` 因 lastBackupId 可能变）；`EncryptedBackupSection.tsx` 历史备份列表项加删除按钮 + 内联二次确认（确认删除/取消）+ 成功 toast「已删除 <fileName>（不可恢复）」+ danger variant 按钮；重新生成 `types.ts`。
+- 未完成：不做批量/按龄清理端点（留独立切片）、不做软删除/trash 流程（backup_record 明确不走 §8.2 软删除）、不做删除前 passphrase 验证、不联动删 `data_export` 行与中间 JSON 文件（独立历史快照，悬空软引用无外键阻拦，留后续清理切片）、不做密钥轮换、不做删除审计日志。
+- 单窗口边界：本切片约 13 文件（规格 7 + 后端 5[BackupService/BackupRecordMapper/BackupScheduleMapper/BackupController + 新增 BackupDeletionIntegrationTest] + 前端 2[backupApi/EncryptedBackupSection] + E2E 1 + 状态 1[本文件，已计在规格]），略超 MASTER_PROMPT ≤10 文件边界。因删除需联动三层（DB 行 + 落盘文件 + schedule 软引用）且需新测试覆盖，无法进一步拆分。下一窗口恢复单窗口边界。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`（加 delete + 注入 BackupScheduleMapper + 事务后文件清理）、`backup/infrastructure/BackupRecordMapper.java`（加 deleteById）、`backup/infrastructure/BackupScheduleMapper.java`（加 clearLastBackupIdIfMatch）、`backup/api/BackupController.java`（加 DELETE 端点）。
+  - 后端新增：`src/test/java/com/jobhub/integration/BackupDeletionIntegrationTest.java`（AT-39，4 用例）。
+  - 前端：`src/api/backup/backupApi.ts`（加 deleteBackup/useDeleteBackup）、`src/features/settings/EncryptedBackupSection.tsx`（列表项删除按钮 + 二次确认 + toast）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（扩 AT-39）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupDeletionIntegrationTest`：4 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
+  - `cd backend && mvn clean test`：129 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：3 passed（含新增 AT-39）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：33 passed，0 failed（AT-38 首跑在全量 E2E 下因 4 个 webServer 资源竞争后台调度线程偶发 60s 超时，单独复跑 1 passed 16.7s，属既有共享库时序竞态模式，与本切片无代码关联——本切片未改调度/armed/cron 逻辑）。
+  - `git diff --check`：通过。
+- 验证结果：删除链路（造数 → 生成备份 → UI 删除按钮 → 二次确认 → 204 + 列表消失 + API 直查下载 404 + .enc 文件不存在 + 删不存在 404 + 缺确认头 400 不删 + 相同 Idempotency-Key 幂等回放 + last_backup_id 软引用置空 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点（非破坏性）；无数据库迁移（物理删行）；passphrase 与派生密钥不落盘、不回显、不进日志；删除不改写 `backup_schedule` 配置（仅置空 last_backup_id 软引用）。
+- 已知问题：
+  - 全量 E2E 下 AT-38（定时调度 cron 触发）首跑偶发 60s 超时（4 个 webServer 资源竞争后台调度线程），单独复跑通过，属既有共享库时序竞态模式，与本切片无代码关联（本切片未改调度/armed/cron/BackupScheduler）。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+  - 文件清理在事务提交后执行（afterCommit），若进程在 DB 提交后、文件清理前崩溃会留下孤儿 .enc 文件（记录已删）；当前不实现孤儿文件扫描清理，属可接受的本地单用户语义（下次删除其他备份不受影响，孤儿文件可人工从 backup-dir 清理）。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、passphrase 强度校验与策略提示、备份按龄/批量清理）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建删除/文件清理/软引用置空逻辑；不要给 backup_record 加 deleted_at/version 列或迁移；不要在删除端点存 passphrase 或做 passphrase 验证；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要给 backup_schedule 加删除方法（单行不应删）。
+
 ### 窗口 2026-09-06-04
 
 - 目标：实现「加密定时备份调度」最小切片——在已完成的加密备份导出/恢复之上加 cron 定时调度，复用 `BackupService.create(passphrase)`，passphrase 仅存进程内存武装（重启自动解除），不落盘。承接 2026-09-06-03「下一窗口只做」候选切片「加密定时备份调度」。不实现备份删除/清理、密钥轮换、passphrase 强度校验（仅长度）。

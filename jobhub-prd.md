@@ -404,7 +404,7 @@ AI 供应商配置支持删除，但仅允许删除未激活且未被已有 AI �
 - 多份简历版本对比。
 - 自动生成项目讲解稿。
 - 高级趋势分析和不同简历、渠道的效果对比。（投递渠道与简历版本效果对比已作为只读原始计数最小切片实现：`GET /analytics/channel-effectiveness` 按 `application_record.channel` 与 `resume_version` 原始填写文本分组返回投递/面试/Offer 原始计数，Offer 率在样本不足时为 null，不输出趋势结论、能力等级、归因或行动建议；不做渠道/版本文本归一化，不 JOIN 面试记录。高级趋势、跨周期归因等仍属后续。）
-- 加密定时备份、跨设备同步和移动端深度优化。（加密备份已实现手动生成与恢复：用户输入 passphrase 后手动触发，复用标准数据包导出经 PBKDF2 派生 AES-256-GCM 加密落盘，`backup_record` 记录 salt/iv 供未来恢复派生密钥，passphrase 与派生密钥永不持久化；恢复切片支持上传 .enc 文件与 passphrase 解密后行级幂等恢复，数据库丢失后仍可凭文件与 passphrase 恢复。定时调度已实现最小切片：单行 `backup_schedule` 配置 cron 表达式 + enabled + `If-Match-Version` 乐观锁，用户经 arm 端点将 passphrase 武装入进程内存（volatile，重启自动解除武装），调度器固定间隔轮询到点复用 `BackupService.create` 生成加密备份；未武装到点记 SKIPPED_DISARMED，passphrase 永不落盘。备份删除/清理、跨设备同步、移动端深度优化仍未实现。）
+- 加密定时备份、跨设备同步和移动端深度优化。（加密备份已实现手动生成与恢复：用户输入 passphrase 后手动触发，复用标准数据包导出经 PBKDF2 派生 AES-256-GCM 加密落盘，`backup_record` 记录 salt/iv 供未来恢复派生密钥，passphrase 与派生密钥永不持久化；恢复切片支持上传 .enc 文件与 passphrase 解密后行级幂等恢复，数据库丢失后仍可凭文件与 passphrase 恢复。定时调度已实现最小切片：单行 `backup_schedule` 配置 cron 表达式 + enabled + `If-Match-Version` 乐观锁，用户经 arm 端点将 passphrase 武装入进程内存（volatile，重启自动解除武装），调度器固定间隔轮询到点复用 `BackupService.create` 生成加密备份；未武装到点记 SKIPPED_DISARMED，passphrase 永不落盘。备份删除已实现最小切片：`DELETE /backups/{backupId}` 物理删除记录行与落盘 `.enc` 密文文件，不可恢复，不进入最近删除，携带 `X-Confirm-Permanent-Delete` 确认头防误删，清理 `backup_schedule.last_backup_id` 软引用，passphrase 不参与删除验证。跨设备同步、移动端深度优化仍未实现；批量/按龄清理留后续切片。）
 
 样本量不足时不得输出可能误导用户的趋势结论。
 
@@ -732,7 +732,7 @@ P1 统一封装 AI 服务接口。请求必须保存模型和提示词版本、�
 
 - 第三方日历同步。
 - 通知渠道扩展。（通用 WEBHOOK 渠道已作为最小切片提前实现，不实现 IM 专有签名，不违反 §4 P0 限制「不做即时通信工具通知」——该限制仅约束 P0。）
-- 加密备份与跨设备同步。（加密备份已实现手动生成与恢复：手动触发经 passphrase 派生 AES-256-GCM 加密落盘；恢复切片上传 .enc 文件与 passphrase 解密后行级幂等恢复。定时调度已实现最小切片：cron 配置 + 内存武装 + 固定间隔轮询复用 `BackupService.create`，passphrase 永不落盘、重启自动解除武装；备份删除/清理与跨设备同步仍留后续切片。）
+- 加密备份与跨设备同步。（加密备份已实现手动生成与恢复：手动触发经 passphrase 派生 AES-256-GCM 加密落盘；恢复切片上传 .enc 文件与 passphrase 解密后行级幂等恢复。定时调度已实现最小切片：cron 配置 + 内存武装 + 固定间隔轮询复用 `BackupService.create`，passphrase 永不落盘、重启自动解除武装。备份删除已实现最小切片：`DELETE /backups/{backupId}` 物理删除记录与 `.enc` 文件，不可恢复不进最近删除，`X-Confirm-Permanent-Delete` 确认头，清理 `last_backup_id` 软引用。跨设备同步仍留后续切片；批量/按龄清理留后续切片。）
 - 移动端深度优化。
 
 ## 19. 开发顺序建议

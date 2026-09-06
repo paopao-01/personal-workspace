@@ -940,6 +940,29 @@ paths:
           description: 武装后的配置（armed=true）
           content: { application/json: { schema: { $ref: '#/components/schemas/BackupSchedule' } } }
         '400': { $ref: '#/components/responses/ValidationError' }
+  /backups/{backupId}:
+    parameters: [ { $ref: '#/components/parameters/BackupId' } ]
+    delete:
+      tags: [Backups]
+      summary: 删除加密备份记录（物理删除，不可恢复，不进入最近删除）
+      description: |
+        物理删除指定 `backup_record` 行及其落盘的 `.enc` 密文文件，不可恢复，不进入最近删除（`trash_item`）。
+        `backup_record` 无 `version` 列，删除不使用 `If-Match-Version` 乐观锁；要求携带
+        `X-Confirm-Permanent-Delete: true` 确认头以防误删。删除为销毁性操作：删除后密文文件与
+        记录行一并清除，对应的 salt/iv 与派生密钥材料随之不可用；passphrase 不参与删除验证
+        （删除即销毁，无需再验）。若被删备份 id 等于 `backup_schedule.last_backup_id`，
+        则将该软引用置空（不影响 armed 内存状态）。`data_export_id` 软引用的导出记录行不联动删除
+        （保留为独立历史快照，悬空软引用无外键阻拦）。passphrase 与派生密钥永不持久化。
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - name: X-Confirm-Permanent-Delete
+          in: header
+          required: true
+          schema: { type: boolean, enum: [true] }
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /backups/{backupId}/download:
     parameters: [ { $ref: '#/components/parameters/BackupId' } ]
     get:

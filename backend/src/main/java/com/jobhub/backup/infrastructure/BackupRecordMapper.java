@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Result;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.type.JdbcType;
 
 import java.util.List;
@@ -37,5 +38,9 @@ public interface BackupRecordMapper {
 	@Result(column = "salt", property = "salt", jdbcType = JdbcType.VARBINARY)
 	@Result(column = "iv", property = "iv", jdbcType = JdbcType.VARBINARY)
 	List<BackupRecord> selectList();
+
+	/** 物理删除单条备份记录。返回受影响行数，0 表示记录不存在。 */
+	@Delete("DELETE FROM backup_record WHERE id = #{id}")
+	int deleteById(@Param("id") String id);
 }
 

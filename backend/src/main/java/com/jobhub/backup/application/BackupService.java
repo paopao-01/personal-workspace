@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.infrastructure.BackupRecordMapper;
+import com.jobhub.backup.infrastructure.BackupScheduleMapper;
 import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.error.ResourceNotFoundException;
 import com.jobhub.common.id.IdGenerator;
@@ -15,6 +16,8 @@ import com.jobhub.datamanagement.domain.DataExport;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Files;
@@ -37,18 +40,20 @@ public class BackupService {
 	private final ImportService importService;
 	private final EncryptionService encryption;
 	private final BackupRecordMapper mapper;
+	private final BackupScheduleMapper scheduleMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 	private final String backupDir;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	public BackupService(ExportService exportService, ImportService importService, EncryptionService encryption,
-			BackupRecordMapper mapper, IdGenerator ids, UtcTime time,
+			BackupRecordMapper mapper, BackupScheduleMapper scheduleMapper, IdGenerator ids, UtcTime time,
 			@Value("${jobhub.backup-dir:./data/backups}") String backupDir) {
 		this.exportService = exportService;
 		this.importService = importService;
 		this.encryption = encryption;
 		this.mapper = mapper;
+		this.scheduleMapper = scheduleMapper;
 		this.ids = ids;
 		this.time = time;
 		this.backupDir = backupDir;
@@ -141,6 +146,47 @@ public class BackupService {
 			throw new ResourceNotFoundException("BackupRecord", id);
 		}
 		return record;
+	}
+
+	/**
+	 * 物理删除加密备份记录：删除 backup_record 行 + 清理落盘 .enc 密文文件 + 清空 last_backup_id 软引用。
+	 * 不可恢复，不进入最近删除；passphrase 不参与删除验证（删除即销毁密钥材料）。
+	 * 文件清理在事务提交后执行（在事务内事务后置回调），文件清理失败仅记日志不回滚 DB，
+	 * 避免悬留已删记录却残留文件；文件不存在视为已清理不报错。
+	 */
+	@Transactional
+	public void delete(String id) {
+		BackupRecord record = mapper.selectById(id);
+		if (record == null) {
+			throw new ResourceNotFoundException("BackupRecord", id);
+		}
+		int affected = mapper.deleteById(id);
+		if (affected == 0) {
+			// 并发删除：记录刚被另一事务删除，对调用方表现为不存在
+			throw new ResourceNotFoundException("BackupRecord", id);
+		}
+		scheduleMapper.clearLastBackupIdIfMatch(id);
+		// 文件清理在事务提交后执行，避免悬留已删记录却残留文件
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				cleanupFileQuietly(record.getFilePath());
+			}
+		});
+	}
+
+	private void cleanupFileQuietly(String filePath) {
+		if (filePath == null || filePath.isBlank()) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(Paths.get(filePath));
+		} catch (Exception ex) {
+			// 文件清理失败不回滚已提交的 DB 删除，避免悬留已删记录却丢失文件的一致性问题；
+			// 记录日志便于人工排查孤儿文件
+			System.getLogger(BackupService.class.getName())
+				.log(System.Logger.Level.WARNING, "备份密文文件清理失败（记录已删除）：" + filePath, ex);
+		}
 	}
 
 	public byte[] readFileBytes(BackupRecord record) {
