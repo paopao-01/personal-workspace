@@ -36,6 +36,9 @@ backend/data/*.db-shm
 # Generated export files (never commit user data)
 backend/data/exports/
 
+# Generated encrypted backup files (never commit user data)
+backend/data/backups/
+
 # Keep backend/data/ directory tracked but not its db files
 !backend/data/.gitkeep
 

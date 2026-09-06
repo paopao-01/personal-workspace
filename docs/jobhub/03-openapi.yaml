@@ -870,6 +870,35 @@ paths:
             application/json:
               schema: { type: string }
         '404': { $ref: '#/components/responses/NotFound' }
+  /backups:
+    get:
+      tags: [Backups]
+      summary: 查询加密备份记录列表（最新优先）
+      responses:
+        '200': { description: 备份记录列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BackupRecord' } } } } }
+    post:
+      tags: [Backups]
+      summary: 生成加密备份（复用标准数据包，AES-256-GCM 加密；passphrase 仅写入不回显）
+      description: |
+        复用标准数据包导出生成 JSON 数据包，用 PBKDF2（随机 16B salt、10 万次迭代）从 passphrase 派生
+        AES-256-GCM 密钥加密，密文写入 backup-dir；salt 与 iv 随记录落库以供未来恢复派生密钥，
+        passphrase 与派生密钥永不持久化。备份为追加型只读历史，本端点不实现恢复。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BackupCreateRequest' } } }
+      responses:
+        '201': { description: 已生成, content: { application/json: { schema: { $ref: '#/components/schemas/BackupRecord' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /backups/{backupId}/download:
+    parameters: [ { $ref: '#/components/parameters/BackupId' } ]
+    get:
+      tags: [Backups]
+      summary: 下载加密备份文件（application/octet-stream）
+      responses:
+        '200': { description: 加密备份文件, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /data-imports/validate:
     post:
       tags: [DataManagement]
@@ -1304,6 +1333,7 @@ components:
     EvidenceId: { name: evidenceId, in: path, required: true, schema: { type: string, format: uuid } }
     EvidenceAttachmentId: { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
     ExportId: { name: exportId, in: path, required: true, schema: { type: string, format: uuid } }
+    BackupId: { name: backupId, in: path, required: true, schema: { type: string, format: uuid } }
     TrashId: { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     NotificationId: { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
     ChannelType: { name: channelType, in: path, required: true, schema: { type: string, enum: [BROWSER, EMAIL, WEBHOOK] } }
@@ -2138,6 +2168,22 @@ components:
         downloadUrl: { type: string, format: uri-reference, nullable: true, description: '相对 API 下载路径，如 /api/data-exports/{exportId}/download' }
         failureReason: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+    BackupCreateRequest:
+      type: object
+      required: [passphrase]
+      properties:
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储 }
+    BackupRecord:
+      type: object
+      required: [id, createdAt, algorithm, pbkdf2Iterations, dataExportId, fileName, sizeBytes]
+      properties:
+        id: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        algorithm: { type: string, enum: [AES_256_GCM_PBKDF2] }
+        pbkdf2Iterations: { type: integer, minimum: 1 }
+        dataExportId: { type: string, format: uuid, description: 关联的标准数据包导出 ID }
+        fileName: { type: string, description: 备份文件名，如 <id>.enc }
+        sizeBytes: { type: integer, description: 密文文件字节数 }
     DataImportPackage:
       type: object
       required: [format, exportedAt, tables]

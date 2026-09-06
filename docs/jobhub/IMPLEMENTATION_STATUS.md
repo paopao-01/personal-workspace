@@ -1,5 +1,38 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-02
+
+- 目标：实现 V1.0「加密定时备份」最小切片——手动触发生成加密备份文件，复用标准数据包导出经 PBKDF2 派生 AES-256-GCM 加密落盘；不实现恢复与定时调度。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `POST/GET /backups`、`GET /backups/{backupId}/download` 三端点与 `BackupCreateRequest`/`BackupRecord` schema、`BackupId` 参数；`BackupRecord` 不暴露 salt/iv（仅恢复所需）。
+  - 状态机 §9 新增「备份记录」节：追加型只读历史无状态转换，passphrase 经 PBKDF2 派生 AES-256-GCM，passphrase/派生密钥永不落盘，salt/iv 落库供未来恢复；生成失败不产生部分记录或残留文件。
+  - 数据库 §2 表清单加 `backup_record`，§6 补语义；V24 `backup_record`（id/created_at/algorithm/pbkdf2_iterations/salt/iv/data_export_id/file_path/file_name/size_bytes + created_at 索引），data_export_id 软引用无外键，不存 passphrase。
+  - 页面规格 P11 加「加密备份」区块：passphrase 输入 + 立即加密备份按钮 + 列表 + 下载；提交后清空、不回显、不提供恢复入口。
+  - 验收 AT-36 新增；PRD §10 P2 / §19 V1.0 标注最小切片已实现、恢复与定时留后续。
+  - 后端新增 `com.jobhub.backup` 模块：`application/EncryptionService`（PBKDF2WithHmacSHA256 10 万次迭代派生 AES-256-GCM，16B salt/12B IV/128bit tag）、`application/BackupService`（复用 `ExportService.create("JSON")`+`readExportFile` 加密落盘，密文文件布局 `salt||iv||ciphertext+tag`）、`domain/BackupRecord`、`infrastructure/BackupRecordMapper`（salt/iv 用 `JdbcType.VARBINARY` 适配 SQLite JDBC 不支持 BlobTypeHandler）、`api/BackupController`/`BackupCreateRequest`/`BackupRecordResponse`、`V24` 迁移；`application.yml`/`application-test.yml` 加 `jobhub.backup-dir`。
+  - 前端新增 `api/backup/backupApi.ts`（createBackup/listBackups/downloadBackup + useBackups/useCreateBackup + formatBytes）、`features/settings/EncryptedBackupSection.tsx`、`SettingsPage.tsx` 接入；重新生成 `types.ts`。
+- 未完成：不做恢复（解密 + 重新导入）——下一切片；不做定时调度——下一切片；不做备份删除/清理、passphrase 强度校验（仅长度）、密钥轮换、多密钥、内容校验和（GCM 已提供完整性）。
+- 单窗口边界偏差：本切片约 19 文件（规格 6 + 后端 8 + 前端 3 + 测试 1 + application.yml），超出 MASTER_PROMPT ≤10 文件边界。因 V1.0 新模块首切片需领域/infra/application/api 四层骨架，无法进一步拆分；用户已明确选择「含前端 UI」。下一窗口恢复单窗口边界（恢复切片）。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、`docs/superpowers/specs/2026-09-06-encrypted-backup-design.md`（新建）、`docs/superpowers/plans/2026-09-06-encrypted-backup.md`（新建）、本文件。
+  - 后端新增：`backup/domain/BackupRecord.java`、`backup/infrastructure/BackupRecordMapper.java`、`backup/application/EncryptionService.java`、`backup/application/BackupService.java`、`backup/api/BackupCreateRequest.java`、`backup/api/BackupRecordResponse.java`、`backup/api/BackupController.java`、`db/migration/V24__create_backup_record.sql`、`src/test/java/com/jobhub/backup/EncryptionServiceTest.java`、`src/test/java/com/jobhub/integration/BackupIntegrationTest.java`。
+  - 后端修改：`application.yml`、`application-test.yml`。
+  - 前端：`src/api/backup/backupApi.ts`、`src/features/settings/EncryptedBackupSection.tsx`、`src/features/settings/SettingsPage.tsx`、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（新增）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=EncryptionServiceTest`：4 tests，0 failures；`-Dtest=BackupIntegrationTest`：3 tests，0 failures；Flyway V1→V24 成功。
+  - `cd backend && mvn clean test`：109 tests，0 failures，0 errors，0 skipped；Flyway V1→V24 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npx playwright test --reporter=dot`：32 passed，0 failed（含新增 AT-36）。
+  - `git diff --check`：通过。
+- 验证结果：加密备份链路（造数 → UI 输入 passphrase → 触发生成 → 201 + 算法/迭代/fileName/sizeBytes + 不回显 passphrase + 文件落盘 + salt/iv 16/12B 落库 + 列表 + 下载 + 短 passphrase 400 + 不存在 404）有单元测试、集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点/schema（非破坏性）；数据库变更走 V24 迁移；passphrase 与派生密钥不落盘、不回显、不进日志。
+- 已知问题：
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+  - SQLite JDBC 不支持 `BlobTypeHandler` 读 BLOB 列为 `java.sql.Blob`，`BackupRecordMapper` 的 salt/iv 已显式声明 `JdbcType.VARBINARY` 用 `ByteArrayTypeHandler` 读取。
+- 下一窗口只做：加密备份恢复切片——`POST /backups/{id}/restore`（上传 .enc + passphrase，解密后复用 `ImportService` 行级幂等恢复），先定义 OpenAPI/页面/验收再开发；或由用户指定定时调度切片。恢复单窗口边界。
+- 不要重复做：不要重建加密/导出/落盘逻辑；不要在本切片实现恢复或定时；不要存 passphrase 或派生密钥；不要改 V1~V23 既有迁移。
+
 ### 窗口 2026-09-06-01
 
 - 目标：补齐交接记录列出的 3 处 OpenAPI 与后端契约不一致——`DELETE /ai-providers/{providerId}` 声明、`ai-jobs` cancel 方法、`GET /notification-channels` 列表端点。不开发新功能、不动业务代码、不新增迁移。

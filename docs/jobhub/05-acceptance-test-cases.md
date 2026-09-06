@@ -467,8 +467,27 @@ When 用户提供只覆盖部分投递的日期范围
 Then 计数随之更新，仍不输出趋势结论
 ```
 
+### AT-36 加密备份生成、列表与下载
+
+```gherkin
+Given 用户有可导出的岗位数据
+When 用户在设置页「加密备份」区输入 passphrase 并触发立即加密备份
+Then 返回 201 且响应包含 algorithm=AES_256_GCM_PBKDF2、pbkdf2Iterations、dataExportId、fileName、sizeBytes
+And 响应不包含 passphrase 字样，数据库不存储 passphrase 或派生密钥
+And backup-dir 下生成 <id>.enc 文件，大小与 sizeBytes 一致
+And backup_record 记录的 salt 为 16 字节、iv 为 12 字节
+When 用户查询 GET /api/backups
+Then 列表包含该记录且最新优先
+When 用户请求 GET /api/backups/{id}/download
+Then 返回 200 application/octet-stream 且响应体字节数等于 sizeBytes
+When 用户输入 passphrase 短于 8 位
+Then 返回 400 ValidationError 且不产生备份记录
+When 用户下载不存在的备份 ID
+Then 返回 404 NotFound
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-35 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-36 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

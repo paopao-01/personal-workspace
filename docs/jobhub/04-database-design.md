@@ -28,6 +28,7 @@
 | AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9/V12/V13/V14)、`ai_job_item`(V7/V8/V14) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT`、`QUESTION_CLASSIFICATION`、`ANSWER_QUALITY_ANALYSIS`、`TASK_SUGGESTION` 只保存必要输入快照与候选，均不自动覆盖主数据。任务建议采纳后通过 `task_id` 回链新建学习任务。供应商仅允许永久删除未激活且未被 `ai_job` 引用的配置，已引用配置为保留审计记录。 |
 | 模拟面试（V18–V21） | `mock_interview_session` | `mock_interview_turn` | 会话保存项目不可变快照与 AI 任务审计关联；首轮生成成功后保存讲解稿和首个追问。活动会话可保存用户作答并创建 `MOCK_INTERVIEW_FOLLOW_UP` 审计任务，成功后追加下一条 AI 追问。每个用户作答轮次至多关联一个 `MOCK_INTERVIEW_ANSWER_EVALUATION` 审计任务；成功后在该轮次保存 AI 评分、反馈、依据及完成时间。评分统计与双时间窗口对比均直接聚合已保存评分，不物化能力推断；窗口对比只在每窗至少两条评分时计算平均分及其算术差值。轮次只作为会话练习内容，绝不写回项目、技能、证据、岗位要求或任务。 |
 | 简历版本（V22） | `resume_version` | — | 仅保存用户手工确认的版本名称和内容。对比按去重后的非空文本行直接计算相同、新增与删除，不调用 AI、不判断优劣，也不改写投递记录。 |
+| 加密备份（V24） | `backup_record` | — | 追加型只读历史，无状态/版本。复用 `data_export` JSON 数据包经 PBKDF2 派生 AES-256-GCM 加密落盘；`salt`/`iv` 落库供恢复派生密钥，passphrase/派生密钥永不持久化；`data_export_id` 软引用无外键。 |
 
 ## 3. 关键数据规则
 
@@ -94,3 +95,4 @@
 - 恢复流程必须先做冲突预检。P1（V0.2）已实现导入与完整恢复（PRD 9.5）：数据包为导出端点的标准 JSON 原样回传；预检将同键行分为重复（内容一致）与冲突（内容不同），外键父行缺失的行为缺父级；恢复只插入本地缺失的行，重复、冲突与缺父级行一律跳过并列出在结果报告中，不覆盖、不修改任何已有行，因此重复恢复天然幂等。排除表（用户资料/设置、审计、幂等、导出任务、回收站）按未知表跳过；导入列以数据库实际列白名单为准。
 - 本地数据库文件、导出 JSON 和附件引用均应提醒用户自行备份；应用不自动读取或上传本地路径指向的内容。
 - `evidence_attachment` 随证据业务数据进入 JSON/CSV 导出与恢复；删除采用软删除并进入最近删除，恢复只恢复该引用记录，不会恢复或触碰引用位置指向的文件。
+- 加密备份记录 `backup_record`（V24）为追加型只读历史，无状态/版本字段，生成后不可修改或删除（删除留待后续切片）。`backup_record(id, created_at, algorithm, pbkdf2_iterations, salt, iv, data_export_id, file_path, file_name, size_bytes)`：`salt` 与 `iv` 落库以供未来恢复切片从用户 passphrase 经 PBKDF2 重新派生 AES-256-GCM 密钥；passphrase 与派生密钥**永不**持久化；`data_export_id` 软引用 `data_export.id`，不加外键硬约束（与 `resume_version` 同范式）。密文文件布局为 `salt(16) || iv(12) || ciphertext+gcmTag`，落盘于 `jobhub.backup-dir`（默认 `./data/backups`）。
