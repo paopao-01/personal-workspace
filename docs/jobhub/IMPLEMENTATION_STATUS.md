@@ -1,5 +1,40 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-09
+
+- 目标：实现「按数量保留最近 N 条备份」最小切片——在已完成的单条删除（AT-39）、按龄批量清理（AT-41）、孤儿扫描清理（AT-42）之上加 `DELETE /backups?keepLast=N`，保留最近 N 条（`created_at DESC`）物理删除其余全部，复用既有删行 + 清 `.enc` 文件 + 置空 `last_backup_id` 软引用联动。承接 2026-09-06-08「下一窗口只做」候选切片「按数量保留最近 N 条备份」。不实现按龄与按数量组合过滤、软删除/trash、删除前 passphrase 验证、密钥轮换。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI `DELETE /backups` 重构为「按龄 olderThanDays 或按数量 keepLast 二选一」：`olderThanDays` 与 `keepLast` 均改为 `required: false`、互斥（同时缺省/同时出现/<1 返回 400）；加 `keepLast` query 参数（integer，minimum 1）；描述明示两种清理条件、`keepLast ≥ 现有总数 deletedCount=0`（不报 404）、复用单条删除联动、幂等回放返回首次摘要；`BackupPurgeSummary` schema 描述改为「批量清理通用摘要」。
+  - 数据库 §6 修订：`backup_record` 按数量保留清理语义——按 `created_at DESC` 取最近 N 条为保留集，对其余全部逐条执行删行 + 清文件 + 置空 `last_backup_id` 软引用；`keepLast` 与 `olderThanDays` 互斥；`keepLast ≥ 现有总数` 全部保留 `deletedCount=0`；不新增表/列/迁移。
+  - 页面规格 P11 修订：加密备份区在「按龄批量清理」与「孤儿文件清理」之间加「按数量保留」子区块——保留条数输入（整数 ≥1）+「保留最近 N 条」按钮 + 内联二次确认（确认保留最近 N 条/取消）+ 成功 toast「已保留最近 N 条，清理 X 条备份（Y 个文件，<是否置空 last_backup_id>）」+ 列表刷新；N ≥ 现有备份数提示「已保留 N 条，清理 0 条」（不报 404）；`keepLast` 与 `olderThanDays` 互斥同时出现 400；底部提示补「按数量保留」。
+  - 验收 AT-43 新增（保留最近 N → 200 deletedCount=超出 N 条数 + filesCleaned + 最近 N 条保留 + 被删文件清理 + last_backup_id 置空 + 缺确认头 400 + 缺参数 400 + 两参数互斥 400 + keepLast=0 400 + N≥总数 200 全 0 + 幂等回放返回首次摘要 + passphrase 不落库）；05 发布门槛 AT-01~AT-43。
+  - 后端 `BackupService` 加 `purgeKeepingLast(int keepLast)`：`mapper.selectList()`（已 `created_at DESC`）取前 `keepLast` 条为保留集，对 `subList(keepLast, size)` 逐条 `deleteById` + `clearLastBackupIdIfMatch` + 收集文件 `afterCommit` 清理，返回 `BackupPurgeSummary`；`keepLast < 1` 抛 VALIDATION_ERROR，`keepLast ≥ size` 返回全 0（不报 404）。
+  - `BackupController` `DELETE /backups` 重构为 `purgeBackups`：加 `keepLast` `@RequestParam(required=false) @Min(1)`，两参数互斥校验（都缺/都 present 返回 400），分支调用 `purgeOlderThan` 或 `purgeKeepingLast`。
+  - 前端 `backupApi.ts` 加 `keepLastBackups(keepLast)` + `useKeepLastBackups`（DELETE `/backups` + `params: { keepLast }` + 确认头，成功后 invalidate `['backups']` 与 `['backup-schedule']`）；`EncryptedBackupSection.tsx` 加「按数量保留」子区块（保留条数输入 + 「保留最近 N 条」按钮 + 内联二次确认 + toast 摘要）+ 底部提示补「按数量保留」；重新生成 `types.ts`。
+  - E2E `p1-encrypted-backup.spec.ts` 加 AT-43 测试（缺确认头 400 + keepLast=0 400 + 两参数互斥 400 + 缺参数 400 + N≥总数 200 全 0 + UI 入口/二次确认可取消 + API 响应不含 passphrase）。
+- 未完成：不做按龄与按数量组合过滤（互斥即可）、不做软删除/trash、不做删除前 passphrase 验证、不做密钥轮换、不联动删 data_export、不重建删除/文件清理/软引用置空逻辑。
+- 单窗口边界：本切片 11 文件（规格 5[openapi/db-design/page-spec/AT/状态] + 状态 1[本文件] + 后端 2[BackupService/BackupController，复用 BackupPurgeSummary 不新增 schema] + 后端新增 1[BackupRetainIntegrationTest] + 前端 2[backupApi/EncryptedBackupSection] + E2E 1 + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因复用既有 BackupPurgeSummary 与全部删除联动逻辑，仅换保留集判定 + 新分支 + 新测试，与既有 AT-39/41/42 备份切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`（加 purgeKeepingLast）、`backup/api/BackupController.java`（DELETE /backups 重构为 purgeBackups + keepLast 互斥）。
+  - 后端新增：`src/test/java/com/jobhub/integration/BackupRetainIntegrationTest.java`（AT-43，8 用例）。
+  - 前端：`src/api/backup/backupApi.ts`（加 keepLastBackups/useKeepLastBackups）、`src/features/settings/EncryptedBackupSection.tsx`（加按数量保留子区块 + 底部提示）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-43）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupRetainIntegrationTest`：8 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
+  - `cd backend && mvn test -Dtest='BackupPurgeIntegrationTest,BackupDeletionIntegrationTest,BackupOrphanScanIntegrationTest,BackupIntegrationTest'`：19 tests，0 failures（AT-41 控制器签名变更未破坏既有契约）。
+  - `cd backend && mvn test`：149 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- --grep="AT-43|AT-41|AT-42" --reporter=dot`：3 passed。
+  - `cd frontend && npm run e2e -- --reporter=dot`：38 passed，0 failed（全量回归绿，无 flaky）。
+- 验证结果：按数量保留清理链路（造 5 份→keepLast=2 删 3 份最旧 + 文件清理 + last_backup_id 置空 + keepLast≥总数 0 + keepLast=0 400 + 缺确认头 400 + 两参数互斥 400 + 缺参数 400 + 幂等回放返回首次摘要 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为 `olderThanDays` required 改 false + 新增 `keepLast`（非破坏性，AT-41 既有断言全部保持成立）；无数据库迁移（复用 backup_record 既有列）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证。
+- 已知问题：
+  - E2E 无法改库 `created_at` 模拟「真实保留最近 N 条」删除链路（Playwright 走 HTTP API），该路径由后端集成测试 `BackupRetainIntegrationTest` 覆盖（直造 5 份 + keepLast=2 真实删行 + 清文件 + 置空 last_backup_id + 幂等回放）；E2E 聚焦前端契约（缺确认头 400、keepLast=0 400、两参数互斥 400、N≥总数 200 全 0、UI 入口与二次确认可取消）。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、强制 passphrase 强度门槛（从提示升级为拒绝）、备份恢复后自动孤儿清理联动）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建按数量保留/按龄清理/文件清理/软引用置空逻辑；不要给 backup_record 加 deleted_at/version 列或迁移；不要在清理端点存 passphrase 或做 passphrase 验证；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要做按龄与按数量组合过滤（互斥即可）。
+
 ### 窗口 2026-09-06-08
 
 - 目标：实现「孤儿 .enc 文件扫描清理」最小切片——在已完成的单条删除（AT-39）与按龄批量清理（AT-41）之上加 `POST /backups/orphans/clean`，扫描 `jobhub.backup-dir` 下全部 `.enc` 文件，物理删除其中无 `backup_record` 对应的孤儿，补偿单条删除/按龄清理在 `afterCommit` 文件清理前崩溃残留的孤儿（或 DB 直接删行绕过服务）。承接 2026-09-06-07「下一窗口只做」候选切片「孤儿 .enc 文件扫描清理」。不实现 dry-run、启动自动扫描、扩展到 data_export 中间 JSON 文件、孤儿审计日志、密钥轮换。

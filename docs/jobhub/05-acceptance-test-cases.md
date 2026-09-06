@@ -614,8 +614,35 @@ Then 返回 200 且摘要与首次一致（幂等回放不重新执行清理、�
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
+### AT-43 备份按数量保留清理（保留最近 N 条，删除其余全部）
+
+```gherkin
+Given 用户已生成多份加密备份（created_at 各异，列表最新优先）
+When 用户在设置页按数量保留区输入保留阈值 N 并点击「保留最近 N 条」按钮
+Then 弹出内联二次确认「将物理删除除最近 N 条外的全部备份，不可恢复，是否继续？」
+When 用户确认（DELETE /api/backups?keepLast=N 携带 X-Confirm-Permanent-Delete: true）
+Then 返回 200 且清理摘要 deletedCount 等于超出 N 条的记录数、filesCleaned 等于清理的 .enc 文件数
+And 备份列表仅保留最近 N 条（按 created_at DESC），其余记录消失
+And backup-dir 下被删记录的 .enc 文件不存在，最近 N 条的 .enc 文件保留
+When 被删集合包含 backup_schedule.last_backup_id 指向的记录
+Then last_backup_id 被置空，lastBackupIdCleared=true，armed 内存状态不受影响
+When 用户以 DELETE /api/backups?keepLast=N 但未携带 X-Confirm-Permanent-Delete: true 确认头
+Then 返回 400 ValidationError 且不删除任何记录或文件
+When 用户以 DELETE /api/backups（缺 olderThanDays 与 keepLast 两个参数）
+Then 返回 400 ValidationError
+When 用户以 olderThanDays 与 keepLast 同时出现
+Then 返回 400 ValidationError
+When 用户以 keepLast=0 或负数
+Then 返回 400 ValidationError
+When 保留阈值 N ≥ 现有备份数（deletedCount=0）
+Then 返回 200 且 deletedCount=0，不报 404（空集合法，全部保留）
+When 用户以相同 Idempotency-Key 重复清理（幂等回放）
+Then 返回 200 且摘要与首次一致（deletedCount 复用首次缓存值，幂等回放不重新执行清理、不产生副作用）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-42 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-43 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
