@@ -1,5 +1,44 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-04
+
+- 目标：实现「加密定时备份调度」最小切片——在已完成的加密备份导出/恢复之上加 cron 定时调度，复用 `BackupService.create(passphrase)`，passphrase 仅存进程内存武装（重启自动解除），不落盘。承接 2026-09-06-03「下一窗口只做」候选切片「加密定时备份调度」。不实现备份删除/清理、密钥轮换、passphrase 强度校验（仅长度）。
+- 状态：**DONE**。
+- 已完成：
+  - OpenAPI 新增 `GET/PUT /backups/schedule`、`POST /backups/schedule/arm` 三端点与 `BackupSchedule`/`BackupScheduleUpdateRequest`/`BackupArmRequest` schema；`BackupSchedule` 含 `armed`（内存武装状态，不回显 passphrase）、`version`（乐观锁）、`lastRunAt`/`lastRunStatus`/`lastRunError`/`lastBackupId`。
+  - 状态机 §9 补「定时备份调度」节：调度配置为可变元数据（cron+enabled）经 If-Match-Version 乐观锁更新；armed 为进程内存状态，应用重启自动解除武装，passphrase 永不落盘；enabled+armed+cron 到点复用 `BackupService.create`，未武装到点记 SKIPPED_DISARMED，失败记 FAILED+error 不产生部分记录；backup_record 仍追加只读，本切片不做删除。
+  - 数据库 §2 表清单加 `backup_schedule`（V25 单行配置 singleton）；§6 补语义：`cron_expression`+`enabled`+`version` 乐观锁更新，`last_run_*` 调度器系统写不 bump version，`armed` 内存不落盘，passphrase 永不持久化。
+  - 页面规格 P11 加「定时备份调度」区块：cron 输入 + 启用开关 + If-Match-Version 保存、武装按钮（passphrase 提交后清空、armed 状态指示、重启提示）、last run 状态展示、SKIPPED_DISARMED 提示。
+  - 验收 AT-38 新增（懒初始化默认行 + 更新 version 自增 + 非法 cron 422 + 旧 version 409 + 缺 If-Match 400 + 武装 armed=true 不回显 + 短 passphrase 400 + enabled+armed 到点 SUCCESS + 未武装 SKIPPED_DISARMED + disabled 不触发 + 解除武装后跳过 + passphrase 不落库）；05 发布门槛 AT-01~AT-38；PRD §10 P2 / §19 V1.0 标注定时调度最小切片已实现。
+  - 后端新增 `com.jobhub.backup` 调度层：`domain/BackupSchedule`（单行配置，SINGLETON_ID/DEFAULT_CRON 常量）、`infrastructure/BackupScheduleMapper`（selectSingleton/insert/updateConfig 乐观锁/updateLastRun 系统写不 bump version）、`application/BackupScheduleService`（get 懒初始化、update 校验 cron+乐观锁、arm/disarm 内存武装、`getArmedPassphrase`/`isArmed`、`normalizeCron` 5→6 字段归一化静态工具）、`application/BackupScheduler`（`@Scheduled(fixedDelay)` 轮询 + `runOnce()` 可测入口 + cron.next(lastRun) 到点判定 + 失败截断 error + SKIPPED_DISARMED）、`api/BackupScheduleController`（GET/PUT /backups/schedule + POST /backups/schedule/arm，复用 BackupController）、`api/BackupScheduleResponse`/`BackupScheduleUpdateRequest`/`BackupArmRequest`；`V25__create_backup_schedule.sql`。
+  - cron 表达式归一化：Spring `CronExpression` 要求 6 字段（含秒），spec 约定 5/6 字段；`normalizeCron` 把 5 字段前补 "0" 秒，校验、存储、调度解析统一走此归一化，避免 `0 3 * * *` 被误判非法。非法 cron 返回 422 BUSINESS_RULE_ERROR（非 400 VALIDATION_ERROR）。
+  - `application.yml`/`application-test.yml`/`application-e2e.yml` 加 `jobhub.backup-scan-delay-ms`（主 60s / test 1h 直调 / e2e 1s）与 `backup-scan-initial-delay-ms`；test profile 直调 `BackupScheduler.runOnce()` 保证确定性，e2e profile 后台轮询 1s 触发浏览器级断言。
+  - `DatabaseCleaner` 补 `DELETE FROM backup_schedule`（V25 表），避免跨测试残留污染乐观锁版本断言；armed 内存字段跨方法不随 DatabaseCleaner 重置，测试 `@BeforeEach` 显式 `disarm()` 避免串扰。
+  - 前端 `backupApi.ts` 加 `getBackupSchedule`/`useBackupSchedule`、`updateBackupSchedule`/`useUpdateBackupSchedule`（If-Match-Version + Idempotency-Key）、`armBackupSchedule`/`useArmBackupSchedule`；`EncryptedBackupSection.tsx` 加「定时备份调度」子区块（cron+启用+保存、武装/解除、last run 状态、armed 提示）；重新生成 `types.ts`。
+- 未完成：不做备份删除/清理（留独立切片）；不做密钥轮换、多密钥、passphrase 强度校验（仅长度 8–256）、cron 表达式 UI 预览/下次触发时间展示、定时备份失败重试策略（仅记 last_run_status=FAILED，下次到点重试）。
+- 单窗口边界：本切片约 16 文件（规格 7 + 后端 8[domain/infra/application×2/api×3/Controller/V25] + 测试 1 + 前端 2[backupApi/EncryptedBackupSection] + E2E 1 + yml 3[application/application-test/application-e2e 已计在后端修改] + 状态 1），略超 MASTER_PROMPT ≤10 文件边界。因 V1.0 新调度层需 domain/infra/application/api 骨架，无法进一步拆分；用户已明确选择「含前端 UI」。下一窗口恢复单窗口边界。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端新增：`backup/domain/BackupSchedule.java`、`backup/infrastructure/BackupScheduleMapper.java`、`backup/application/BackupScheduleService.java`、`backup/application/BackupScheduler.java`、`backup/api/BackupScheduleResponse.java`、`backup/api/BackupScheduleUpdateRequest.java`、`backup/api/BackupArmRequest.java`、`db/migration/V25__create_backup_schedule.sql`、`src/test/java/com/jobhub/integration/BackupScheduleIntegrationTest.java`。
+  - 后端修改：`backup/api/BackupController.java`（加 GET/PUT /backups/schedule + POST /backups/schedule/arm，注入 BackupScheduleService）、`application.yml`、`application-test.yml`、`application-e2e.yml`、`src/test/java/com/jobhub/integration/support/DatabaseCleaner.java`（加 DELETE FROM backup_schedule）。
+  - 前端：`src/api/backup/backupApi.ts`、`src/features/settings/EncryptedBackupSection.tsx`、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（扩 AT-38）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupScheduleIntegrationTest`：12 tests，0 failures；Flyway V1→V25 成功。
+  - `cd backend && mvn clean test`：125 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：2 passed（含新增 AT-38）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：33 passed，0 failed（全量回归绿）。
+  - `git diff --check`：通过。
+- 验证结果：定时备份链路（造数 → UI 配置 cron+启用 → 武装 passphrase → 后台轮询到点生成 backup_record + last_run_status=SUCCESS + 凭武装 passphrase 可恢复 + 未武装 SKIPPED_DISARMED + 非法 cron 422 + 旧 version 409 + 缺 If-Match 400 + passphrase 不落库不回显 + armed 重启自动 false）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为新增端点/schema（非破坏性）；数据库变更走 V25 迁移；passphrase 与派生密钥不落盘、不回显、不进日志。
+- 已知问题：
+  - 全量 E2E 下 4 个 webServer（backend + fake-ai + fake-webhook + vite dev）资源竞争可能延迟后台调度线程，AT-38 的 cron 触发等待轮询拉长到 60s（80×750ms）容错；单跑 2.5s 通过，逻辑无误，属既有共享库时序竞态模式。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示用户级 ignore 文件权限 warning，不影响仓库检查。
+  - cron 到点判定用 `CronExpression.next(lastRun)`，lastRun 为 null 时以 epoch 起点计算，启用后首次轮询立即触发（符合"距上次运行已过最近 cron 周期"语义）；停机期间错过的 cron 周期不补跑多次（仅补最近一次），符合本地单用户语义。
+  - 定时备份失败仅记 `last_run_status=FAILED`+`last_run_error`，下次 cron 到点自然重试，无独立重试间隔/退避策略。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：备份删除/清理、第三方日历同步最小化单向 ICS 订阅、passphrase 强度校验与策略提示）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建调度/cron 判定/内存武装逻辑；不要给 backup_schedule 加 passphrase 列或迁移；不要在调度端点存 passphrase；不要做备份删除/清理（留独立切片）；不要改 V1~V24 既有迁移。
+
 ### 窗口 2026-09-06-03
 
 - 目标：实现「加密备份恢复」切片——上传 .enc 文件 + passphrase，解密后复用 `ImportService` 行级幂等恢复；数据库丢失后仍可凭文件与 passphrase 恢复，具备灾难恢复能力。承接 2026-09-06-02「下一窗口只做」恢复切片。不实现定时调度与备份删除。

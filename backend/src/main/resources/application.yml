@@ -37,6 +37,8 @@ jobhub:
   reminder-scan-initial-delay-ms: ${JOBHUB_REMINDER_SCAN_INITIAL_DELAY_MS:1000}
   channel-scan-delay-ms: ${JOBHUB_CHANNEL_SCAN_DELAY_MS:60000}
   channel-scan-initial-delay-ms: ${JOBHUB_CHANNEL_SCAN_INITIAL_DELAY_MS:1000}
+  backup-scan-delay-ms: ${JOBHUB_BACKUP_SCAN_DELAY_MS:60000}
+  backup-scan-initial-delay-ms: ${JOBHUB_BACKUP_SCAN_INITIAL_DELAY_MS:1000}
 
 logging:
   level:

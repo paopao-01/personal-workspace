@@ -189,6 +189,11 @@
 - 备份列表（最新优先）展示创建时间（用户时区）、文件名、大小与下载按钮（`GET /backups/{id}/download`）。
 - 恢复入口：在同一区块提供文件选择（`.enc`）与 passphrase 输入框（type=password，min 8）及「恢复备份」按钮。点击后以 `multipart/form-data` 上传文件与 passphrase 调用 `POST /api/backups/restore`；成功后展示恢复结果摘要（inserted/skippedIdentical/skippedConflict/skippedMissingParent/failed），失败按错误码提示「passphrase 错误或文件损坏」「备份文件格式无效」等。passphrase 输入框在提交后立即清空，仅写入不回显；恢复为幂等操作，重复恢复同一备份提示全部重复跳过。本切片不实现定时调度与备份删除。
 - passphrase 短于 8 位返回校验错误。
+- 定时备份调度区块（同页内，紧接手动备份区块之下）：
+  - 显示当前调度配置：cron 表达式、是否启用、是否已武装（`armed`）、上次运行时间与状态、上次生成的备份 ID；`armed` 反映进程内存是否持有 passphrase，不回显 passphrase。
+  - 编辑表单：cron 表达式输入框（占位示例 `0 3 * * *` = 每天 3 点）、启用开关、当前 version（隐藏字段，提交作为 `If-Match-Version`）；`PUT /api/backups/schedule` 更新，版本冲突返回 409 并提示刷新后重试。
+  - 武装按钮：passphrase 输入框（type=password，min 8）+ 「武装调度器」按钮，`POST /api/backups/schedule/arm`；提交后清空 passphrase 输入框，仅写入内存，武装后 `armed=true`。应用重启后 `armed` 自动变 false，页面提示「调度器未武装，请重新输入 passphrase 武装」。
+  - 状态提示：`armed=false` 且 `enabled=true` 时到点不生成备份（记 `SKIPPED_DISARMED`），页面明确提示需武装；`last_run_status=FAILED` 时显示失败原因；不显示 passphrase、不显示解密内容。本切片不实现备份删除/清理。
 
 ### P12 模拟项目面试 `/mock-interviews/:mockInterviewId`
 

@@ -260,6 +260,12 @@ ABANDONED ──restore──> TODO
 - 备份生成失败不得产生部分 `backup_record` 记录或残留密文文件。
 - 恢复端点接收上传的 .enc 文件（密文布局 `salt(16) || iv(12) || ciphertext+gcmTag`）+ passphrase，从文件头拆出 salt/iv，按生成端相同 PBKDF2 参数派生密钥并 AES-256-GCM 解密；GCM 认证失败即 passphrase 错误或文件损坏，返回 422，不进行任何恢复。
 - 解密得到的明文须为标准 JSON 数据包（`{format, exportedAt, tables}`）；恢复语义与标准数据恢复一致：只插入缺失行，重复/冲突/缺父级行跳过并列出，不覆盖、不修改已有行（用户事实优先），重复恢复同一备份天然幂等。
+- 定时备份调度（V25 `backup_schedule` 单行配置）：
+  - 调度配置为可变元数据（`cronExpression` + `enabled`），携带 `version`，经 `If-Match-Version` 乐观锁更新；`cronExpression` 须为合法标准 5/6 字段表达式，非法返回 422。
+  - 武装（`armed`）为进程内存状态：用户经 `POST /backups/schedule/arm` 注入 passphrase 后存于 volatile 内存，永不落盘、不回显、不进日志；应用重启自动解除武装（`armed=false`），需用户重新武装。
+  - 调度器固定间隔轮询：`enabled=true` 且 `armed=true` 且 cron 到点（距上次运行已过最近一个 cron 周期）时，复用 `BackupService.create(passphrase)` 生成加密备份；成功追写 `backup_record` 并更新 `last_run_*`，失败记 `last_run_status=FAILED`+`last_run_error`，不产生部分 `backup_record` 或残留密文文件。
+  - `enabled=true` 但 `armed=false`（未武装，含重启后）到点记 `last_run_status=SKIPPED_DISARMED`，不生成备份。
+  - `backup_record` 仍为追加型只读历史，本切片不做删除/清理；定时生成与手动生成记录同表共存。
 
 ## 8. 能力、证据与删除状态
 

@@ -7,8 +7,10 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type BackupRecord = Schemas['BackupRecord']
 export type RestoreReport = Schemas['ImportResultReport']
+export type BackupSchedule = Schemas['BackupSchedule']
 
 const BACKUPS_KEY = ['backups'] as const
+const BACKUP_SCHEDULE_KEY = ['backup-schedule'] as const
 
 /** 生成加密备份：passphrase 仅写入不回显，由拦截器自动注入 Idempotency-Key。 */
 export async function createBackup(passphrase: string): Promise<BackupRecord> {
@@ -77,6 +79,66 @@ export async function restoreBackup(file: File, passphrase: string): Promise<Res
 export function useRestoreBackup() {
   return useMutation<RestoreReport, Error, { file: File; passphrase: string }>({
     mutationFn: ({ file, passphrase }) => restoreBackup(file, passphrase),
+  })
+}
+
+/**
+ * 定时备份调度配置。armed 反映进程内存武装状态，不回显 passphrase。
+ * cron 接受 5/6 字段表达式；服务端归一化为 6 字段存储。
+ */
+export async function getBackupSchedule(): Promise<BackupSchedule> {
+  const res = await apiClient.get<BackupSchedule>('/backups/schedule')
+  return res.data
+}
+
+export function useBackupSchedule() {
+  return useQuery<BackupSchedule, Error>({
+    queryKey: BACKUP_SCHEDULE_KEY,
+    queryFn: getBackupSchedule,
+  })
+}
+
+export async function updateBackupSchedule(
+  cronExpression: string,
+  enabled: boolean,
+  version: number,
+): Promise<BackupSchedule> {
+  const res = await apiClient.put<BackupSchedule>(
+    '/backups/schedule',
+    { cronExpression, enabled, version },
+    { headers: { 'Idempotency-Key': newIdempotencyKey(), 'If-Match-Version': String(version) } },
+  )
+  return res.data
+}
+
+export function useUpdateBackupSchedule() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupSchedule, Error, { cronExpression: string; enabled: boolean; version: number }>({
+    mutationFn: ({ cronExpression, enabled, version }) =>
+      updateBackupSchedule(cronExpression, enabled, version),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
+  })
+}
+
+/** 武装调度器：passphrase 仅写入内存（volatile），应用重启后清空，不回显。 */
+export async function armBackupSchedule(passphrase: string): Promise<BackupSchedule> {
+  const res = await apiClient.post<BackupSchedule>(
+    '/backups/schedule/arm',
+    { passphrase },
+    { headers: { 'Idempotency-Key': newIdempotencyKey() } },
+  )
+  return res.data
+}
+
+export function useArmBackupSchedule() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupSchedule, Error, string>({
+    mutationFn: armBackupSchedule,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
   })
 }
 

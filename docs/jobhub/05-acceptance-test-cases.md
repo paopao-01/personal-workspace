@@ -504,8 +504,34 @@ When 用户未上传文件或 passphrase 短于 8 位
 Then 返回 400 ValidationError
 ```
 
+### AT-38 加密定时备份调度（内存武装 + cron 触发 + 重启解除武装）
+
+```gherkin
+Given 备份调度未配置或处于初始状态（enabled=false）
+When 用户 PUT /api/backups/schedule 设 cronExpression="0 3 * * *" 与 enabled=true 且携带当前 version
+Then 返回 200 且配置 enabled=true、armed=false、version 自增
+When 用户以非法 cron 表达式（如 "not-a-cron"）更新
+Then 返回 422 BusinessRuleError 且不更新配置
+When 用户以旧 version 更新（版本冲突）
+Then 返回 409 VersionConflict
+Given enabled=true 且 cron 表达式已配置但 armed=false（未武装）
+When 调度器轮询到点
+Then 不生成 backup_record，last_run_status=SKIPPED_DISARMED
+When 用户 POST /api/backups/schedule/arm 以合法 passphrase（>=8）武装
+Then 返回 200 且 armed=true，响应不回显 passphrase
+Given enabled=true 且 armed=true
+When 调度器轮询到 cron 到点
+Then 生成新 backup_record，last_run_status=SUCCESS、last_run_at 更新、last_backup_id 为新生成记录 ID
+And 生成的备份文件可凭 passphrase 恢复（链路同 AT-37）
+When 备份生成失败（如 backup-dir 不可写）
+Then last_run_status=FAILED、last_run_error 有值，不产生部分 backup_record 或残留密文文件
+When 应用重启（内存 passphrase 清空，armed 自动变 false）后轮询到点
+Then 不生成备份，last_run_status=SKIPPED_DISARMED
+And 任何时刻数据库不存储 passphrase 或派生密钥，armed 仅反映内存状态
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-37 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-38 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

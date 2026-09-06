@@ -891,6 +891,55 @@ paths:
         '201': { description: 已生成, content: { application/json: { schema: { $ref: '#/components/schemas/BackupRecord' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /backups/schedule:
+    get:
+      tags: [Backups]
+      summary: 查询定时备份调度配置
+      description: |
+        返回单行调度配置（cron 表达式、enabled、armed 内存武装状态、version、上次运行结果）。
+        `armed` 反映进程内存中是否持有 passphrase：应用重启后自动为 false，需用户重新武装。
+        passphrase 与派生密钥永不持久化，`armed` 字段仅反映内存状态，不回显 passphrase。
+      responses:
+        '200':
+          description: 调度配置
+          content: { application/json: { schema: { $ref: '#/components/schemas/BackupSchedule' } } }
+    put:
+      tags: [Backups]
+      summary: 更新定时备份调度配置（cron 表达式 + enabled）
+      description: |
+        单行配置的乐观锁更新（携带当前 version）。cron 表达式须为合法标准 5/6 字段表达式。
+        enabled=false 时调度器停用；enabled=true 但未 armed（无内存 passphrase）时到点记 SKIPPED_DISARMED，
+        不生成备份。本端点不接收 passphrase（passphrase 经 arm 端点单独武装，仅存内存）。
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/IfMatchVersion' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BackupScheduleUpdateRequest' } } }
+      responses:
+        '200':
+          description: 更新后的配置
+          content: { application/json: { schema: { $ref: '#/components/schemas/BackupSchedule' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /backups/schedule/arm:
+    post:
+      tags: [Backups]
+      summary: 武装调度器（注入内存 passphrase）
+      description: |
+        将 passphrase 写入进程内存武装调度器（volatile），供定时触发时加密生成备份。
+        passphrase 仅存内存，不落盘、不回显、不进日志；应用重启后自动解除武装。
+        武装状态可通过 GET /backups/schedule 的 armed 字段查询，但不回显 passphrase。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BackupArmRequest' } } }
+      responses:
+        '200':
+          description: 武装后的配置（armed=true）
+          content: { application/json: { schema: { $ref: '#/components/schemas/BackupSchedule' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /backups/{backupId}/download:
     parameters: [ { $ref: '#/components/parameters/BackupId' } ]
     get:
@@ -2208,6 +2257,30 @@ components:
       required: [passphrase]
       properties:
         passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储 }
+    BackupArmRequest:
+      type: object
+      required: [passphrase]
+      properties:
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储 }
+    BackupScheduleUpdateRequest:
+      type: object
+      required: [cronExpression, enabled, version]
+      properties:
+        cronExpression: { type: string, description: 标准 5/6 字段 cron 表达式，如 "0 3 * * *" 每天 3 点 }
+        enabled: { type: boolean }
+        version: { type: integer, description: 当前版本，用于 If-Match-Version 乐观锁 }
+    BackupSchedule:
+      type: object
+      required: [cronExpression, enabled, armed, version]
+      properties:
+        cronExpression: { type: string, description: 标准 5/6 字段 cron 表达式 }
+        enabled: { type: boolean, description: 是否启用定时备份 }
+        armed: { type: boolean, description: 是否已在内存武装 passphrase；应用重启后为 false，需重新武装；不回显 passphrase }
+        version: { type: integer, description: 配置版本，用于乐观锁 }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastRunStatus: { type: string, enum: [SUCCESS, FAILED, SKIPPED_DISARMED], nullable: true }
+        lastRunError: { type: string, nullable: true, description: lastRunStatus=FAILED 时的失败原因 }
+        lastBackupId: { type: string, format: uuid, nullable: true, description: 上次成功生成的 backup_record.id }
     BackupRecord:
       type: object
       required: [id, createdAt, algorithm, pbkdf2Iterations, dataExportId, fileName, sizeBytes]

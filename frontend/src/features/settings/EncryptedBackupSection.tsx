@@ -10,10 +10,19 @@ import {
   backupErrorMessage,
   downloadBackup,
   formatBytes,
+  useArmBackupSchedule,
   useBackups,
+  useBackupSchedule,
   useCreateBackup,
   useRestoreBackup,
+  useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
+
+const LAST_RUN_STATUS_LABEL: Record<string, string> = {
+  SUCCESS: '成功',
+  FAILED: '失败',
+  SKIPPED_DISARMED: '跳过（未武装）',
+}
 
 /**
  * 设置页「加密备份」区块：输入 passphrase 手动触发生成加密备份，
@@ -24,9 +33,15 @@ export function EncryptedBackupSection() {
   const backupsQuery = useBackups()
   const createBackup = useCreateBackup()
   const restoreBackup = useRestoreBackup()
+  const scheduleQuery = useBackupSchedule()
+  const updateSchedule = useUpdateBackupSchedule()
+  const armSchedule = useArmBackupSchedule()
   const [passphrase, setPassphrase] = useState('')
   const [restorePassphrase, setRestorePassphrase] = useState('')
   const [restoreFile, setRestoreFile] = useState<File | null>(null)
+  const [cron, setCron] = useState('0 3 * * *')
+  const [enabled, setEnabled] = useState(false)
+  const [armPassphrase, setArmPassphrase] = useState('')
 
   const submit = async () => {
     if (passphrase.trim().length < 8) {
@@ -62,13 +77,39 @@ export function EncryptedBackupSection() {
         `恢复完成：插入 ${report.inserted} 行，重复跳过 ${report.skippedIdentical}，`
         + `冲突 ${report.skippedConflict}，缺父级 ${report.skippedMissingParent}，失败 ${report.failed}`,
       )
-      // 成功后清空 passphrase 与文件选择（仅写入不回显）
-      setRestorePassphrase('')
-      setRestoreFile(null)
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
-      // 出错也清空 passphrase，绝不残留
       setRestorePassphrase('')
+    }
+  }
+
+  const submitSchedule = async () => {
+    const schedule = scheduleQuery.data
+    if (!schedule) return
+    if (!cron.trim()) {
+      pushToast('cron 表达式不能为空', 'error')
+      return
+    }
+    try {
+      await updateSchedule.mutateAsync({ cronExpression: cron.trim(), enabled, version: schedule.version })
+      pushToast(enabled ? '定时备份已启用' : '定时备份已停用')
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+    }
+  }
+
+  const submitArm = async () => {
+    if (armPassphrase.trim().length < 8) {
+      pushToast('passphrase 至少 8 位', 'error')
+      return
+    }
+    try {
+      await armSchedule.mutateAsync(armPassphrase)
+      setArmPassphrase('')
+      pushToast('调度器已武装，应用重启后需重新武装')
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setArmPassphrase('')
     }
   }
 
@@ -80,6 +121,7 @@ export function EncryptedBackupSection() {
   }
 
   const backups = backupsQuery.data ?? []
+  const schedule = scheduleQuery.data
 
   return (
     <section className="card">
@@ -190,8 +232,94 @@ export function EncryptedBackupSection() {
             </Button>
           </div>
         </div>
+
+        <div style={{ marginTop: 16 }}>
+          <h3 className="card-subtitle">定时备份调度</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            配置 cron 表达式与启用开关，并武装调度器：passphrase 仅存进程内存（应用重启后自动解除武装，
+            需重新武装），到点自动复用加密备份生成。未武装时到点记跳过，不生成备份。passphrase 不回显、不存储。
+          </p>
+          {schedule ? (
+            <>
+              <Field label="cron 表达式" required hint="5/6 字段，如 0 3 * * * 表示每天 3 点（0 秒）">
+                <Input
+                  value={cron}
+                  onChange={(event) => setCron(event.target.value)}
+                  placeholder="0 3 * * *"
+                  aria-label="cron 表达式"
+                />
+              </Field>
+              <Field label="启用定时备份">
+                <label className="flex-row" style={{ gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(event) => setEnabled(event.target.checked)}
+                    aria-label="启用定时备份"
+                  />
+                  <span>{enabled ? '已启用' : '未启用'}</span>
+                </label>
+              </Field>
+              <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+                <Button
+                  variant="default"
+                  type="button"
+                  disabled={updateSchedule.isPending || !cron.trim()}
+                  onClick={submitSchedule}
+                >
+                  {updateSchedule.isPending ? '保存中…' : '保存调度配置'}
+                </Button>
+              </div>
+
+              <div className="requirement-row" style={{ marginTop: 12 }}>
+                <div className="requirement-main">
+                  <span className="requirement-raw">
+                    武装状态：{schedule.armed ? '已武装' : '未武装'}
+                  </span>
+                  <p className="muted" style={{ margin: '4px 0 0' }}>
+                    {schedule.armed
+                      ? '调度器已武装，到点将自动生成加密备份。应用重启后自动解除武装。'
+                      : '调度器未武装，请输入 passphrase 武装后才能定时生成备份。'}
+                  </p>
+                  {schedule.lastRunAt ? (
+                    <p className="muted" style={{ margin: '4px 0 0' }}>
+                      上次运行：{formatDateTime(schedule.lastRunAt)}
+                      {' · '}
+                      {LAST_RUN_STATUS_LABEL[schedule.lastRunStatus ?? ''] ?? schedule.lastRunStatus}
+                      {schedule.lastRunError ? ` · ${schedule.lastRunError}` : ''}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="requirement-actions">
+                  <Field label="passphrase" required>
+                    <Input
+                      type="password"
+                      value={armPassphrase}
+                      onChange={(event) => setArmPassphrase(event.target.value)}
+                      placeholder="至少 8 位"
+                      maxLength={256}
+                      aria-label="武装 passphrase"
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                  <Button
+                    size="sm"
+                    variant={schedule.armed ? 'default' : 'primary'}
+                    type="button"
+                    disabled={armSchedule.isPending || armPassphrase.trim().length < 8}
+                    onClick={submitArm}
+                  >
+                    {armSchedule.isPending ? '武装中…' : '武装调度器'}
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <Spinner label="加载调度配置…" />
+          )}
+        </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；定时调度与备份删除留待后续切片。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；备份删除/清理留待后续切片。
         </p>
       </div>
     </section>

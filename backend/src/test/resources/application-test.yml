@@ -15,6 +15,8 @@ jobhub:
   reminder-scan-initial-delay-ms: 3600000
   channel-scan-delay-ms: 3600000
   channel-scan-initial-delay-ms: 3600000
+  backup-scan-delay-ms: 3600000
+  backup-scan-initial-delay-ms: 3600000
 
 # Flyway 配置继承主 application.yml（enabled/locations/baseline-on-migrate/baseline-version/execute-in-transaction）。
 # execute-in-transaction=false 必须（V1 含 PRAGMA 非事务语句），勿在此覆盖为 true。
