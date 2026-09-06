@@ -29,6 +29,7 @@
 | 模拟面试（V18–V21） | `mock_interview_session` | `mock_interview_turn` | 会话保存项目不可变快照与 AI 任务审计关联；首轮生成成功后保存讲解稿和首个追问。活动会话可保存用户作答并创建 `MOCK_INTERVIEW_FOLLOW_UP` 审计任务，成功后追加下一条 AI 追问。每个用户作答轮次至多关联一个 `MOCK_INTERVIEW_ANSWER_EVALUATION` 审计任务；成功后在该轮次保存 AI 评分、反馈、依据及完成时间。评分统计与双时间窗口对比均直接聚合已保存评分，不物化能力推断；窗口对比只在每窗至少两条评分时计算平均分及其算术差值。轮次只作为会话练习内容，绝不写回项目、技能、证据、岗位要求或任务。 |
 | 简历版本（V22） | `resume_version` | — | 仅保存用户手工确认的版本名称和内容。对比按去重后的非空文本行直接计算相同、新增与删除，不调用 AI、不判断优劣，也不改写投递记录。 |
 | 加密备份（V24） | `backup_record` | — | 追加型只读历史，无状态/版本。复用 `data_export` JSON 数据包经 PBKDF2 派生 AES-256-GCM 加密落盘；`salt`/`iv` 落库供恢复派生密钥，passphrase/派生密钥永不持久化；`data_export_id` 软引用无外键。 |
+| 备份调度（V25） | `backup_schedule` | — | 单行配置（`singleton`）。`cronExpression` + `enabled` + `version` 经 `If-Match-Version` 乐观锁更新；`last_run_*` 由调度器系统写入（不 bump version）；`armed` 为内存状态不落盘，passphrase 永不持久化。定时生成复用 `BackupService.create`，记录与手动生成同表共存。 |
 
 ## 3. 关键数据规则
 
@@ -97,3 +98,4 @@
 - `evidence_attachment` 随证据业务数据进入 JSON/CSV 导出与恢复；删除采用软删除并进入最近删除，恢复只恢复该引用记录，不会恢复或触碰引用位置指向的文件。
 - 加密备份记录 `backup_record`（V24）为追加型只读历史，无状态/版本字段，生成后不可修改或删除（删除留待后续切片）。`backup_record(id, created_at, algorithm, pbkdf2_iterations, salt, iv, data_export_id, file_path, file_name, size_bytes)`：`salt` 与 `iv` 落库以供未来恢复切片从用户 passphrase 经 PBKDF2 重新派生 AES-256-GCM 密钥；passphrase 与派生密钥**永不**持久化；`data_export_id` 软引用 `data_export.id`，不加外键硬约束（与 `resume_version` 同范式）。密文文件布局为 `salt(16) || iv(12) || ciphertext+gcmTag`，落盘于 `jobhub.backup-dir`（默认 `./data/backups`）。
 - 加密备份恢复为无状态只读转换，不新增表或迁移，不写 `backup_record`：恢复端点接收上传的 .enc 文件与 passphrase，从密文文件头（`salt(16) || iv(12)`）拆出 salt/iv，按生成端相同 PBKDF2 参数派生密钥并 AES-256-GCM 解密，明文须为标准 JSON 数据包，再委托标准数据恢复（`ImportService.restore`）行级幂等恢复，仅插入缺失行，不覆盖已有行。因此数据库丢失（`backup_record` 清空）后仍可凭 .enc 文件与 passphrase 恢复。
+- 定时备份调度配置 `backup_schedule`（V25）为单行可变元数据（`singleton`，主键固定为 `'singleton'`）。`backup_schedule(id, cron_expression, enabled, version, last_run_at, last_run_status, last_run_error, last_backup_id)`：`cron_expression` 须为合法标准 5/6 字段表达式，非法由应用层校验返回 422；`cron_expression` + `enabled` + `version` 经 `If-Match-Version` 乐观锁更新；`last_run_at`/`last_run_status`/`last_run_error`/`last_backup_id` 由调度器在每次轮询后系统写入（不 bump `version`，不参与乐观锁）。`armed` 为进程内存状态，**不**落盘；passphrase 与派生密钥**永不**持久化（与手动备份同一硬规则），应用重启后自动 `armed=false`，需用户重新武装。定时生成复用 `BackupService.create(passphrase)`，生成的 `backup_record` 与手动生成同表共存、同追加型只读语义。本切片不做备份删除/清理。

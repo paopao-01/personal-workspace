@@ -4,3 +4,5 @@ jobhub:
   reminder-scan-initial-delay-ms: 500
   channel-scan-delay-ms: 1000
   channel-scan-initial-delay-ms: 500
+  backup-scan-delay-ms: 1000
+  backup-scan-initial-delay-ms: 500
