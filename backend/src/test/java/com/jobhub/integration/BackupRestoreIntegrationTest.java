@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 
-	private static final String PASSPHRASE = "test1234";
+	private static final String PASSPHRASE = "TestPass1234";
 
 	private static final Path BACKUP_DIR = Paths.get("./target/backups");
 

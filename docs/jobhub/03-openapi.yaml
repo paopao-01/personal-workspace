@@ -878,11 +878,15 @@ paths:
         '200': { description: 备份记录列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BackupRecord' } } } } }
     post:
       tags: [Backups]
-      summary: 生成加密备份（复用标准数据包，AES-256-GCM 加密；passphrase 仅写入不回显）
+      summary: 生成加密备份（复用标准数据包，AES-256-GCM 加密；passphrase 仅写入不回显；弱口令拒绝）
       description: |
         复用标准数据包导出生成 JSON 数据包，用 PBKDF2（随机 16B salt、10 万次迭代）从 passphrase 派生
         AES-256-GCM 密钥加密，密文写入 backup-dir；salt 与 iv 随记录落库以供未来恢复派生密钥，
         passphrase 与派生密钥永不持久化。备份为追加型只读历史，本端点不实现恢复。
+        passphrase 强度门槛（强制）：入口按与前端同一算法评估（维度：长度/字符种类/弱模式扣分，阈值
+        弱<40/中40–69/强≥70，见 02-state-machines.md §9）；score<40（弱）返回 400 VALIDATION_ERROR，
+        含 score 与失败规则，不进行加密与落盘。强度评估在内存进行，passphrase 不落盘/不进日志/不回显，
+        不新增评估端点（passphrase 本就要传给本端点派生密钥，无额外传输）。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -964,11 +968,13 @@ paths:
   /backups/schedule/arm:
     post:
       tags: [Backups]
-      summary: 武装调度器（注入内存 passphrase）
+      summary: 武装调度器（注入内存 passphrase；弱口令拒绝）
       description: |
         将 passphrase 写入进程内存武装调度器（volatile），供定时触发时加密生成备份。
         passphrase 仅存内存，不落盘、不回显、不进日志；应用重启后自动解除武装。
         武装状态可通过 GET /backups/schedule 的 armed 字段查询，但不回显 passphrase。
+        passphrase 强度门槛（强制）：入口按与前端同一算法评估（阈值弱<40，见 02-state-machines.md §9）；
+        score<40（弱）返回 400 VALIDATION_ERROR，含 score 与失败规则，不写入内存武装。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -1012,7 +1018,7 @@ paths:
   /backups/restore:
     post:
       tags: [Backups]
-      summary: 恢复加密备份（上传 .enc 文件 + passphrase，解密后行级幂等恢复）
+      summary: 恢复加密备份（上传 .enc 文件 + passphrase，解密后行级幂等恢复；passphrase 不做强校验）
       description: |
         接收 multipart/form-data：file 为加密备份 .enc 文件（application/octet-stream），
         passphrase 为文本。按 .enc 密文布局（salt(16) || iv(12) || ciphertext+gcmTag）拆分，
@@ -1020,6 +1026,8 @@ paths:
         再委托标准数据恢复（ImportService.restore）执行行级幂等恢复：仅插入缺失行，重复/冲突/缺父级行跳过并列出，
         不覆盖任何已有行（用户事实优先）。passphrase 与派生密钥永不持久化、不回显、不进日志。
         数据库丢失（backup_record 清空）后仍可凭 .enc 文件与 passphrase 恢复，具备灾难恢复能力。
+        恢复端点**不**强制 passphrase 强度门槛：passphrase 已与备份绑定（用于解密既有密文），强制无意义且会
+        锁死门槛上线前用弱口令创建的历史备份；解密失败（GCM 认证失败）返回 422，与强度无关。
         恢复成功后自动触发一次孤儿 .enc 文件扫描清理（best-effort，复用 `POST /backups/orphans/clean`
         判定逻辑：扫描 `jobhub.backup-dir` 下 `.enc`、合法 UUID 且 `backup_record` 无对应 `file_name` 即孤儿、物理删除；
         非 UUID `.enc` 跳过计入 `skippedFiles`；`backup-dir` 不存在返回全 0 摘要），清理结果在响应 `orphanCleanSummary`
@@ -1047,7 +1055,7 @@ paths:
                   type: string
                   minLength: 8
                   maxLength: 256
-                  description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 解密密钥，永不回显或存储
+                  description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 解密密钥，永不回显或存储。恢复端点不强制强度门槛（passphrase 已与备份绑定，详见端点描述）
       responses:
         '200':
           description: 恢复结果报告（复用标准数据恢复结果，inserted/skipped/failed 与问题明细）
@@ -2351,12 +2359,12 @@ components:
       type: object
       required: [passphrase]
       properties:
-        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储 }
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储。强度门槛（强制）：score<40（弱）返回 400，详见 POST /backups 描述与 02-state-machines.md §9 }
     BackupArmRequest:
       type: object
       required: [passphrase]
       properties:
-        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储 }
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储。强度门槛（强制）：score<40（弱）返回 400 }
     BackupScheduleUpdateRequest:
       type: object
       required: [cronExpression, enabled, version]

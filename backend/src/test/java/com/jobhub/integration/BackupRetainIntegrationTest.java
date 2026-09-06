@@ -69,11 +69,11 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void AT43_keepLastRetainsNewestNAndDeletesRestWithFilesAndLastBackupId() {
 		// 造 5 份备份，列表最新优先（最后造的 created_at 最晚，排最前）
-		CreatedBackup b1 = createBackup("test1234");
-		CreatedBackup b2 = createBackup("test1234");
-		CreatedBackup b3 = createBackup("test1234");
-		CreatedBackup b4 = createBackup("test1234");
-		CreatedBackup b5 = createBackup("test1234");
+		CreatedBackup b1 = createBackup("TestPass1234");
+		CreatedBackup b2 = createBackup("TestPass1234");
+		CreatedBackup b3 = createBackup("TestPass1234");
+		CreatedBackup b4 = createBackup("TestPass1234");
+		CreatedBackup b5 = createBackup("TestPass1234");
 
 		// 将 last_backup_id 指向将被删的最旧备份 b1，验证清理后软引用置空
 		jdbc.update("UPDATE backup_schedule SET last_backup_id = ? WHERE id = 'singleton'", b1.id);
@@ -117,7 +117,7 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void retainWithoutConfirmHeaderReturns400() {
-		CreatedBackup b = createBackup("test1234");
+		CreatedBackup b = createBackup("TestPass1234");
 		ResponseEntity<String> bad = retain(2, TestFixtures.newKey(), false);
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		// 记录与文件仍在（未删除）
@@ -158,7 +158,7 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void keepLastExceedingTotalReturns200WithZero() {
 		// 仅有 1 份备份，keepLast=10 ≥ 总数 → 200 deletedCount=0，全部保留
-		CreatedBackup b = createBackup("test1234");
+		CreatedBackup b = createBackup("TestPass1234");
 		ResponseEntity<String> res = retain(10, TestFixtures.newKey(), true);
 		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
 		String body = res.getBody();
@@ -174,8 +174,8 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void keepLastEqualToTotalReturns200WithZero() {
 		// keepLast = 现有总数 → 全部保留 deletedCount=0
-		CreatedBackup b1 = createBackup("test1234");
-		CreatedBackup b2 = createBackup("test1234");
+		CreatedBackup b1 = createBackup("TestPass1234");
+		CreatedBackup b2 = createBackup("TestPass1234");
 		ResponseEntity<String> res = retain(2, TestFixtures.newKey(), true);
 		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(JsonProbe.intVal(res.getBody(), "deletedCount")).isZero();
@@ -185,9 +185,9 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void retainIsIdempotentWithSameKey() {
-		CreatedBackup b1 = createBackup("test1234");
-		CreatedBackup b2 = createBackup("test1234");
-		CreatedBackup b3 = createBackup("test1234");
+		CreatedBackup b1 = createBackup("TestPass1234");
+		CreatedBackup b2 = createBackup("TestPass1234");
+		CreatedBackup b3 = createBackup("TestPass1234");
 		String key = TestFixtures.newKey();
 
 		// keepLast=1：保留 b3（最新），删除 b2、b1

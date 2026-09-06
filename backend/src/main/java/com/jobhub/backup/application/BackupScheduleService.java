@@ -59,8 +59,8 @@ public class BackupScheduleService {
 	}
 
 	/**
-	 * 武装调度器：将 passphrase 写入进程内存。仅校验长度（>=8），
-	 * 不做强度校验。武装后 armed=true；重复武装覆盖旧 passphrase。
+	 * 武装调度器：将 passphrase 写入进程内存。先校验长度（>=8），再强制强度门槛
+	 * （score<40 返回 400），武装后 armed=true；重复武装覆盖旧 passphrase。
 	 * passphrase 永不落盘、不回显。
 	 */
 	@Transactional
@@ -68,6 +68,8 @@ public class BackupScheduleService {
 		if (passphrase == null || passphrase.length() < 8 || passphrase.length() > 256) {
 			throw new BusinessRuleException(ErrorCode.VALIDATION_ERROR, "passphrase 长度需在 8–256 之间");
 		}
+		// 强度门槛（强制）：弱口令（score<40）不写入内存武装，返回 400。
+		PassphraseStrengthValidator.requireAcceptable(passphrase);
 		this.armedPassphrase = passphrase;
 		return get();
 	}

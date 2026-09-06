@@ -551,19 +551,35 @@ Then 返回 204（幂等回放，不产生副作用）
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
-### AT-40 passphrase 强度评估（纯前端、非强制、不离开浏览器）
+### AT-40 passphrase 强度评估（纯前端提示，弱口令提交由后端拒绝）
 
 ```gherkin
 Given 用户在设置页「加密备份」区的任意一处 passphrase 输入框（创建备份 / 恢复备份 / 武装调度器）
 When 用户输入一个弱 passphrase（如 "aaaaaaaa" 或 "password"）
-Then 输入框下方实时显示强度等级为「弱」并给出改进建议列表
+Then 输入框下方实时显示强度等级为「弱」并给出改进建议列表，文案提示「弱口令将无法提交」
 And 该评估在浏览器本地完成，不调用任何 API，passphrase 不离开浏览器
 When 用户改进 passphrase 至满足长度（≥12）、含大小写与数字（如 "CorrectHorse42"）
-Then 强度等级升为「强」且改进建议列表消失
-When 用户输入虽弱但满足 8–256 位长度限制的 passphrase 并点击提交（创建备份）
-Then 请求正常发出并成功（评估为弱不阻塞提交，强度仅为提示）
-And passphrase 在提交后立即清空，强度提示随输入清空一同消失
+Then 强度等级升为「中」（或「强」）且改进建议列表逐步消失
+When 用户输入虽弱但满足 8–256 位长度限制的 passphrase 并点击提交（创建备份 / 武装调度器）
+Then 后端返回 400 拒绝（弱口令 score<40），toast 显示 score 与失败规则
+And passphrase 不进行加密/落盘/武装，passphrase 在提交后立即清空，强度提示随输入清空一同消失
 And 任何时刻 passphrase 永不落盘、不进日志、不被评估 API 传输（无评估端点）
+```
+
+### AT-45 passphrase 强度强制门槛（创建/武装拒绝弱口令；恢复豁免）
+
+```gherkin
+Given 服务已启动
+When 以弱 passphrase（如 "aaaaaaaa"，score<40）调用 POST /api/backups（创建）
+Then 返回 400，错误码 VALIDATION_ERROR，message 含 "score=" 与 "≥40"
+And 不生成 backup_record，不写 .enc 文件（强度评估在加密前拦截）
+When 以弱 passphrase 调用 POST /api/backups/schedule/arm（武装）
+Then 返回 400 VALIDATION_ERROR，armed 仍为 false（未写入内存武装）
+When 以中/强 passphrase（如 "CorrectHorse42!battery"，score≥40）调用创建与武装
+Then 创建返回 201 且武装返回 200 armed=true
+When 以弱 passphrase 调用 POST /api/backups/restore（恢复，上传合法 .enc + 弱 passphrase）
+Then 不返回强度 400——恢复端点不强制门槛（passphrase 已与备份绑定），解密失败按 422 处理
+And 任意端点的响应与日志均不含 passphrase，passphrase 永不落盘/不回显/不进日志
 ```
 
 ### AT-41 备份按龄批量清理（物理删除早于阈值的全部记录与密文文件）

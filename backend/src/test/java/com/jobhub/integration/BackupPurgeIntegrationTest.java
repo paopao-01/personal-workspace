@@ -80,9 +80,9 @@ class BackupPurgeIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void AT41_purgeDeletesOldRecordsFilesAndClearsLastBackupId() {
 		// 造 3 份备份，其中 2 份改旧（10 天前），1 份保持最新
-		CreatedBackup old1 = createBackup("test1234");
-		CreatedBackup old2 = createBackup("test1234");
-		CreatedBackup recent = createBackup("test1234");
+		CreatedBackup old1 = createBackup("TestPass1234");
+		CreatedBackup old2 = createBackup("TestPass1234");
+		CreatedBackup recent = createBackup("TestPass1234");
 		ageBackup(old1.id, 10);
 		ageBackup(old2.id, 10);
 
@@ -121,7 +121,7 @@ class BackupPurgeIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void purgeWithoutConfirmHeaderReturns400() {
-		CreatedBackup b = createBackup("test1234");
+		CreatedBackup b = createBackup("TestPass1234");
 		ageBackup(b.id, 10);
 		ResponseEntity<String> bad = purge(5, TestFixtures.newKey(), false);
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -151,7 +151,7 @@ class BackupPurgeIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void purgeNoMatchReturns200WithZero() {
 		// 仅有最新备份，阈值内无匹配 → 200 deletedCount=0，不报 404
-		CreatedBackup b = createBackup("test1234");
+		CreatedBackup b = createBackup("TestPass1234");
 		ResponseEntity<String> res = purge(5, TestFixtures.newKey(), true);
 		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
 		String body = res.getBody();
@@ -166,7 +166,7 @@ class BackupPurgeIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void purgeIsIdempotentWithSameKey() {
-		CreatedBackup b = createBackup("test1234");
+		CreatedBackup b = createBackup("TestPass1234");
 		ageBackup(b.id, 10);
 		String key = TestFixtures.newKey();
 

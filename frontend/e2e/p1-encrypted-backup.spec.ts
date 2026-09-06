@@ -246,10 +246,11 @@ test('AT-39 backup delete removes record, file and clears lastBackupId', async (
 })
 
 /**
- * AT-40 passphrase 强度评估：纯前端、非强制、不离开浏览器。
- * 弱口令显示「弱」+建议；强口令升「强」且建议消失；弱口令下提交仍成功（不阻塞）。
+ * AT-40 passphrase 强度评估：纯前端提示，弱口令提交由后端拒绝。
+ * 弱口令显示「弱」+建议（含「弱口令将无法提交」）；强口令升「强」且建议消失；
+ * 弱口令提交被后端返 400 拒绝（不禁用按钮，后端是唯一闸门）。
  */
-test('AT-40 passphrase strength meter shows level and non-blocking', async ({ page, request }) => {
+test('AT-40 passphrase strength meter shows level and weak rejected by backend', async ({ page, request }) => {
   const suffix = Date.now()
 
   // 造数：一个岗位，保证导出有数据
@@ -268,10 +269,11 @@ test('AT-40 passphrase strength meter shows level and non-blocking', async ({ pa
 
   const passphraseInput = page.getByLabel('备份 passphrase')
 
-  // 1. 弱口令（纯重复字符）→ 显示「弱」并给出建议
+  // 1. 弱口令（纯重复字符）→ 显示「弱」并给出建议，含「弱口令将无法提交」提示
   await passphraseInput.fill('aaaaaaaa')
   await expect(page.getByText('强度：弱')).toBeVisible()
   await expect(page.locator('.strength-suggestions li').first()).toBeVisible()
+  await expect(page.getByText('弱口令将无法提交')).toBeVisible()
 
   // 2. 常见弱口令黑名单 → 仍为「弱」并提示
   await passphraseInput.fill('password123')
@@ -283,28 +285,19 @@ test('AT-40 passphrase strength meter shows level and non-blocking', async ({ pa
   await expect(page.getByText('强度：强')).toBeVisible()
   await expect(page.locator('.strength-suggestions')).toHaveCount(0)
 
-  // 4. 弱口令下提交仍成功（非强制，满足 8–256 位即放行）
-  await passphraseInput.fill(`weak-but-long-enough-${suffix}`)
-  // 仍可能不是 strong，但按钮应启用（长度≥8）
+  // 4. 弱口令（满足 8–256 位但 score<40）提交被后端拒绝：按钮不禁用，点击后返回 400
+  await passphraseInput.fill('aaaaaaaa')
   await expect(page.getByRole('button', { name: '立即加密备份' })).toBeEnabled()
   await page.getByRole('button', { name: '立即加密备份' }).click()
+  // 提交失败：passphrase 输入未清空（创建未成功），强度提示仍在
+  await expect(passphraseInput).toHaveValue('aaaaaaaa')
+  await expect(page.getByText('强度：弱')).toBeVisible()
 
-  // 提交成功（201）+ passphrase 清空 + 强度提示随清空消失
-  await expect(passphraseInput).toHaveValue('')
-  await expect(page.locator('.strength-meter')).toHaveCount(0)
-
-  // API 直查：响应不含 passphrase
+  // API 直查：响应不含 passphrase；弱口令未生成备份（列表不含本次「强度校验」岗位关联的新备份）
   const listRes = await request.get('/api/backups')
   expect(listRes.ok()).toBe(true)
   const listBody = JSON.stringify(await listRes.json())
   expect(listBody).not.toContain('passphrase')
-  // 清理本次生成的备份
-  const backups = await listRes.json()
-  if (Array.isArray(backups) && backups.length > 0) {
-    await request.delete(`/api/backups/${backups[0].id}`, {
-      headers: { 'X-Confirm-Permanent-Delete': 'true' },
-    })
-  }
 })
 
 /**
@@ -685,4 +678,83 @@ test('AT-43 backup keep last N retains newest and deletes the rest', async ({ pa
   expect(listRes.ok()).toBe(true)
   const listBody = JSON.stringify(await listRes.json())
   expect(listBody).not.toContain('passphrase')
+})
+
+/**
+ * AT-45 passphrase 强度强制门槛：创建与武装对弱口令返回 400（score<40）；
+ * 恢复端点豁免（passphrase 已与备份绑定，解密失败按 422，不触发强度门槛）。
+ */
+test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ request }) => {
+  const suffix = Date.now()
+
+  // 造数：一个岗位
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at45-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `门槛校验-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 1. 弱口令（纯重复）创建备份 → 400，含 score 与 ≥40
+  const weakCreate = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at45-weak-create-${crypto.randomUUID()}` },
+    data: { passphrase: 'aaaaaaaa' },
+  })
+  expect(weakCreate.status()).toBe(400)
+  const weakBody = await weakCreate.json()
+  expect(weakBody.code).toBe('VALIDATION_ERROR')
+  expect(JSON.stringify(weakBody)).toContain('score=')
+  expect(JSON.stringify(weakBody)).toContain('≥40')
+
+  // 2. 弱口令武装 → 400
+  const weakArm = await request.post('/api/backups/schedule/arm', {
+    headers: { 'Idempotency-Key': `e2e-at45-weak-arm-${crypto.randomUUID()}` },
+    data: { passphrase: 'aaaaaaaa' },
+  })
+  expect(weakArm.status()).toBe(400)
+  const weakArmBody = await weakArm.json()
+  expect(weakArmBody.code).toBe('VALIDATION_ERROR')
+
+  // 3. 中等 passphrase 创建 → 201
+  const fairCreate = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at45-fair-create-${crypto.randomUUID()}` },
+    data: { passphrase: 'CorrectHorse42' },
+  })
+  expect(fairCreate.status()).toBe(201)
+  const fairCreated = await fairCreate.json()
+  expect(JSON.stringify(fairCreated)).not.toContain('CorrectHorse42')
+
+  // 4. 中等 passphrase 武装 → 200 armed=true
+  const fairArm = await request.post('/api/backups/schedule/arm', {
+    headers: { 'Idempotency-Key': `e2e-at45-fair-arm-${crypto.randomUUID()}` },
+    data: { passphrase: 'CorrectHorse42' },
+  })
+  expect(fairArm.status()).toBe(200)
+  const fairArmBody = await fairArm.json()
+  expect(fairArmBody.armed).toBe(true)
+  expect(JSON.stringify(fairArmBody)).not.toContain('CorrectHorse42')
+
+  // 5. 恢复端点豁免门槛：弱口令恢复不返回 400（强度门槛），而是 422（解密失败）
+  const downloadRes = await request.get(`/api/backups/${fairCreated.id}/download`)
+  expect(downloadRes.ok()).toBe(true)
+  const encBuffer = await downloadRes.body()
+  const weakRestore = await request.post('/api/backups/restore', {
+    headers: { 'Idempotency-Key': `e2e-at45-weak-restore-${crypto.randomUUID()}` },
+    multipart: {
+      file: { name: fairCreated.fileName, mimeType: 'application/octet-stream', buffer: encBuffer },
+      passphrase: 'aaaaaaaa',
+    },
+  })
+  // 不返回 400 强度门槛，而是 422（弱口令非该备份 passphrase，GCM 认证失败）
+  expect(weakRestore.status()).toBe(422)
+  const weakRestoreBody = await weakRestore.json()
+  expect(JSON.stringify(weakRestoreBody)).not.toContain('score=')
+
+  // 6. 清理本次生成的备份
+  await request.delete(`/api/backups/${fairCreated.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
 })
