@@ -1020,6 +1020,16 @@ paths:
         再委托标准数据恢复（ImportService.restore）执行行级幂等恢复：仅插入缺失行，重复/冲突/缺父级行跳过并列出，
         不覆盖任何已有行（用户事实优先）。passphrase 与派生密钥永不持久化、不回显、不进日志。
         数据库丢失（backup_record 清空）后仍可凭 .enc 文件与 passphrase 恢复，具备灾难恢复能力。
+        恢复成功后自动触发一次孤儿 .enc 文件扫描清理（best-effort，复用 `POST /backups/orphans/clean`
+        判定逻辑：扫描 `jobhub.backup-dir` 下 `.enc`、合法 UUID 且 `backup_record` 无对应 `file_name` 即孤儿、物理删除；
+        非 UUID `.enc` 跳过计入 `skippedFiles`；`backup-dir` 不存在返回全 0 摘要），清理结果在响应 `orphanCleanSummary`
+        字段返回。该自动清理为防御性补偿：恢复本身不落盘 `.enc` 文件，但既有 afterCommit 崩溃残留或 DB 直接删行绕过
+        服务留下的孤儿可借此一并清理；清理在恢复成功后于事务内同步执行（`cleanOrphans` 只读 DB 查 `file_name` 集合 +
+        删文件，无 DB 写），best-effort：清理失败用 try-catch 包裹不影响恢复事务提交与响应（恢复已成功，
+        `orphanCleanSummary` 反映尽力清理的结果）。
+        passphrase 不参与清理验证（清理即销毁密钥材料）。本端点无需 `X-Confirm-Permanent-Delete` 确认头（恢复非销毁性
+        操作，附带清理是 best-effort 防御）；幂等性由 `Idempotency-Key` 保证，重复回放返回首次缓存的完整响应（含
+        `orphanCleanSummary`，不重新执行恢复与清理）。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -2452,6 +2462,10 @@ components:
     ImportResultReport:
       type: object
       required: [reportId, restoredAt, packageFingerprint, status, inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed, tableResults, issues, rowResults]
+      description: |
+        标准数据恢复结果报告（每表 inserted/skipped/failed 计数与问题明细）。
+        `orphanCleanSummary` 仅由 `POST /backups/restore` 在恢复成功后自动触发孤儿清理时填充；
+        `POST /data-imports/restore` 标准数据恢复不触发孤儿清理，该字段缺省。
       properties:
         reportId: { type: string, format: uuid }
         restoredAt: { type: string, format: date-time }
@@ -2465,6 +2479,11 @@ components:
         tableResults: { type: array, items: { $ref: '#/components/schemas/ImportTableResult' } }
         issues: { type: array, items: { $ref: '#/components/schemas/ImportIssue' } }
         rowResults: { type: array, items: { $ref: '#/components/schemas/ImportRowResult' } }
+        orphanCleanSummary:
+          nullable: true
+          description: 恢复成功后自动触发的孤儿 .enc 文件扫描清理摘要（仅 POST /backups/restore 填充；标准数据恢复缺省）。清理失败仍返回尽力清理的结果，恢复结果不受影响。
+          allOf:
+            - $ref: '#/components/schemas/BackupOrphanCleanSummary'
     ImportRowResult:
       type: object
       required: [action]

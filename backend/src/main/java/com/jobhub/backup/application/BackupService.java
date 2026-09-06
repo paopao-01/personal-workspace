@@ -138,7 +138,22 @@ public class BackupService {
 		} catch (Exception ex) {
 			throw new BusinessRuleException("解密后的内容不是合法 JSON 数据包");
 		}
-		return importService.restore(packageJson);
+		ImportResultResponse result = importService.restore(packageJson);
+		// 恢复成功后自动触发孤儿 .enc 文件扫描清理（best-effort 防御性补偿）：cleanOrphans 只读 DB 查
+		// file_name 集合 + 删文件，无 DB 写，对恢复事务无影响；清理失败用 try-catch 包裹不影响恢复结果。
+		BackupOrphanCleanSummary orphanSummary;
+		try {
+			orphanSummary = cleanOrphans();
+		} catch (Exception ex) {
+			// 清理失败不影响已成功的恢复：记日志，摘要置 null（响应仍正常返回恢复结果）
+			System.getLogger(BackupService.class.getName())
+				.log(System.Logger.Level.WARNING, "恢复后自动孤儿清理失败", ex);
+			orphanSummary = null;
+		}
+		return new ImportResultResponse(result.reportId(), result.restoredAt(), result.packageFingerprint(),
+			result.status(), result.inserted(), result.skippedIdentical(), result.skippedConflict(),
+			result.skippedMissingParent(), result.failed(), result.tableResults(), result.issues(),
+			result.rowResults(), orphanSummary);
 	}
 
 	public List<BackupRecord> list() {

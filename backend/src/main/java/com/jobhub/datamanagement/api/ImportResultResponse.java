@@ -1,7 +1,11 @@
 package com.jobhub.datamanagement.api;
 
+import com.jobhub.backup.api.BackupOrphanCleanSummary;
+
 /**
  * 恢复结果报告（PRD 9.5）：只插入缺失行，重复/冲突/缺父级行一律跳过并列出。
+ * orphanCleanSummary 仅在 {@code POST /backups/restore} 恢复成功后自动触发孤儿清理时填充；
+ * 标准数据恢复 {@code POST /data-imports/restore} 不触发孤儿清理，该字段恒为 null。
  */
 public record ImportResultResponse(
 	String reportId,
@@ -15,7 +19,8 @@ public record ImportResultResponse(
 	int failed,
 	java.util.List<TableResult> tableResults,
 	java.util.List<ImportIssueResponse> issues,
-	java.util.List<ImportRowResult> rowResults
+	java.util.List<ImportRowResult> rowResults,
+	BackupOrphanCleanSummary orphanCleanSummary
 ) {
 	public record TableResult(
 		String tableName,

@@ -1,5 +1,45 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-06-10
+
+- 目标：实现「恢复后自动孤儿清理联动」最小切片——在已完成的加密备份恢复（AT-37）与孤儿 .enc 文件扫描清理（AT-42）之上，让 `POST /backups/restore` 恢复成功后于事务内自动触发一次 `cleanOrphans()`（best-effort 防御性补偿），清理结果随响应 `orphanCleanSummary` 字段返回。承接 2026-09-06-09「下一窗口只做」候选切片「备份恢复后自动孤儿清理联动」。不实现强制 passphrase 强度门槛、第三方日历 ICS 订阅、密钥轮换、dry-run。
+- 状态：**DONE**。
+- 已完成：
+  - 关键发现：`BackupService.restore` 全程内存处理客户端上传的 .enc 文件，**不落盘任何 .enc 文件**，故 restore 本身不产生孤儿。孤儿 .enc 真实来源是 delete/purge 的 `afterCommit` 崩溃残留（窗口 2026-09-06-07 已知问题 #4）+ DB 直接删行绕过服务。因此本切片语义为「恢复成功后防御性补偿清理 backup-dir 历史累积孤儿」，非「清理恢复自己产生的孤儿」。
+  - 时序设计修正：原计划 afterCommit 触发清理，但 afterCommit 在响应构建后才执行，无法把摘要写入响应。`cleanOrphans()` 只读 DB（查 `file_name` 集合）+ 删文件、无 DB 写，对恢复事务无影响，故改为在 `importService.restore()` 成功返回后、`return` 前于事务内同步调用，用 try-catch 包裹失败（清理失败记日志、摘要置 null，不影响恢复事务提交与响应）。满足「恢复成功后才清理」（恢复失败在调 cleanOrphans 前即抛 422）且能返回摘要。
+  - OpenAPI `/backups/restore` 描述补「恢复成功后自动触发孤儿 .enc 文件扫描清理（best-effort，复用 `POST /backups/orphans/clean` 判定逻辑），清理结果在响应 `orphanCleanSummary` 字段返回；无孤儿全 0；清理失败不影响恢复；本端点无需 `X-Confirm-Permanent-Delete` 确认头；幂等回放返回首次摘要」。
+  - OpenAPI `ImportResultReport` schema 加可选 `orphanCleanSummary` 字段（`allOf` 引用 `BackupOrphanCleanSummary`，nullable，非 required），描述注明「仅 `POST /backups/restore` 填充；`POST /data-imports/restore` 标准数据恢复不触发，该字段为 null」。给通用 schema 加可选字段对既有消费者（`ImportRestoreSection`）透明不破坏。
+  - 状态机 §9.1 加「恢复后自动孤儿清理联动」节：触发时机（恢复成功后事务内同步，恢复失败不触发）、防御性补偿语义、cleanOrphans 无 DB 写对恢复事务无影响、best-effort 失败用 try-catch 不影响恢复、不写 backup_record/不联动 last_backup_id/data_export、无需确认头、结果经响应 orphanCleanSummary 返回、幂等回放返回首次摘要。
+  - 数据库 §6 恢复节补「恢复成功后于事务内同步触发 cleanOrphans，不新增表/列/迁移，只读 DB + 删文件无 DB 写，失败用 try-catch 不影响恢复事务提交，结果经响应 orphanCleanSummary 返回，标准数据恢复不触发该字段为 null」。
+  - 页面规格 P11 恢复入口补「恢复成功后后端自动触发一次孤儿 .enc 文件扫描清理（best-effort，无需用户额外操作或确认），清理结果随响应返回并在恢复成功 toast 追加展示『同时清理 X 个孤儿文件（释放 Y B，跳过 Z 个非备份文件）』；无孤儿时不追加（全 0 摘要可省略）」。
+  - 验收 AT-44 新增（造孤儿 + restore → 200 orphanCleanSummary 反映删除 + 文件实际清理 + 合法文件保留 + backup_record 无变更 + 无孤儿全 0 + 非 UUID skipped + 恢复失败不触发 + 幂等回放返回首次摘要 + 无需确认头 + passphrase 不落库）；05 发布门槛 AT-01~AT-44；PRD §10 / §19 标注恢复后自动孤儿清理联动已实现最小切片。
+  - 后端 `BackupService.restore()` 末尾在 `importService.restore(packageJson)` 成功返回后调 `cleanOrphans()`（try-catch 包裹，失败记日志 + 摘要置 null），用新 `ImportResultResponse` 构造器（含 orphanCleanSummary）重组返回，保留原 report 全部字段。
+  - `ImportResultResponse` record 加 `BackupOrphanCleanSummary orphanCleanSummary` 字段（import `com.jobhub.backup.api.BackupOrphanCleanSummary`）。
+  - `ImportService.restore()` 标准数据恢复构造调用末参传 `null`（不触发联动）。
+  - 前端 `EncryptedBackupSection.tsx` submitRestore toast 追加孤儿摘要（deletedFiles>0 时显示「｜同时清理 X 个孤儿文件（释放 Y B，跳过 Z 个非备份文件）」，无孤儿时不追加）；`backupApi.ts` `RestoreReport` 类型沿用 `ImportResultReport`（重新生成 types.ts 后自动含 orphanCleanSummary 可选字段，不入库）。
+  - E2E `p1-encrypted-backup.spec.ts` 加 AT-44 测试（恢复成功响应含 orphanCleanSummary + scannedFiles/orphanFiles/deletedFiles ≥0 + 响应不含 passphrase + 错误 passphrase 422 不触发 + 恢复端点无需确认头）。
+- 未完成：不做强制 passphrase 强度门槛（留后续切片）、不做第三方日历 ICS 订阅（留后续切片）、不做密钥轮换、不做 dry-run、不联动删 data_export 中间 JSON 文件。
+- 单窗口边界：本切片 12 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 3[BackupService/ImportResultResponse/ImportService] + 后端测试 1[扩既有 BackupRestoreIntegrationTest] + 前端 1[EncryptedBackupSection] + E2E 1 + backupApi.ts 无改动 + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因联动需新增 schema 字段 + 状态机/DB/页面三处语义 + best-effort 事务时序修正 + 新测试，与既有 AT-39/41/42/43 备份切片同样略超，项目惯例认可。
+- 修改文件：
+  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/BackupService.java`（restore 末尾调 cleanOrphans + 重组响应）、`datamanagement/api/ImportResultResponse.java`（加 orphanCleanSummary 字段）、`datamanagement/application/ImportService.java`（标准恢复传 null）。
+  - 后端测试：`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（加 @BeforeEach 清 backup-dir + AT-44 四用例）。
+  - 前端：`src/features/settings/EncryptedBackupSection.tsx`（restore toast 追加孤儿摘要）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-44）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupRestoreIntegrationTest`：8 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
+  - `cd backend && mvn clean test`：153 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：8 passed（含新增 AT-44）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：39 passed，0 failed（全量回归绿，无 flaky）。
+- 验证结果：恢复后自动孤儿清理联动（造孤儿 + restore → orphanCleanSummary 反映删除 + 文件清理 + 合法保留 + backup_record 无变更 + 无孤儿全 0 + 非 UUID skipped + 恢复失败 422 不触发 + 幂等回放 + 无需确认头 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为加可选字段（非破坏性，标准数据恢复 null）；无数据库迁移（复用 backup_record 既有列）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证；cleanOrphans 无 DB 写对恢复事务无影响。
+- 已知问题：
+  - E2E 无法在 backup-dir 直接造孤儿 .enc 文件（Playwright 走 HTTP API，无法写服务端文件系统），真实孤儿删除链路由后端集成测试 `BackupRestoreIntegrationTest.AT44_restoreAutoCleansOrphansAndReturnsSummary` 覆盖（直造孤儿文件 + restore + 断言删除与摘要）；E2E 聚焦前端契约（响应含 orphanCleanSummary + 字段 ≥0 + 响应不含 passphrase + 错误 passphrase 422 不触发 + 无需确认头）。
+  - `BackupRestoreIntegrationTest` 新增 `@BeforeEach` 清空 backup-dir（与 `BackupOrphanScanIntegrationTest` 一致），修复跨测试运行累积孤儿文件导致无孤儿测试 orphanFiles 非确定的问题（非生产 bug，测试隔离缺失）。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：强制 passphrase 强度门槛（从提示升级为拒绝）、第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建恢复后孤儿清理联动/cleanOrphans 逻辑；不要给 ImportResultReport 加更多备份专属字段；不要在恢复端点加 X-Confirm-Permanent-Delete 确认头（恢复非销毁性）；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要做强制 passphrase 拒绝（留后续切片）。
+
 ### 窗口 2026-09-06-09
 
 - 目标：实现「按数量保留最近 N 条备份」最小切片——在已完成的单条删除（AT-39）、按龄批量清理（AT-41）、孤儿扫描清理（AT-42）之上加 `DELETE /backups?keepLast=N`，保留最近 N 条（`created_at DESC`）物理删除其余全部，复用既有删行 + 清 `.enc` 文件 + 置空 `last_backup_id` 软引用联动。承接 2026-09-06-08「下一窗口只做」候选切片「按数量保留最近 N 条备份」。不实现按龄与按数量组合过滤、软删除/trash、删除前 passphrase 验证、密钥轮换。

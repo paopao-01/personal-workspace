@@ -295,6 +295,16 @@ ABANDONED ──restore──> TODO
 - `backup-dir` 不存在时 `scannedFiles=0`（不报错）；无孤儿时返回全 0 摘要（不报 404，空集合法）。
 - 返回清理摘要（`scannedFiles`/`orphanFiles`/`deletedFiles`/`freedBytes`/`skippedFiles`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用）。
 
+**恢复后自动孤儿清理联动**：`POST /backups/restore` 恢复成功（DB 提交）后自动触发一次孤儿 `.enc` 文件扫描清理，复用 `POST /backups/orphans/clean` 的判定与清理逻辑（扫描 `jobhub.backup-dir` 下 `.enc`、合法 UUID 且 `backup_record` 无对应 `file_name` 即孤儿、物理删除；非 UUID `.enc` 跳过计入 `skippedFiles`；`backup-dir` 不存在返回全 0 摘要）：
+
+- 触发时机：恢复成功（`ImportService.restore` 完成、恢复事务提交前）后于事务内同步调用 `cleanOrphans`；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发清理。
+- 该自动清理为防御性补偿：恢复本身不落盘 `.enc` 文件，补偿的是既有 afterCommit 崩溃残留或 DB 直接删行绕过服务留下的孤儿。
+- `cleanOrphans` 只读 DB（查 `file_name` 集合）+ 删文件，无 DB 写，对恢复事务无影响；best-effort：清理失败用 try-catch 包裹，不影响恢复事务提交与响应（恢复已成功，`orphanCleanSummary` 反映尽力清理的结果，失败时为 null）。
+- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`（同独立孤儿清理端点：只读 DB 查 `file_name` 集合 + 删文件，无 DB 写）。
+- 无需 `X-Confirm-Permanent-Delete` 确认头：恢复非销毁性操作，附带清理是 best-effort 防御，用户已主动发起恢复即视为授权。
+- 清理结果通过恢复响应的 `orphanCleanSummary` 字段返回（`ImportResultReport` 可选字段）；`POST /data-imports/restore` 标准数据恢复不触发此联动，该字段缺省。
+- 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `orphanCleanSummary`），不重新执行恢复与清理。
+
 ## 8. 能力、证据与删除状态
 
 ### 8.1 技能维度

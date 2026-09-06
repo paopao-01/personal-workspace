@@ -122,6 +122,66 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
 })
 
 /**
+ * AT-44 恢复后自动孤儿清理联动：恢复成功后于事务内自动触发 cleanOrphans，
+ * 摘要随响应 orphanCleanSummary 返回；恢复失败不触发；无需 X-Confirm-Permanent-Delete 确认头。
+ * 真实孤儿删除链路由后端集成测试覆盖（无法在 E2E 直接制造孤儿 .enc 文件），E2E 聚焦契约。
+ */
+test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }) => {
+  const suffix = Date.now()
+
+  // 造数 + 生成一份加密备份
+  await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at44-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `恢复联动-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at44-backup-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}` },
+  })
+  expect(createRes.ok()).toBe(true)
+  const created = await createRes.json()
+
+  // 下载 .enc 字节
+  const downloadRes = await request.get(`/api/backups/${created.id}/download`)
+  expect(downloadRes.ok()).toBe(true)
+  const encBytes = await downloadRes.body()
+
+  // 恢复成功：响应含 orphanCleanSummary 字段（无孤儿时全 0）
+  const restoreRes = await request.post('/api/backups/restore', {
+    headers: { 'Idempotency-Key': `e2e-at44-restore-${crypto.randomUUID()}` },
+    multipart: {
+      file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
+      passphrase: `secret-${suffix}`,
+    },
+  })
+  expect(restoreRes.ok(), `POST /backups/restore returned ${restoreRes.status()}`).toBe(true)
+  const report = await restoreRes.json()
+  expect(report.orphanCleanSummary).toBeDefined()
+  expect(report.orphanCleanSummary.scannedFiles).toBeGreaterThanOrEqual(0)
+  expect(report.orphanCleanSummary.orphanFiles).toBeGreaterThanOrEqual(0)
+  expect(report.orphanCleanSummary.deletedFiles).toBeGreaterThanOrEqual(0)
+  // 响应不含 passphrase
+  expect(JSON.stringify(report)).not.toContain('passphrase')
+
+  // 错误 passphrase 返回 422，不触发孤儿清理
+  const badRes = await request.post('/api/backups/restore', {
+    headers: { 'Idempotency-Key': `e2e-at44-bad-${crypto.randomUUID()}` },
+    multipart: {
+      file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
+      passphrase: 'wrong-passphrase',
+    },
+  })
+  expect(badRes.status()).toBe(422)
+
+  // 恢复端点无需 X-Confirm-Permanent-Delete 确认头（不带也能成功）
+  expect(restoreRes.status()).toBe(200)
+})
+
+/**
  * AT-39 加密备份删除：物理删除记录行 + 落盘 .enc 文件清理 + last_backup_id 软引用置空。
  * 不可恢复、不进入最近删除；X-Confirm-Permanent-Delete 确认头防误删；passphrase 不参与删除验证。
  */

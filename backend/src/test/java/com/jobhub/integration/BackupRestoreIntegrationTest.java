@@ -3,6 +3,7 @@ package com.jobhub.integration;
 import com.jobhub.integration.support.AbstractIntegrationTest;
 import com.jobhub.integration.support.JsonProbe;
 import com.jobhub.integration.support.TestFixtures;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
@@ -24,6 +25,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 
 	private static final String PASSPHRASE = "test1234";
+
+	private static final Path BACKUP_DIR = Paths.get("./target/backups");
+
+	@BeforeEach
+	void disarmAndCleanBackupDir() {
+		// 清空 backup-dir 避免上一方法残留 .enc 干扰孤儿计数（无孤儿测试尤其敏感）
+		if (Files.isDirectory(BACKUP_DIR)) {
+			try (var stream = Files.list(BACKUP_DIR)) {
+				stream.forEach(p -> {
+					try {
+						Files.deleteIfExists(p);
+					} catch (Exception ignored) { }
+				});
+			} catch (Exception ignored) { }
+		}
+	}
 
 	/** 生成一份加密备份并返回落盘 .enc 文件的字节数组。 */
 	private byte[] createBackupEncFile() throws Exception {
@@ -139,5 +156,105 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		// passphrase 短于 8 位 → 400
 		ResponseEntity<String> bad = restore(enc, "short");
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	/**
+	 * AT-44 恢复后自动孤儿清理联动：恢复成功后于事务内同步触发 cleanOrphans，
+	 * 摘要随响应 orphanCleanSummary 返回，孤儿文件被物理删除，合法文件保留，
+	 * backup_record 无变更；无孤儿时全 0；恢复失败不触发；幂等回放返回首次摘要。
+	 */
+	@Test
+	void AT44_restoreAutoCleansOrphansAndReturnsSummary() throws Exception {
+		// 造一份合法备份（记录与文件都在）
+		byte[] enc = createBackupEncFile();
+		// 取其落盘文件名，制造一个孤儿：复制为另一 UUID 命名 .enc 但不写 backup_record
+		String legitFileName = JsonProbe.str(
+			restTemplate.getForEntity(url("/backups"), String.class).getBody(), "0.fileName");
+		assertThat(legitFileName).isNotNull();
+		Path backupDir = Paths.get("./target/backups");
+		String orphanId = java.util.UUID.randomUUID().toString();
+		String orphanFileName = orphanId + ".enc";
+		Path orphanFile = backupDir.resolve(orphanFileName);
+		Files.createDirectories(backupDir);
+		Files.copy(backupDir.resolve(legitFileName), orphanFile);
+		assertThat(Files.exists(orphanFile)).isTrue();
+
+		// 清空业务数据，使恢复能插入缺失行
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		// 恢复：应触发孤儿清理
+		ResponseEntity<String> restored = restore(enc, PASSPHRASE);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(body).isNotNull();
+		assertThat(body).doesNotContain("passphrase");
+		// orphanCleanSummary 反映孤儿已被删
+		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.deletedFiles")).isGreaterThan(0);
+		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.orphanFiles")).isGreaterThan(0);
+		assertThat(JsonProbe.lng(body, "orphanCleanSummary.freedBytes")).isGreaterThan(0L);
+		// 孤儿文件已删
+		assertThat(Files.exists(orphanFile)).isFalse();
+		// 合法备份文件保留
+		assertThat(Files.exists(backupDir.resolve(legitFileName))).isTrue();
+		// backup_record 无变更（恢复不写、清理只删文件）
+		Integer backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Integer.class);
+		assertThat(backupCount).isEqualTo(1);
+	}
+
+	@Test
+	void AT44_restoreWithNoOrphansReturnsAllZeroSummary() throws Exception {
+		byte[] enc = createBackupEncFile();
+		// backup-dir 仅含合法备份，无孤儿
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, PASSPHRASE);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.orphanFiles")).isZero();
+		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.deletedFiles")).isZero();
+	}
+
+	@Test
+	void AT44_nonUuidEncFileIsSkippedDuringAutoClean() throws Exception {
+		byte[] enc = createBackupEncFile();
+		// 放一个非 UUID 命名的 .enc（应跳过不删）
+		Path backupDir = Paths.get("./target/backups");
+		Files.createDirectories(backupDir);
+		Path nonUuid = backupDir.resolve("notes.enc");
+		Files.writeString(nonUuid, "not-a-backup");
+
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, PASSPHRASE);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.skippedFiles")).isGreaterThan(0);
+		// 非 UUID 文件保留
+		assertThat(Files.exists(nonUuid)).isTrue();
+	}
+
+	@Test
+	void AT44_failedRestoreDoesNotTriggerOrphanClean() throws Exception {
+		byte[] enc = createBackupEncFile();
+		// 放一个孤儿
+		Path backupDir = Paths.get("./target/backups");
+		String orphanFileName = java.util.UUID.randomUUID() + ".enc";
+		Path orphanFile = backupDir.resolve(orphanFileName);
+		Files.createDirectories(backupDir);
+		Files.writeString(orphanFile, "orphan-bytes");
+
+		// 错误 passphrase → 422，不触发清理（孤儿仍在）
+		ResponseEntity<String> bad = restore(enc, "wrong-passphrase");
+		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		assertThat(Files.exists(orphanFile)).isTrue();
 	}
 }

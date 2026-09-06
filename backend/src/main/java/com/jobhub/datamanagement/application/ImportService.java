@@ -147,7 +147,7 @@ public class ImportService {
 		String status = failed > 0 ? "COMPLETED_WITH_FAILURES" : (issues.isEmpty() ? "COMPLETED" : "COMPLETED_WITH_SKIPS");
 		return new ImportResultResponse(java.util.UUID.randomUUID().toString(), java.time.Instant.now().toString(),
 			data.packageFingerprint(), status, inserted, skippedIdentical, skippedConflict, skippedMissingParent, failed,
-			results, issues, rowResults);
+			results, issues, rowResults, null);
 	}
 
 	private PackageData computePlans(JsonNode body) {
