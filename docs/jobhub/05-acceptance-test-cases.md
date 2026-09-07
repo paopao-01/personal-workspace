@@ -820,8 +820,38 @@ Then 返回 200 且 items 仅含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURG
 And 任何时刻数据库不存储 passphrase 或派生密钥，审计记录不含 passphrase
 ```
 
+### AT-52 审计日志时间范围过滤（GET /audit-logs 加可选 from/to，ISO UTC，含边界，可与 action/resourceType 组合）
+
+```gherkin
+Given audit_log 表存在多条 occurred_at 各异的记录（如 2026-09-01T08:00:00Z / 2026-09-03T10:00:00Z / 2026-09-05T12:00:00Z / 2026-09-07T14:00:00Z）
+When 用户调用 GET /api/audit-logs?from=2026-09-03T00:00:00Z
+Then 返回 200 且 items 仅含 occurred_at >= from 的记录（2026-09-03/05/07 三条），每条 occurredAt 非空 UTC ISO
+And total=符合范围的记录数、按 occurred_at DESC 排序
+When 用户调用 GET /api/audit-logs?to=2026-09-05T23:59:59Z
+Then 返回 200 且 items 仅含 occurred_at <= to 的记录（2026-09-01/03/05 三条）
+When 用户调用 GET /api/audit-logs?from=2026-09-03T00:00:00Z&to=2026-09-05T23:59:59Z
+Then 返回 200 且 items 仅含 occurred_at 在 [from, to] 范围内的记录（2026-09-03/05 两条）
+And 边界含等号：from=2026-09-03T10:00:00Z 时返回的记录含 occurred_at 恰为该值的记录
+When 用户调用 GET /api/audit-logs?from=2026-09-03T00:00:00Z&action=BACKUP_DELETED
+Then 返回 200 且 items 仅含同时满足 occurred_at >= from 且 action=BACKUP_DELETED 的记录
+When 用户调用 GET /api/audit-logs?from=2026-09-07T00:00:00Z&to=2026-09-01T00:00:00Z（from > to）
+Then 返回 200 且 items=[]、total=0（合法但无匹配，不报 400）
+When 用户调用 GET /api/audit-logs?from=2026-09-03（非法 ISO 格式，缺时间部分）
+Then 返回 400 VALIDATION_ERROR
+When 用户调用 GET /api/audit-logs?from=not-a-date
+Then 返回 400 VALIDATION_ERROR
+When 用户调用 GET /api/audit-logs?to=2026/09/05
+Then 返回 400 VALIDATION_ERROR
+When 用户调用 GET /api/audit-logs?from=2026-09-03T10:00:00Z&resourceType=BACKUP_RECORD
+Then 返回 200 且 items 仅含同时满足时间范围与 resourceType=BACKUP_RECORD 的记录
+When 用户不传 from 与 to（仅 action/resourceType 或无过滤）
+Then 返回 200 且不过滤时间范围（既有行为不变，向后兼容）
+And 响应不含 passphrase、不含 before/afterSnapshotJson（恒 null 省略）
+And 任何时刻数据库不存储 passphrase 或派生密钥
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-51 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-52 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

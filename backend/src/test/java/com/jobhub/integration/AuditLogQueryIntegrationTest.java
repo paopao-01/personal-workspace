@@ -232,4 +232,130 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrStr(body, "items", 0, "action")).isEqualTo("BACKUP_PURGED_BY_AGE");
 		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceType")).isEqualTo("BACKUP_RECORD");
 	}
+
+	@Test
+	void AT52_filterByFromReturnsOnlyOnOrAfter() {
+		// 造 4 条 occurred_at 各异的记录
+		insertAuditRow("SECONDARY_APPLICATION_CONFIRMED", "APPLICATION", UUID.randomUUID().toString(),
+				"first", "2026-09-01T08:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"second", "2026-09-03T10:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"third", "2026-09-05T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"fourth", "2026-09-07T14:00:00Z");
+
+		// from=2026-09-03T00:00:00Z → 仅 09-03/05/07 三条（>= from）
+		String body = listAuditLogs("?from=2026-09-03T00:00:00Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(3L);
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "items", "occurredAt");
+		assertThat(occurredAts).doesNotContain("2026-09-01T08:00:00Z");
+		assertThat(occurredAts).contains("2026-09-03T10:00:00Z", "2026-09-05T12:00:00Z", "2026-09-07T14:00:00Z");
+		// DESC 排序：首条最新
+		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isEqualTo("2026-09-07T14:00:00Z");
+	}
+
+	@Test
+	void AT52_filterByToReturnsOnlyOnOrBefore() {
+		insertAuditRow("SECONDARY_APPLICATION_CONFIRMED", "APPLICATION", UUID.randomUUID().toString(),
+				"first", "2026-09-01T08:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"second", "2026-09-03T10:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"third", "2026-09-05T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"fourth", "2026-09-07T14:00:00Z");
+
+		// to=2026-09-05T23:59:59Z → 仅 09-01/03/05 三条（<= to）
+		String body = listAuditLogs("?to=2026-09-05T23:59:59Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(3L);
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "items", "occurredAt");
+		assertThat(occurredAts).doesNotContain("2026-09-07T14:00:00Z");
+	}
+
+	@Test
+	void AT52_filterByFromAndToRange() {
+		insertAuditRow("SECONDARY_APPLICATION_CONFIRMED", "APPLICATION", UUID.randomUUID().toString(),
+				"first", "2026-09-01T08:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"second", "2026-09-03T10:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"third", "2026-09-05T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"fourth", "2026-09-07T14:00:00Z");
+
+		// from=09-03 ~ to=09-05 → 仅 09-03/05 两条
+		String body = listAuditLogs("?from=2026-09-03T00:00:00Z&to=2026-09-05T23:59:59Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "items", "occurredAt");
+		assertThat(occurredAts).containsExactlyInAnyOrder("2026-09-03T10:00:00Z", "2026-09-05T12:00:00Z");
+	}
+
+	@Test
+	void AT52_fromBoundaryInclusive() {
+		// from 恰等于某记录的 occurred_at → 该记录被包含（>=）
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"exact", "2026-09-03T10:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"later", "2026-09-05T12:00:00Z");
+
+		String body = listAuditLogs("?from=2026-09-03T10:00:00Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "items", "occurredAt");
+		assertThat(occurredAts).contains("2026-09-03T10:00:00Z");
+	}
+
+	@Test
+	void AT52_fromAndToCombinedWithAction() {
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"earlier delete", "2026-09-01T08:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"in-range delete", "2026-09-05T12:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"in-range but other action", "2026-09-05T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"later delete", "2026-09-07T14:00:00Z");
+
+		// from=09-03 & action=BACKUP_DELETED → 仅 09-05 与 09-07 两条 BACKUP_DELETED（09-01 < from 排除）
+		String body = listAuditLogs("?from=2026-09-03T00:00:00Z&action=BACKUP_DELETED").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<String> actions = JsonProbe.collectArrayField(body, "items", "action");
+		assertThat(actions).containsOnly("BACKUP_DELETED");
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "items", "occurredAt");
+		assertThat(occurredAts).containsExactlyInAnyOrder("2026-09-05T12:00:00Z", "2026-09-07T14:00:00Z");
+	}
+
+	@Test
+	void AT52_fromGreaterThanToReturnsEmpty() {
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"in range", "2026-09-05T12:00:00Z");
+		// from > to → 空结果（合法但无匹配，不报 400）
+		String body = listAuditLogs("?from=2026-09-07T00:00:00Z&to=2026-09-01T00:00:00Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		assertThat(JsonProbe.arraySize(body, "items")).isZero();
+	}
+
+	@Test
+	void AT52_invalidFromFormatReturns400() {
+		// 缺时间部分，Instant.parse 拒绝
+		assertThat(listAuditLogs("?from=2026-09-03").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(listAuditLogs("?from=not-a-date").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(listAuditLogs("?to=2026/09/05").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT52_fromAndToCombinedWithResourceType() {
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"in range record", "2026-09-05T12:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"in range file", "2026-09-05T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"out of range record", "2026-09-07T14:00:00Z");
+
+		// from=09-04 & to=09-06 & resourceType=BACKUP_RECORD → 仅 09-05 一条
+		String body = listAuditLogs("?from=2026-09-04T00:00:00Z&to=2026-09-06T23:59:59Z&resourceType=BACKUP_RECORD").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceType")).isEqualTo("BACKUP_RECORD");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isEqualTo("2026-09-05T12:00:00Z");
+	}
 }

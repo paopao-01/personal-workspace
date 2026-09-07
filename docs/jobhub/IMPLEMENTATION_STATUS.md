@@ -1,5 +1,34 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-7
+
+- 目标：实现「审计日志时间范围过滤」最小切片——在 AT-50 全量审计查询端点 `GET /audit-logs` 之上，新增两个可选 query 参数 `from`（起始含，`occurred_at >= from`）与 `to`（结束含，`occurred_at <= to`），均 ISO-8601 UTC 字符串，与既有 `action`/`resourceType` 可单独或任意组合，空=不过滤。承接 2026-09-07-6「下一窗口只做」候选切片「审计日志时间范围过滤 from/to」。不新增端点/表/列/迁移/索引，不改响应 schema，复用既有 `AuditLogMapper.selectPage/count` 动态 SQL 加 `occurred_at >=`/`<=` 条件（ISO 字典序与时间序一致，字符串比较正确），前端审计日志区块加两个 datetime-local 输入框（留空=不过滤，前端转 UTC ISO 提交，过滤变更重置第 1 页）。非法 from/to 格式返回 400；from > to 返回空结果（合法但无匹配，不报 400）。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：bounded 切片无需额外澄清——from/to 语义（起始含/结束含）、ISO-8601 UTC 格式、与既有 action/resourceType 正交可任意组合、空=不过滤、复用动态 SQL 模式、不改响应 schema、不新增端点/表/迁移/索引，均与既有 AT-50 过滤范式完全平行，无分歧。唯一需确认的 from>to 行为定为「返回空结果不报 400」（合法查询，不阻止用户输入），非法格式返回 400（Instant.parse 校验，不接受仅日期或非 ISO 格式）。
+  - 规格（按权威顺序）：`02-state-machines.md §全量审计日志查询` 查询范围节补 from/to 两个可选参数（ISO UTC，含边界，空=不过滤，可与 action/resourceType 任意组合，非法 400，from>to 空结果不报 400）+ 无二级索引节 SQL 补 `AND occurred_at >= ? AND occurred_at <= ?` + AuditLogMapper 方法签名补 from/to 参数。`03-openapi.yaml` GET /audit-logs summary 改「可按 action/resourceType/from/to 过滤」+ description 补 from/to 时间范围过滤说明（ISO UTC，含边界，可组合，非法 400，from>to 空结果）+ SQL 描述补 occurred_at 条件 + 新增 from/to 两个 query 参数（format: date-time）。`04-database-design.md §6 全量审计查询` 条目补 from/to 过滤语义（字符串比较 ISO 字典序与时间序一致，全表扫描可接受不新增索引，非法 400，from>to 空结果）+ Mapper 方法签名补 from/to。`01-page-spec.md P11 审计日志区块` 补两个 datetime-local 输入框（留空=不过滤，前端转 UTC ISO 提交，过滤变更重置第 1 页，可与下拉组合）+ 接口 URL 补 from/to。`05-acceptance-test-cases.md` 新增 AT-52（from 过滤≥、to 过滤≤、from+to 范围、边界含等号、from+action 组合、from>to 空结果不报 400、非法格式 400 三种、from+to+resourceType 三重组合、不传 from/to 向后兼容）+ 发布门槛升 AT-52。`jobhub-prd.md §10` 追加审计时间范围过滤已实现最小切片标注。
+  - 后端 `common/audit/infrastructure/AuditLogMapper.java` selectPage/count 动态 SQL `<where>` 各加两个 `<if>`（from 非空 → `AND occurred_at &gt;= #{from}`，to 非空 → `AND occurred_at &lt;= #{to}`），方法签名加 `@Param("from") String from` 与 `@Param("to") String to`（selectPage 6 参、count 4 参），类 Javadoc 补可选 resourceType/from/to 过滤说明。`common/audit/api/AuditLogController.java` listAuditLogs 加两个可选 `@RequestParam(required = false) String from` / `String to` + 私有 `parseIsoUtc(value, field)` 用 `Instant.parse` 校验（空返回 null 不过滤，非法抛 `BusinessRuleException(VALIDATION_ERROR, 400)`），校验后原样回传字符串供 SQL 字符串比较（ISO 字典序与时间序一致），传给 count/selectPage。
+  - 测试扩既有 `AuditLogQueryIntegrationTest`：加 8 个 AT-52 用例（AT52_filterByFromReturnsOnlyOnOrAfter from≥过滤排除更早；AT52_filterByToReturnsOnlyOnOrBefore to≤过滤排除更晚；AT52_filterByFromAndToRange from+to 范围交集；AT52_fromBoundaryInclusive from 恰等于记录 occurred_at 该记录被包含验证>=；AT52_fromAndToCombinedWithAction from+action 双重过滤；AT52_fromGreaterThanToReturnsEmpty from>to 空结果不报 400；AT52_invalidFromFormatReturns400 三种非法格式 from=2026-09-03/not-a-date/to=2026/09/05 均 400；AT52_fromAndToCombinedWithResourceType from+to+resourceType 三重组合）。
+  - 前端 `src/api/audit/auditLogApi.ts` AuditLogQuery 加 `from?`/`to?` 字段 + listAuditLogs Javadoc 补 from/to 说明 + useAuditLogs queryKey 加 from/to（空串占位）。`src/features/settings/AuditLogSection.tsx` 加 fromLocal/toLocal 两个 datetime-local state + `toUtcIso(localValue)` 工具（datetime-local 值转 ISO-8601 UTC via Date.toISOString，空/无效返回空串）+ 两个 `<input type="datetime-local">`（起始/结束时间，留空=不过滤，过滤变更重置第 1 页）+ 说明文案补「时间范围」。`types.ts` 经 `npm run gen-types` 重新生成（不入库，schema 加了 from/to query 参数）。
+- 未完成：不新增端点（复用 GET /audit-logs）、不新增表/列/迁移/索引（复用 V1 audit_log 全表扫描，本地量小可接受）、不改响应 schema（PageAuditLogEntry 不变）、不做审计导出 CSV/JSON、不做密钥轮换、不做第三方日历 ICS 订阅、不做 occurred_at 二级索引迁移（留后续切片）、不做时区下拉（前端用浏览器本地时区 datetime-local，后端统一 UTC ISO 比较）。
+- 单窗口边界：本切片 12 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 2[AuditLogMapper + AuditLogController] + 后端测试 1[扩 AuditLogQueryIntegrationTest] + 前端 2[auditLogApi + AuditLogSection] + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因扩展查询参数需改 Mapper 动态 SQL + Controller 参数校验 + 状态机/OpenAPI/DB/页面四处语义 + 新测试 + 前端日期输入，与既有 AT-50/AT-51 审计切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`common/audit/infrastructure/AuditLogMapper.java`（selectPage/count 加 from/to 动态 SQL 条件 + 方法签名 + Javadoc）、`common/audit/api/AuditLogController.java`（加 from/to 参数 + parseIsoUtc 校验 + Javadoc）。
+  - 后端测试：`src/test/java/com/jobhub/integration/AuditLogQueryIntegrationTest.java`（加 8 个 AT-52 用例）。
+  - 前端：`src/api/audit/auditLogApi.ts`（AuditLogQuery 加 from/to + queryKey + Javadoc）、`src/features/settings/AuditLogSection.tsx`（加 datetime-local 输入 + toUtcIso 工具 + 说明文案）、`src/api/generated/types.ts`（重新生成，不入库）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=AuditLogQueryIntegrationTest`：18 tests，0 failures（含新增 8 个 AT-52 用例，原 10 个 AT-50/AT-51 用例不破坏）。
+  - `cd backend && mvn clean test`：205 tests，0 failures，0 errors，0 skipped（上一窗口 197→本窗口 205，+8 AT-52）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+- 验证结果：审计时间范围过滤链路（from≥过滤排除更早、to≤过滤排除更晚、from+to 范围交集、边界含等号 from=记录 occurred_at 该记录被包含、from+action 组合、from+to+resourceType 三重组合、from>to 空结果不报 400、非法格式三种均 400、不传 from/to 向后兼容）有后端集成测试（8 新增用例）覆盖；OpenAPI 变更为新增两个可选 query 参数（非破坏性，既有 action/resourceType/无参数调用向后兼容，PageAuditLogEntry 响应不变）；无数据库迁移（复用 V1 既有 audit_log 表，AuditLogMapper 加 from/to 动态条件仅 SELECT 不违背仅追加语义）；from/to 仅作为过滤输入不回显到响应；只读查询不需确认头/幂等键不动业务表；响应不含 passphrase。
+- 已知问题：
+  - audit_log 表无二级索引，from/to 过滤走 `WHERE occurred_at >= ? AND occurred_at <= ?` 全表扫描；本地单用户审计量小可接受，未来数据量增长可另开迁移补 occurred_at 索引。
+  - 前端 datetime-local 用浏览器本地时区，前端转 UTC ISO 提交（`Date.toISOString`），后端统一按 UTC ISO 字符串比较；若用户浏览器时区设置异常可能影响输入值的 UTC 转换，但比较逻辑本身不受影响。
+  - 全量 E2E 未跑（本切片前端加日期输入属 UI 行为，真实 from/to 过滤链路由后端集成测试覆盖；前端 build 通过确认编译无误）。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：审计日志导出 CSV/JSON、密钥轮换、第三方日历同步最小化单向 ICS 订阅、audit_log occurred_at 二级索引迁移、单条删除/按龄/按数量保留清理审计的 from/to 查询验证）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建 from/to 过滤逻辑；不要给 GET /audit-logs 加新端点（复用既有）；不要给 from/to 加时区下拉（前端用浏览器本地时区，后端统一 UTC ISO）；不要给 from>to 报 400（合法但无匹配，返回空结果）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅 insert + 只读 select/count）；不要改响应 schema（PageAuditLogEntry 不变，from/to 仅过滤输入不回显）；不要做审计导出（留后续切片）。
+
 ### 窗口 2026-09-07-6
 
 - 目标：实现「备份删除/批量清理审计日志」最小切片——在已完成的孤儿清理审计（AT-47）与全量审计查询（AT-50）之上，把单条删除（`DELETE /backups/{backupId}`）、按龄批量清理（`DELETE /backups?olderThanDays=N`）、按数量保留清理（`DELETE /backups?keepLast=N`）三个 `backup_record` 物理删除操作也纳入审计写入，事后可经 AT-50 `GET /audit-logs` 按 action/resourceType 过滤查询追溯。承接 2026-09-07-5「下一窗口只做」候选切片「单条删除/按龄/按数量保留清理补审计」。action 命名经用户拍板为 3 个独立 action（BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT，与 REQUIREMENT_MERGED/UPDATED/DELETED 按操作细分风格一致，全量查询可精确过滤区分三种来源），resourceType=BACKUP_RECORD（与孤儿清理 BACKUP_FILE 语义区分），粒度为每被删 backup_record 一条（单条=1 条，批量=每被删记录各 1 条），写入时机为事务内 deleteById 返回非 0 后立即 best-effort insert（审计随事务提交/回滚，强一致；写入失败仅记日志不阻塞删除、不影响摘要计数）。不新增端点/表/列/迁移/索引，不改响应 schema，不审计创建/恢复/武装。
@@ -128,46 +157,16 @@
 - 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计、密钥轮换）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建 PassphraseStrengthValidator 算法或黑名单（只收紧入口拒绝级别，算法/阈值/黑名单不变）；不要给恢复端点加强度门槛（passphrase 已与备份绑定，强制会锁死历史备份）；不要改前端强度计为禁用提交按钮（后端是唯一闸门，不禁用）；不要新增评估端点（passphrase 本就要传给加密端点，无额外传输）；不要改 V1~V25 既有迁移；不要做可配置门槛档位（reject-weak/reject-fair/reject-below-strong 三档，超出最小切片）；不要改加密算法/迭代次数/passphrase 落盘规则/长度限制。
 
-### 窗口 2026-09-07-2
-
-- 目标：实现「孤儿文件清理审计日志」最小切片——在已完成的孤儿 .enc 文件扫描清理（AT-42）与恢复后自动孤儿清理联动（AT-44）之上，让 `BackupService.cleanOrphans()` 删除每个孤儿 `.enc` 文件成功后向既有 `audit_log` 表追加一条审计记录，事后可追溯「哪个文件何时因孤儿被清」。承接 2026-09-07-1「下一窗口只做」候选切片「孤儿文件清理审计日志」。不实现单条删除/按龄/按数量保留的审计、不新增查询/展示端点、不新增表/迁移。
-- 状态：**DONE**。
-- 已完成：
-  - 设计澄清（bounded 路径 + brainstorming）：关键发现——`audit_log` 表在 V1 初始迁移已存在（`V1__initial_schema.sql:316`，字段 id/resource_type/resource_id/action/before_snapshot_json/after_snapshot_json/reason/occurred_at），`AuditLogEntry` 实体 + `AuditLogMapper.insert` 基础设施已就位（当前用于二次投递确认 AT-17A、需求合并/变更），故本切片**不新建表、不加 V26 迁移**，仅复用既有基础设施加写入点。审计范围经用户拍板为「仅孤儿清理」（独立 `POST /backups/orphans/clean` + `POST /backups/restore` 联动的 `cleanOrphans`，不扩散到单条删除/按龄/按数量）；审计粒度为「每个被删孤儿文件一条」（resource_id=文件 UUID，满足 NOT NULL）；查询入口「只写不读」（本版不新增端点/UI，事后追溯直接查 `audit_log` 表，留后续切片）；审计写入失败 best-effort 记日志不阻塞清理（同 restore 对 cleanOrphans 的 best-effort 风格）。
-  - 规格（按权威顺序）：`02-state-machines.md §9.1` 新增「孤儿清理审计日志」节（审计范围仅孤儿清理、记录粒度每文件一条、字段值 resource_type=BACKUP_FILE/resource_id=被删文件 UUID/action=BACKUP_ORPHAN_CLEANED/快照 null/reason 含 freedBytes/occurred_at=UTC ISO、写入时机在 cleanOrphans 逐文件循环内删成功后立即 insert、best-effort 失败仅记日志不阻塞不影响计数、无孤儿删 0 不写、非 UUID skipped 不写、不新增查询端点本版仅写不读、幂等回放不重复写、复用 V1 既有表不新增迁移、仅追加不更新/删除）；修订孤儿清理节与恢复联动节既有「无 DB 写」措辞为「best-effort 写 audit_log」；`03-openapi.yaml` `/backups/orphans/clean` 与 `/backups/restore` 描述补审计写入说明（响应 schema 不变，BackupOrphanCleanSummary 不加字段）；`04-database-design.md §6` 孤儿清理条目与恢复条目补「复用 V1 既有 audit_log 表，不新增迁移，只写不读」；`01-page-spec.md P11` 孤儿清理子区块补「后端写审计日志，本版不提供查看入口」；`05-acceptance-test-cases.md` 新增 AT-47（2 孤儿→2 条 audit + 字段断言 + 响应不回显审计 + 无孤儿不写 + 非 UUID skipped 不写 + 幂等回放不重复写 + 恢复联动同样写）+ 发布门槛升 AT-47；`jobhub-prd.md §10/§19` 标注已实现最小切片。
-  - 后端 `common/audit/AuditLogEntry.java` 加静态工厂 `backupOrphanCleaned(id, fileId, freedBytes, occurredAt)`（resourceType=BACKUP_FILE、resourceId=fileId、action=BACKUP_ORPHAN_CLEANED、reason 含 freedBytes、快照默认 null，与既有 secondaryApplicationConfirmation/requirementMerged 同范式）；`backup/application/BackupService.java` 注入 `AuditLogMapper`（构造器末位前插），`cleanOrphans()` 在 `deleteFile(file)` 成功分支内 `auditLogMapper.insert(AuditLogEntry.backupOrphanCleaned(ids.newId(), candidateId, size, time.now()))`（candidateId 已在循环内算出，ids/time 已是本类依赖），best-effort try-catch 失败仅记日志不影响 deleted/freed 计数；cleanOrphans 保持无 `@Transactional`（audit insert 各自 auto-commit，restore 联动时参与 restore 事务，restore 已 try-catch 包 cleanOrphans 语义自洽）；幂等由既有 Idempotency-Key 保证（重复回放不重新执行→不重复写审计）。
-  - 测试扩既有：`BackupOrphanScanIntegrationTest` 加 4 个 AT-47 用例（2 孤儿→audit_log 恰 2 条 + 字段断言[resource_type/resource_id/action/before-after_snapshot null/reason 含 freedBytes/occurred_at 非空] + 响应不含审计字段 + passphrase 不落库；无孤儿删 0 不写；非 UUID skipped 不写；幂等回放不重复写）；`BackupRestoreIntegrationTest` 的 AT-44 恢复联动用例补 audit_log 断言（orphanId 对应一条 BACKUP_ORPHAN_CLEANED 行）。
-- 未完成：不审计单条删除/按龄/按数量保留清理、不新增查询/展示端点（GET /audit-logs 或 UI）、不改响应 schema（BackupOrphanCleanSummary 不加字段）、不加新迁移、不回显审计信息、不改 V1~V25 既有迁移、不做密钥轮换、不做强制 fair/strong、不做第三方日历 ICS 订阅。
-- 单窗口边界：本切片 10 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 2[AuditLogEntry + BackupService] + 后端测试 2[扩既有 BackupOrphanScanIntegrationTest + BackupRestoreIntegrationTest]），符合 MASTER_PROMPT ≤10 文件边界。因复用既有 audit_log 表与 AuditLogMapper（无新迁移、无新表、无新 schema），仅加静态工厂 + cleanOrphans 写入点 + 扩既有测试，比前几个备份切片更轻。
-- 修改文件：
-  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
-  - 后端修改：`common/audit/AuditLogEntry.java`（加 backupOrphanCleaned 静态工厂）、`backup/application/BackupService.java`（注入 AuditLogMapper + cleanOrphans 写 audit）。
-  - 后端测试：`src/test/java/com/jobhub/integration/BackupOrphanScanIntegrationTest.java`（加 4 个 AT-47 用例 + import Map）、`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（AT-44 用例补 audit 断言 + import Map）。
-  - 前端：无改动（只写不读，响应 schema 不变，types.ts 不重新生成，E2E 不加——HTTP API 无法验证 DB，由后端集成测试覆盖）。
-- 已运行验证：
-  - `cd backend && mvn test -Dtest='BackupOrphanScanIntegrationTest,BackupRestoreIntegrationTest'`：24 tests，0 failures（含新增 4 个 AT-47 用例 + AT-44 恢复联动 audit 断言）。
-  - `cd backend && mvn clean test`：169 tests，0 failures，0 errors，0 skipped（上一窗口 165→本窗口 169，+4 AT-47）；Flyway V1→V25 成功（无新迁移）。
-  - `cd frontend && npm run typecheck && npm run lint`：全部通过（前端无改动，确认未被波及，未跑 build/e2e）。
-- 验证结果：孤儿清理审计链路（2 孤儿清理→audit_log 恰 2 条 BACKUP_ORPHAN_CLEANED + resource_type=BACKUP_FILE + resource_id=被删文件 UUID + 快照 null + reason 含 freedBytes + occurred_at 非空 + 响应不回显审计字段 + 无孤儿删 0 不写 + 非 UUID skipped 不写 + 幂等回放不重复写 + 恢复联动 cleanOrphans 同样写 + passphrase 不落库/不回显）有后端集成测试覆盖（4 新增 + 1 既有补断言）；OpenAPI 变更为描述补强（非破坏性，响应 schema 不变）；无数据库迁移（复用 V1 既有 audit_log 表）；audit_log 仅追加（AuditLogMapper 仅 insert，无 update/delete 接口）；审计写入 best-effort 失败不阻塞清理；复用既有 Idempotency-Key 幂等防重复写审计。
-- 已知问题：
-  - 前端无查看入口（本版仅写不读），事后追溯需直接查 `audit_log` 表，查询/展示端点留后续切片。
-  - 审计写入 best-effort：cleanOrphans 独立调用时 audit insert 各自 auto-commit，极端情况（删 N 个文件、写第 k 条 audit 失败）会出现「文件已删但部分审计缺失」，失败仅记日志不影响清理计数；语义为 best-effort 追溯（同 restore 对 cleanOrphans 的容错），符合「审计是附加观测、不阻塞清理」定位。
-  - E2E 无法验证 audit_log（Playwright 走 HTTP API 无法查 DB），audit_log 写入链路由后端集成测试覆盖；E2E 既有 AT-42 不变。
-  - 全量 E2E 仍可能输出既有 flaky（p1-encrypted-backup AT-38 定时备份触发等，4 个 webServer 资源竞争），与本切片无代码关联（本切片未碰定时触发逻辑）；本窗口未跑全量 E2E（前端无改动）。
-  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、强制 fair/strong 口令门槛升级、审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
-- 不要重复做：不要重建孤儿清理审计写入逻辑；不要给 audit_log 加查询端点（本版仅写不读，留后续切片）；不要审计单条删除/按龄/按数量保留（本切片范围仅孤儿清理）；不要改 BackupOrphanCleanSummary 加审计字段（审计是内部行为不回显）；不要新建 audit_log 表或新增迁移（V1 已存在，复用）；不要给 AuditLogMapper 加 update/delete（仅追加）；不要改 V1~V25 既有迁移；不要改 cleanOrphans 加 @Transactional（保持无事务，audit 各自 auto-commit，restore 联动参与 restore 事务）。
-
 > 这是跨窗口恢复工作的唯一动态文件。它记录当前代码状态，不替代 PRD、状态机、OpenAPI 或页面规格。任何模型开始工作前先读本文件；结束或即将中断时必须更新本文件。
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十四个切片；本窗口实现备份删除/批量清理审计日志（AT-51），把单条删除、按龄批量清理、按数量保留清理三个 `backup_record` 物理删除操作纳入 audit_log 审计写入（3 个独立 action：BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT，resourceType=BACKUP_RECORD），事后可经 AT-50 `GET /audit-logs` 按 action/resourceType 过滤查询追溯。
+- 项目阶段：P1（V0.2）已完成二十五个切片；本窗口实现审计日志时间范围过滤（AT-52），在 `GET /audit-logs` 新增可选 `from`/`to`（ISO-8601 UTC，含边界）query 参数，与既有 `action`/`resourceType` 可任意组合，事后可按时间范围追溯审计记录。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：清理补审计切片（AT-51）已在窗口 2026-09-07-6 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：审计时间范围过滤切片（AT-52）已在窗口 2026-09-07-7 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-07（窗口 2026-09-07-6）。
+- 最后更新：2026-09-07（窗口 2026-09-07-7）。
 
 ## 2. 已完成内容
 

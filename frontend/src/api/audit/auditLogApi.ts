@@ -33,9 +33,12 @@ export interface AuditLogQuery {
   pageSize: number
   action?: string
   resourceType?: string
+  from?: string
+  to?: string
 }
 
-/** 分页查询全量审计日志（只读，无需确认头/幂等键）。action/resourceType 可选，空=不过滤返回全量。 */
+/** 分页查询全量审计日志（只读，无需确认头/幂等键）。action/resourceType/from/to 可选，空=不过滤返回全量。
+ *  from/to 为 ISO-8601 UTC 字符串（含边界：from 起始 occurred_at >= from，to 结束 occurred_at <= to）。 */
 export async function listAuditLogs(params: AuditLogQuery): Promise<PageAuditLogEntry> {
   const res = await apiClient.get<PageAuditLogEntry>('/audit-logs', { params })
   return res.data
@@ -43,7 +46,15 @@ export async function listAuditLogs(params: AuditLogQuery): Promise<PageAuditLog
 
 export function useAuditLogs(query: AuditLogQuery) {
   return useQuery<PageAuditLogEntry, Error>({
-    queryKey: [...AUDIT_LOG_KEY, query.page, query.pageSize, query.action ?? '', query.resourceType ?? ''],
+    queryKey: [
+      ...AUDIT_LOG_KEY,
+      query.page,
+      query.pageSize,
+      query.action ?? '',
+      query.resourceType ?? '',
+      query.from ?? '',
+      query.to ?? '',
+    ],
     queryFn: () => listAuditLogs(query),
     placeholderData: (prev) => prev,
   })
