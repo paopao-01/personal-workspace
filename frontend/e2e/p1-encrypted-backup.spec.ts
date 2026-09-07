@@ -853,3 +853,75 @@ test('AT-45 passphrase strength gate rejects weak and fair on create and arm', a
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+
+/**
+ * AT-49 孤儿清理审计日志查询：GET /api/backups/orphans/audit 分页查询 BACKUP_ORPHAN_CLEANED 审计记录。
+ * 只读，无需确认头/幂等键；响应不含 passphrase；前端设置页审计查看区块可见。
+ *
+ * 真实孤儿清理→审计写入链路由后端集成测试 BackupOrphanScanIntegrationTest 覆盖（E2E 无法直接造孤儿文件）；
+ * 本 E2E 聚焦前端契约与查询端点：触发一次 clean（可能删 0 个孤儿，但若 DB 拮留历史孤儿会删并写审计）
+ * → GET 审计端点 200 + 分页字段 + items 结构 + 不含 passphrase → UI 审计区块可见。
+ */
+test('AT-49 orphan clean audit log query returns paged entries', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造一个岗位保证导出有数据，再造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at49-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `审计查询-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at49-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（可能删 0 个孤儿，但 DB 跨测试残留的历史孤儿会写审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // GET /api/backups/orphans/audit 只读（不携带确认头与幂等键）
+  const auditRes = await request.get('/api/backups/orphans/audit?page=1&pageSize=20')
+  expect(auditRes.status()).toBe(200)
+  const auditBody = await auditRes.json()
+  // 分页字段齐全
+  expect(auditBody).toHaveProperty('items')
+  expect(auditBody).toHaveProperty('total')
+  expect(auditBody).toHaveProperty('page')
+  expect(auditBody).toHaveProperty('pageSize')
+  expect(auditBody).toHaveProperty('totalPages')
+  expect(auditBody.page).toBe(1)
+  expect(auditBody.pageSize).toBe(20)
+  // items 为数组，每条结构含 id/resourceId/action/reason/occurredAt
+  expect(Array.isArray(auditBody.items)).toBe(true)
+  if (auditBody.items.length > 0) {
+    const first = auditBody.items[0]
+    expect(first.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(first.id).toBeTruthy()
+    expect(first.resourceId).toBeTruthy()
+    expect(first.reason).toContain('freedBytes=')
+    expect(first.occurredAt).toBeTruthy()
+  }
+  // 响应不含 passphrase（审计记录从不存 passphrase）
+  expect(JSON.stringify(auditBody)).not.toContain('passphrase')
+  // 省略固定 resourceType 与快照字段
+  expect(JSON.stringify(auditBody)).not.toContain('resourceType')
+
+  // UI：设置页审计查看区块可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '孤儿清理审计日志' })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})

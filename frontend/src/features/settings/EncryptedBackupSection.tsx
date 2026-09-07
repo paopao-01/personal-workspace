@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
+import { Table } from '@/components/ui/Table'
 import { formatDateTime } from '@/features/jobs/statusLabels'
 import { pushToast } from '@/components/feedback/toastStore'
 import {
@@ -12,6 +13,7 @@ import {
   formatBytes,
   useArmBackupSchedule,
   useBackups,
+  useBackupOrphanAudit,
   useBackupSchedule,
   useCleanOrphanFiles,
   useCreateBackup,
@@ -22,6 +24,15 @@ import {
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
 import { PassphraseStrengthMeter } from './PassphraseStrengthMeter'
+
+const AUDIT_PAGE_SIZE = 20
+
+/** 从审计 reason 文本（含 freedBytes=N 子串）解析释放字节数，失败回退到 null。 */
+function parseFreedBytes(reason: string | undefined): number | null {
+  if (!reason) return null
+  const match = reason.match(/freedBytes=(\d+)/)
+  return match ? Number(match[1]) : null
+}
 
 const LAST_RUN_STATUS_LABEL: Record<string, string> = {
   SUCCESS: '成功',
@@ -45,6 +56,8 @@ export function EncryptedBackupSection() {
   const purgeOldBackups = usePurgeOldBackups()
   const keepLastBackups = useKeepLastBackups()
   const cleanOrphanFiles = useCleanOrphanFiles()
+  const [auditPage, setAuditPage] = useState(1)
+  const auditQuery = useBackupOrphanAudit(auditPage, AUDIT_PAGE_SIZE)
   const [passphrase, setPassphrase] = useState('')
   const [restorePassphrase, setRestorePassphrase] = useState('')
   const [restoreFile, setRestoreFile] = useState<File | null>(null)
@@ -443,6 +456,71 @@ export function EncryptedBackupSection() {
               </Button>
             )}
           </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <h3 className="card-subtitle">孤儿清理审计日志</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            分页查询每次孤儿清理删除的文件记录（仅 BACKUP_ORPHAN_CLEANED，按时间倒序）。审计为
+            best-effort：极端情况下文件已删但审计可能缺失。范围仅孤儿清理，不含投递确认或需求变更。
+          </p>
+          <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
+            <Button
+              variant="default"
+              type="button"
+              onClick={() => auditQuery.refetch()}
+              disabled={auditQuery.isFetching}
+            >
+              {auditQuery.isFetching ? '刷新中…' : '刷新'}
+            </Button>
+          </div>
+          {auditQuery.isLoading ? (
+            <Spinner label="加载审计日志…" />
+          ) : auditQuery.error ? (
+            <ErrorState error={auditQuery.error} onRetry={() => auditQuery.refetch()} />
+          ) : (auditQuery.data?.items ?? []).length === 0 ? (
+            <EmptyState text="尚无孤儿清理审计记录" />
+          ) : (
+            <>
+              <Table headers={['时间', '文件 ID', '释放字节', '详情']}>
+                {(auditQuery.data?.items ?? []).map((entry) => {
+                  const freed = parseFreedBytes(entry.reason)
+                  return (
+                    <tr key={entry.id}>
+                      <td>{formatDateTime(entry.occurredAt)}</td>
+                      <td>{entry.resourceId}</td>
+                      <td>{freed != null ? formatBytes(freed) : '—'}</td>
+                      <td>{entry.reason}</td>
+                    </tr>
+                  )
+                })}
+              </Table>
+              <div className="pagination">
+                <span className="pagination-info">
+                  共 {auditQuery.data?.total ?? 0} 条 · 第 {auditPage}/
+                  {auditQuery.data?.totalPages ?? 0} 页
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                  disabled={auditPage <= 1}
+                >
+                  上一页
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    setAuditPage((p) =>
+                      p >= (auditQuery.data?.totalPages ?? 1) ? p : p + 1,
+                    )
+                  }
+                  disabled={auditPage >= (auditQuery.data?.totalPages ?? 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </>
+          )}
         </div>
 
         <div style={{ marginTop: 16 }}>

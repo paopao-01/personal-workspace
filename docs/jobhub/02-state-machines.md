@@ -314,9 +314,19 @@ ABANDONED ──restore──> TODO
 - 写入时机：在 `cleanOrphans` 逐文件循环内，删孤儿文件成功后立即 `auditLogMapper.insert`。无孤儿删除 0 个时不写审计（空操作无可追溯）；非 UUID 命名的 `.enc`（`skippedFiles`）不写审计（未删除）。
 - best-effort：审计写入失败用 try-catch 包裹仅记日志，不阻塞清理循环、不影响恢复事务提交与响应、不影响 `BackupOrphanCleanSummary` 计数（`deletedFiles` 反映实际删除的文件数，与审计是否落库无关）。语义同 restore 对 `cleanOrphans` 的 best-effort 容错。
 - 不写 `backup_record`（只读其 `file_name` 集合判定孤儿）、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`；仅向 `audit_log` 追加。
-- 不新增查询/展示端点：本版审计仅写不读，不暴露 `GET` 接口、不回显到响应（`BackupOrphanCleanSummary` 不加字段），事后追溯直接查 `audit_log` 表；查询入口留后续切片。
+- 查询入口：审计写入不回显到响应（`BackupOrphanCleanSummary` 不加字段），事后追溯经 `GET /backups/orphans/audit` 分页查询（见下节「孤儿清理审计日志查询」），本写入节不涉及读取。
 - 幂等性：独立孤儿端点由其 `Idempotency-Key` 保证（重复回放返回首次缓存摘要不重新执行 → 不重复写审计）；恢复联动由恢复的 `Idempotency-Key` 保证（重复回放不重新执行恢复与清理 → 不重复写审计）。无需额外去重。
 - `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
+
+**孤儿清理审计日志查询（只读）**：`GET /backups/orphans/audit` 分页查询 `audit_log` 表中 `action=BACKUP_ORPHAN_CLEANED` 的审计记录，供物理删除孤儿文件操作事后追溯（承接「仅写不读」的查询入口缺口）。
+
+- 查询范围：仅 `action=BACKUP_ORPHAN_CLEANED`（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans` 两类来源均写此 action，本端点**不区分来源**——当前审计 schema 无来源字段，按 action 过滤即可）。投递确认（`SECONDARY_APPLICATION_CONFIRMED`）、需求增删改合并（`REQUIREMENT_*`）等其他 action **不经本端点暴露**（本切片范围仅孤儿清理审计，不扩散到全量审计查询）。
+- 每条记录字段：`id`（审计记录 UUID）、`resourceId`（被删孤儿文件名去 `.enc` 的 UUID）、`action`（固定 `BACKUP_ORPHAN_CLEANED`）、`reason`（含 `freedBytes=N` 的可读说明，原样呈现，非结构化字段——前端如需展示字节数可解析该子串）、`occurredAt`（UTC ISO）。不返回 `resourceType`（固定 `BACKUP_FILE`，冗余省略）、不返回 `before/afterSnapshotJson`（孤儿清理恒为 null，无展示价值）。
+- 排序：按 `occurred_at DESC`（最新优先）。
+- 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageApplication`）。空表返回 `items=[]`、`total=0`、`totalPages=0`。
+- 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统。响应不含 passphrase（审计记录本身从不存 passphrase）。
+- 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描；本地单用户审计量小（仅孤儿清理追加写入），全表扫描性能可接受，**不新增索引迁移**。若未来数据量增长可另开迁移补 `occurred_at` 索引。
+- `AuditLogMapper` 在既有 `insert` 之外新增只读 `selectPageByAction` + `countByAction` 方法（仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。
 
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 

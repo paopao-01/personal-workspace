@@ -6,6 +6,7 @@ import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.domain.BackupSchedule;
 import com.jobhub.datamanagement.api.ImportResultResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -83,6 +84,20 @@ public class BackupController {
 		}
 		BackupOrphanCleanSummary summary = service.cleanOrphans();
 		return ResponseEntity.ok(summary);
+	}
+
+	/**
+	 * 分页查询孤儿清理审计日志（只读，仅 action=BACKUP_ORPHAN_CLEANED）。
+	 * 不区分独立 clean 与恢复联动来源；只读无需确认头与幂等键；按 occurred_at DESC（最新优先）。
+	 */
+	@GetMapping("/backups/orphans/audit")
+	public PageBackupOrphanAuditEntryResponse listOrphanAudit(
+			@RequestParam(defaultValue = "1") @Min(1) int page,
+			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize) {
+		long total = service.countOrphanAudit();
+		int offset = (page - 1) * pageSize;
+		return PageBackupOrphanAuditEntryResponse.from(
+				service.listOrphanAudit(pageSize, offset), total, page, pageSize);
 	}
 
 	@GetMapping("/backups/{backupId}/download")

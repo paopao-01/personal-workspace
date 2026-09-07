@@ -302,6 +302,106 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 		assertThat(secondCount).isEqualTo(1);
 	}
 
+	@Test
+	void AT49_listOrphanAuditReturnsPagedEntries() {
+		// 造 2 个孤儿 → clean 产生 2 条 BACKUP_ORPHAN_CLEANED 审计
+		CreatedBackup orphan1 = createBackup("TestPass1234!plus");
+		CreatedBackup orphan2 = createBackup("TestPass1234!plus");
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan1.id);
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan2.id);
+		ResponseEntity<String> clean = cleanOrphans(TestFixtures.newKey(), true);
+		assertThat(clean.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(clean.getBody(), "deletedFiles")).isEqualTo(2);
+
+		// GET /api/backups/orphans/audit 只读（不携带确认头与幂等键）
+		ResponseEntity<String> res = listOrphanAudit(1, 20);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		// 分页字段 + 2 条记录
+		assertThat(JsonProbe.intVal(body, "page")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(body, "pageSize")).isEqualTo(20);
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		assertThat(JsonProbe.intVal(body, "totalPages")).isEqualTo(1);
+		assertThat(JsonProbe.arraySize(body, "items")).isEqualTo(2);
+		// 每条字段：id 非空 UUID、resourceId 为被删文件 UUID、action 固定、reason 含 freedBytes、occurredAt 非空
+		String a0 = JsonProbe.arrStr(body, "items", 0, "action");
+		assertThat(a0).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "id")).isNotBlank();
+		assertThat(JsonProbe.arrStr(body, "items", 0, "reason")).contains("freedBytes=");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isNotBlank();
+		// resourceId 必为两个孤儿 id 之一（排序后首条是最新删除的那个）
+		String r0 = JsonProbe.arrStr(body, "items", 0, "resourceId");
+		assertThat(r0).isIn(orphan1.id, orphan2.id);
+
+		// 不含 passphrase（审计记录从不存 passphrase）
+		assertThat(body).doesNotContain("passphrase");
+		// 省略固定 resourceType 与快照字段
+		assertThat(body).doesNotContain("resourceType").doesNotContain("beforeSnapshotJson");
+	}
+
+	@Test
+	void AT49_listOrphanAuditEmptyReturnsZeroItems() {
+		// 无孤儿无审计记录 → 空表
+		ResponseEntity<String> res = listOrphanAudit(1, 20);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.arraySize(body, "items")).isZero();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		assertThat(JsonProbe.intVal(body, "totalPages")).isZero();
+	}
+
+	@Test
+	void AT49_listOrphanAuditPageSizeOneSplitsPages() {
+		// 造 2 个孤儿 → 2 条审计，pageSize=1 → totalPages=2，首页仅 1 条（最新）
+		CreatedBackup orphan1 = createBackup("TestPass1234!plus");
+		CreatedBackup orphan2 = createBackup("TestPass1234!plus");
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan1.id);
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan2.id);
+		cleanOrphans(TestFixtures.newKey(), true);
+
+		ResponseEntity<String> res = listOrphanAudit(1, 1);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.arraySize(body, "items")).isEqualTo(1);
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		assertThat(JsonProbe.intVal(body, "totalPages")).isEqualTo(2);
+	}
+
+	@Test
+	void AT49_listOrphanAuditRejectsInvalidPaging() {
+		// page=0 非法（最小 1）
+		assertThat(listOrphanAudit(0, 20).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		// pageSize=0 非法（最小 1）
+		assertThat(listOrphanAudit(1, 0).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		// pageSize=101 非法（最大 100）
+		assertThat(listOrphanAudit(1, 101).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT49_listOrphanAuditCoversRestoreLinkedSource() {
+		// 恢复联动的 cleanOrphans 同样写 BACKUP_ORPHAN_CLEANED，查询端点不区分来源
+		// 这里验证造孤儿后 clean（无论独立还是恢复联动来源），查询端点都能返回该 action
+		CreatedBackup orphan = createBackup("TestPass1234!plus");
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan.id);
+		cleanOrphans(TestFixtures.newKey(), true);
+
+		ResponseEntity<String> res = listOrphanAudit(1, 20);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body, "items", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceId")).isEqualTo(orphan.id);
+	}
+
+
+	/** GET /api/backups/orphans/audit 只读分页查询（不带确认头/幂等键）。 */
+	private ResponseEntity<String> listOrphanAudit(Integer page, Integer pageSize) {
+		StringBuilder qs = new StringBuilder();
+		if (page != null) qs.append(qs.isEmpty() ? "?page=" : "&page=").append(page);
+		if (pageSize != null) qs.append(qs.isEmpty() ? "?pageSize=" : "&pageSize=").append(pageSize);
+		return restTemplate.getForEntity(url("/backups/orphans/audit" + qs), String.class);
+	}
+
 	@SuppressWarnings("unused")
 	private record CreatedBackup(String id, String fileName, Path file) { }
 }
