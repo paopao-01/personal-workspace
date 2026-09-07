@@ -6,7 +6,7 @@ type Schemas = components['schemas']
 export type AuditLogEntry = Schemas['AuditLogEntry']
 export type PageAuditLogEntry = Schemas['PageAuditLogEntry']
 
-const AUDIT_LOG_KEY = ['audit-logs'] as const
+export const AUDIT_LOG_KEY = ['audit-logs'] as const
 
 /** 已知 action 取值（全量查询只读暴露既有写入值，不新增 action）。 */
 export const AUDIT_ACTIONS = [
@@ -18,6 +18,7 @@ export const AUDIT_ACTIONS = [
   'BACKUP_DELETED',
   'BACKUP_PURGED_BY_AGE',
   'BACKUP_PURGED_BY_COUNT',
+  'BACKUP_KEY_ROTATED',
 ] as const
 
 /** 已知 resourceType 取值。 */

@@ -21,6 +21,7 @@ import {
   useKeepLastBackups,
   usePurgeOldBackups,
   useRestoreBackup,
+  useRotateBackupKey,
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
 import { PassphraseStrengthMeter } from './PassphraseStrengthMeter'
@@ -50,6 +51,7 @@ export function EncryptedBackupSection() {
   const createBackup = useCreateBackup()
   const restoreBackup = useRestoreBackup()
   const deleteBackup = useDeleteBackup()
+  const rotateKey = useRotateBackupKey()
   const scheduleQuery = useBackupSchedule()
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
@@ -65,6 +67,9 @@ export function EncryptedBackupSection() {
   const [enabled, setEnabled] = useState(false)
   const [armPassphrase, setArmPassphrase] = useState('')
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [rotatingId, setRotatingId] = useState<string | null>(null)
+  const [rotateOldPass, setRotateOldPass] = useState('')
+  const [rotateNewPass, setRotateNewPass] = useState('')
   const [purgeDays, setPurgeDays] = useState('30')
   const [confirmingPurge, setConfirmingPurge] = useState(false)
   const [keepLast, setKeepLast] = useState('5')
@@ -161,6 +166,28 @@ export function EncryptedBackupSection() {
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')
       setConfirmingDeleteId(null)
+    }
+  }
+
+  const submitRotate = async (id: string, fileName: string) => {
+    if (rotateOldPass.trim().length < 8 || rotateNewPass.trim().length < 8) {
+      pushToast('新旧 passphrase 均至少 8 位', 'error')
+      return
+    }
+    try {
+      const updated = await rotateKey.mutateAsync({
+        id,
+        oldPassphrase: rotateOldPass,
+        newPassphrase: rotateNewPass,
+      })
+      setRotatingId(null)
+      setRotateOldPass('')
+      setRotateNewPass('')
+      pushToast(`已轮换 ${fileName} 的保护口令（${formatBytes(updated.sizeBytes)}）`)
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setRotateOldPass('')
+      setRotateNewPass('')
     }
   }
 
@@ -285,6 +312,18 @@ export function EncryptedBackupSection() {
                     >
                       下载
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      type="button"
+                      onClick={() => {
+                        setRotatingId(record.id)
+                        setRotateOldPass('')
+                        setRotateNewPass('')
+                      }}
+                    >
+                      密钥轮换
+                    </Button>
                     {confirmingDeleteId === record.id ? (
                       <>
                         <Button
@@ -317,6 +356,59 @@ export function EncryptedBackupSection() {
                       </Button>
                     )}
                   </div>
+                  {rotatingId === record.id ? (
+                    <div className="requirement-row" style={{ width: '100%', marginTop: 8 }}>
+                      <div className="requirement-main" style={{ flex: 1 }}>
+                        <Field label="旧 passphrase" required>
+                          <Input
+                            type="password"
+                            value={rotateOldPass}
+                            onChange={(event) => setRotateOldPass(event.target.value)}
+                            placeholder="至少 8 位（当前保护口令）"
+                            maxLength={256}
+                            aria-label="旧 passphrase"
+                            autoComplete="new-password"
+                          />
+                        </Field>
+                        <Field label="新 passphrase" required>
+                          <Input
+                            type="password"
+                            value={rotateNewPass}
+                            onChange={(event) => setRotateNewPass(event.target.value)}
+                            placeholder="至少 8 位（新保护口令，需达强）"
+                            maxLength={256}
+                            aria-label="新 passphrase"
+                            autoComplete="new-password"
+                          />
+                          <PassphraseStrengthMeter passphrase={rotateNewPass} />
+                        </Field>
+                      </div>
+                      <div className="requirement-actions">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          type="button"
+                          disabled={
+                            rotateKey.isPending
+                            || rotateOldPass.trim().length < 8
+                            || rotateNewPass.trim().length < 8
+                          }
+                          onClick={() => submitRotate(record.id, record.fileName)}
+                        >
+                          {rotateKey.isPending ? '轮换中…' : '确认轮换'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          type="button"
+                          disabled={rotateKey.isPending}
+                          onClick={() => setRotatingId(null)}
+                        >
+                          取消
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -656,7 +748,8 @@ export function EncryptedBackupSection() {
           )}
         </div>
         <p className="muted" style={{ marginTop: 12 }}>
-          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除、按龄清理、按数量保留与孤儿清理均为物理删除，不可恢复。
+          下载得到的是加密文件，需配合 passphrase 在本区恢复；删除、按龄清理、按数量保留与孤儿清理均为物理删除，不可恢复；
+          密钥轮换用旧口令解密并以新口令重新加密，备份 id 与数据不变。
         </p>
       </div>
     </section>

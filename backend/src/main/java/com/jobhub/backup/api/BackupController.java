@@ -110,6 +110,18 @@ public class BackupController {
 			.body(content);
 	}
 
+	/**
+	 * 密钥轮换（就地重加密）：用 oldPassphrase 解密既有 .enc 密文 → 用 newPassphrase 重新加密同一明文，
+	 * 覆盖原 .enc 文件并就地更新 backup_record 的 salt/iv/size_bytes。备份 id 与明文数据不变。
+	 * 非销毁性操作：oldPassphrase 解密成功即授权，无 X-Confirm-Permanent-Delete 确认头；携带 Idempotency-Key。
+	 */
+	@PostMapping("/backups/{backupId}/rotate-key")
+	public BackupRecordResponse rotateKey(@PathVariable String backupId,
+			@Valid @RequestBody RotateKeyRequest request) {
+		BackupRecord record = service.rotateKey(backupId, request.getOldPassphrase(), request.getNewPassphrase());
+		return BackupRecordResponse.from(record);
+	}
+
 	@DeleteMapping("/backups/{backupId}")
 	public ResponseEntity<Void> delete(@PathVariable String backupId,
 			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm) {

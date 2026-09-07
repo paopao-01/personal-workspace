@@ -850,8 +850,46 @@ And 响应不含 passphrase、不含 before/afterSnapshotJson（恒 null 省略�
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
+### AT-53 密钥轮换（POST /backups/{backupId}/rotate-key 就地重加密：旧口令解密 → 新口令重新加密，备份 id 与明文数据不变）
+
+```gherkin
+Given 用户已用强口令（score>=70）创建一条加密备份 backup_record（id=X），记其 salt_old/iv_old/size_old
+And backup_schedule.last_backup_id=X（若存在该软引用）
+When 用户调用 POST /api/backups/X/rotate-key（携带 Idempotency-Key，body {oldPassphrase=创建口令, newPassphrase=另一强口令}）
+Then 返回 200 且响应为更新后的 BackupRecordResponse，id=X、createdAt 不变、algorithm=AES_256_GCM_PBKDF2、pbkdf2Iterations=100000 不变、dataExportId 不变、fileName 不变
+And backup_record 行的 salt != salt_old、iv != iv_old、size_bytes 反映新密文大小（可能 != size_old）
+And 落盘 .enc 文件已用新口令+新 salt/iv 重新加密（旧密文被覆盖），新 salt/iv 与 DB 一致
+And 临时文件已被清理（不存在非 .enc 后缀残留）
+When 用 oldPassphrase 经 POST /api/backups/restore 恢复同一 .enc 文件
+Then 返回 422（passphrase 错误或备份文件损坏，GCM 认证失败）——旧口令已不可解密
+When 用 newPassphrase 经 POST /api/backups/restore 恢复同一 .enc 文件
+Then 返回 200 且恢复成功（inserted/skipped 与首次恢复语义一致），证明明文数据未变
+When 用 newPassphrase 经 GET /api/backups/X/download 下载
+Then 返回 200 且文件可下载
+And last_backup_id 仍=X（id 不变，软引用不受影响）
+And 审计日志有一条 action=BACKUP_KEY_ROTATED、resourceType=BACKUP_RECORD、resourceId=X、reason 含轮换说明、occurredAt 非空
+And 任何时刻 DB 不存储 passphrase 或派生密钥，响应不含 passphrase/salt/iv/score/level
+When 用户调用 POST /api/backups/X/rotate-key（body {oldPassphrase=错误口令, newPassphrase=强口令}）
+Then 返回 422（passphrase 错误或备份文件损坏）
+And backup_record 的 salt/iv/size_bytes 均未变（仍为轮换后的值），.enc 文件未变，审计无新增
+When 用户调用 POST /api/backups/X/rotate-key（body {oldPassphrase=正确旧口令, newPassphrase=弱口令 score<70}）
+Then 返回 400 VALIDATION_ERROR，message 含 score 与 >=70
+And backup_record 的 salt/iv/size_bytes 均未变，.enc 文件未变，审计无新增（fail fast：强度不足时不解密不落盘不写审计）
+When 用户调用 POST /api/backups/不存在ID/rotate-key（body {oldPassphrase=任意, newPassphrase=强口令}）
+Then 返回 404
+When 用户携带同一 Idempotency-Key 重复调用 POST /api/backups/X/rotate-key
+Then 返回首次缓存的相同响应，backup_record 的 salt/iv 不再变化，审计不重复写入（幂等回放不重新执行）
+When 用户调用 POST /api/backups/X/rotate-key（body {oldPassphrase=正确口令, newPassphrase=与old相同}）
+Then 返回 200（相同口令不拒绝，仍刷新 salt/iv 为新值，合法重加密）
+And 审计有一条新 BACKUP_KEY_ROTATED 记录（叠加既有）
+When GET /api/audit-logs?action=BACKUP_KEY_ROTATED
+Then 返回 200 且 items 含上述轮换审计记录
+When GET /api/audit-logs?resourceType=BACKUP_RECORD
+Then 返回 200 且 items 含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT/BACKUP_KEY_ROTATED 各类（若均有写入）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-52 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-53 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
