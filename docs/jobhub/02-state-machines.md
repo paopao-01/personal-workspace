@@ -253,7 +253,7 @@ ABANDONED ──restore──> TODO
 
 ## 9. 备份记录
 
-备份记录为追加型只读历史，无状态转换。生成后不可修改；删除为物理删除（hard delete），不可恢复，不进入最近删除（`trash_item`）：经 `DELETE /backups/{backupId}` 物理删除记录行并配套清理落盘密文文件，须携带 `X-Confirm-Permanent-Delete: true` 确认头。恢复为无状态只读转换：上传 .enc 文件 + passphrase → 解密 → 行级幂等恢复，不改写任何 `backup_record`，也不产生恢复记录。
+备份记录为追加型只读历史，无状态转换。生成后除「密钥轮换」操作可就地更新 `salt`/`iv`/`size_bytes` 三列（见下文「密钥轮换（就地重加密）」节，受审计）外，其余字段（`id`/`created_at`/`algorithm`/`pbkdf2_iterations`/`data_export_id`/`file_path`/`file_name`）不可修改；删除为物理删除（hard delete），不可恢复，不进入最近删除（`trash_item`）：经 `DELETE /backups/{backupId}` 物理删除记录行并配套清理落盘密文文件，须携带 `X-Confirm-Permanent-Delete: true` 确认头。恢复为无状态只读转换：上传 .enc 文件 + passphrase → 解密 → 行级幂等恢复，不改写任何 `backup_record`，也不产生恢复记录。
 
 - passphrase 经 PBKDF2（随机 16B salt、10 万次迭代）派生 AES-256-GCM 密钥加密标准数据包；passphrase 与派生密钥永不落盘、不回显、不进日志。
 - `salt` 与 `iv` 随记录持久化，以供未来恢复切片从用户 passphrase 重新派生密钥；`data_export_id` 软引用导出记录，不加外键。
@@ -344,7 +344,7 @@ ABANDONED ──restore──> TODO
 
 **全量审计日志查询（只读）**：`GET /audit-logs` 分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的跨域统一事后追溯（承接 `GET /backups/orphans/audit` 仅覆盖孤儿清理的备份域便捷入口，本端点为通用查询入口，**不废弃、不替代**前者）。
 
-- 查询范围：全量 `audit_log`（所有 action、所有 resourceType）。支持四个可选过滤参数 `action`、`resourceType`、`from`、`to`，均可空、可单独或任意组合使用；`action`/`resourceType` 按字符串精确匹配，`from`/`to` 按 `occurred_at` 时间范围过滤（`from` 起始含 `occurred_at >= from`，`to` 结束含 `occurred_at <= to`，均为 ISO-8601 UTC 字符串）；空=不过滤返回全量。只读暴露既有写入值，不新增 action：`SECONDARY_APPLICATION_CONFIRMED`（二次投递确认，`resourceType=APPLICATION`）、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（需求合并/编辑/删除，`resourceType=JOB_REQUIREMENT`）、`BACKUP_ORPHAN_CLEANED`（孤儿清理，`resourceType=BACKUP_FILE`）、`BACKUP_DELETED`（单条删除，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_AGE`（按龄批量清理，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_COUNT`（按数量保留清理，`resourceType=BACKUP_RECORD`）。`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 `GET /backups/orphans/audit` 相同的记录集，但字段含 `resourceType`（本端点不省略，因全量查询 resourceType 不固定）。`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（合法但无匹配，不报 400）。
+- 查询范围：全量 `audit_log`（所有 action、所有 resourceType）。支持四个可选过滤参数 `action`、`resourceType`、`from`、`to`，均可空、可单独或任意组合使用；`action`/`resourceType` 按字符串精确匹配，`from`/`to` 按 `occurred_at` 时间范围过滤（`from` 起始含 `occurred_at >= from`，`to` 结束含 `occurred_at <= to`，均为 ISO-8601 UTC 字符串）；空=不过滤返回全量。只读暴露既有写入值，不新增 action：`SECONDARY_APPLICATION_CONFIRMED`（二次投递确认，`resourceType=APPLICATION`）、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（需求合并/编辑/删除，`resourceType=JOB_REQUIREMENT`）、`BACKUP_ORPHAN_CLEANED`（孤儿清理，`resourceType=BACKUP_FILE`）、`BACKUP_DELETED`（单条删除，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_AGE`（按龄批量清理，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_COUNT`（按数量保留清理，`resourceType=BACKUP_RECORD`）、`BACKUP_KEY_ROTATED`（密钥轮换，`resourceType=BACKUP_RECORD`）。`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 `GET /backups/orphans/audit` 相同的记录集，但字段含 `resourceType`（本端点不省略，因全量查询 resourceType 不固定）。`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（合法但无匹配，不报 400）。
 - 每条记录字段：`id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、`action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`（当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase（审计记录本身从不存 passphrase）。
 - 排序：按 `occurred_at DESC`（最新优先），与 `GET /backups/orphans/audit` 一致。
 - 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageBackupOrphanAuditEntry`）。空表或过滤无匹配返回 `items=[]`、`total=0`、`totalPages=0`。
@@ -357,9 +357,32 @@ ABANDONED ──restore──> TODO
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。
 - 恢复端点**仍豁免强度门槛**：评估仅为提示，不阻塞、不拒绝恢复、不返回强度 400（passphrase 已与既有备份绑定，强制无意义且会锁死历史备份，详见 §9 恢复端点豁免条目）。
 - 评估在内存进行，passphrase 不落盘、不进日志、不回显；响应仅返回布尔 `passphraseResetRecommended`，**不**回显 passphrase 或 `score`/`level` 等派生信息（避免经响应侧信道泄露 passphrase 特征）；不新增评估端点。
-- 「重设」语义：系统无全局 passphrase 可重设（passphrase 每条备份绑定、从不持久化，仅武装时存内存），故「重设」即建议用户用强口令**新建一条备份**替换旧弱/中口令备份（新建时走强度门槛强制 `score≥70`），用户可随后删除旧备份。本端点不实现密钥轮换、不自动新建/删除备份、不阻塞后续操作。
+- 「重设」语义：系统无全局 passphrase 可重设（passphrase 每条备份绑定、从不持久化，仅武装时存内存）。若要在不新建备份的前提下更换某条既有备份的保护口令（旧口令解密 → 新口令重新加密，备份 id 与明文数据不变），使用 `POST /backups/{backupId}/rotate-key`（见下文「密钥轮换（就地重加密）」节）；若希望用强口令**新建一条备份**替换旧弱/中口令备份（新建时走强度门槛强制 `score≥70`），用户可随后删除旧备份。本恢复端点仅返回布尔提示，不自动轮换、不自动新建/删除备份、不阻塞后续操作。
 - 结果通过恢复响应的 `passphraseResetRecommended` 字段返回（`ImportResultReport` 可选字段，nullable boolean）；`POST /data-imports/restore` 标准数据恢复不触发此评估，该字段为 null。
 - 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `passphraseResetRecommended` 首次值），不重新执行评估。
+
+**密钥轮换（就地重加密）**：`POST /backups/{backupId}/rotate-key` 在不新建备份、不改备份 id 与明文数据的前提下，把指定 `backup_record` 的保护口令从 `oldPassphrase` 换为 `newPassphrase`：用 `oldPassphrase` 解密既有 `.enc` 密文 → 用 `newPassphrase` + 新随机 `salt`/`iv` 重新加密同一明文 → 覆盖原 `.enc` 文件并就地更新 `backup_record` 的 `salt`/`iv`/`size_bytes`。这是「生成后不可修改」不变式的**唯一受控例外**（见本节开头），仅此三列可变。
+
+- 轮换前置：`backup_record` 行存在（不存在返回 404）；body 含 `oldPassphrase` 与 `newPassphrase`（均 8–256 字符）。**无** `X-Confirm-Permanent-Delete` 确认头（轮换非销毁性操作，`oldPassphrase` 解密成功即证明持有当前保护口令，等同授权；无须额外确认头）。携带 `Idempotency-Key`（写操作）。
+- `newPassphrase` 强度门槛（强制，要求 strong）：与创建备份 / 武装调度同一门槛、同一算法（见本节「passphrase 强度门槛」条），`score<70`（弱或中）返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥70`。**先于解密校验**（fail fast：强度不足时不读文件、不解密、不落盘、不写审计，无任何副作用）。`newPassphrase` 与 `oldPassphrase` 相同不拒绝（仍生成新 `salt`/`iv` 刷新密钥材料，合法重加密）。
+- `oldPassphrase` **豁免强度门槛**：`oldPassphrase` 已与既有备份绑定（用于解密历史密文），强制无意义且会锁死门槛上线前用弱/中口令创建的历史备份（与恢复端点豁免同理）。解密失败（GCM 认证失败）返回 422，与强度无关，不进行任何轮换副作用。
+- 处理流程（`@Transactional` 事务内）：(1) `selectById` 取记录（404 if null）；(2) 校验 `newPassphrase` 强度（400 if score<70）；(3) 读 `.enc` 文件 → 按密文布局 `salt(16) || iv(12) || ciphertext+gcmTag` 拆分 → 用 `oldPassphrase` 解密（GCM 认证失败 → 422「passphrase 错误或备份文件损坏」）；(4) 用 `newPassphrase` + 新随机 `salt`/`iv` 重新加密同一明文（算法/迭代次数不变：`AES_256_GCM_PBKDF2`、10 万次）；(5) 新密文写入**临时文件**（同 `backup-dir`，非 `.enc` 后缀，避免孤儿扫描误判为合法 UUID 备份）；(6) `UPDATE backup_record SET salt=?, iv=?, size_bytes=? WHERE id=?`（新增只读 update 方法仅改这三列，**不暴露通用 UPDATE**，不动 `id`/`created_at`/`algorithm`/`pbkdf2_iterations`/`data_export_id`/`file_path`/`file_name`）；(7) best-effort 事务内向 `audit_log` 追加一条 `action=BACKUP_KEY_ROTATED` 审计记录（见下文「密钥轮换审计日志」节）；(8) `afterCommit` 原子 `rename` 临时文件 → 真实 `.enc`（覆盖旧密文）。
+- 一致性：临时文件在事务内写入、DB 更新在事务内、文件覆盖在 `afterCommit`。事务回滚时删临时文件，旧 `.enc` 密文与旧 `salt`/`iv` 均未动，备份仍可用 `oldPassphrase` 恢复；事务提交后 `afterCommit` 才覆盖文件，DB 与文件一致。`afterCommit` 覆盖前进程崩溃的极小窗口（DB 已新 salt、文件仍旧密文）属本地单用户可接受风险（与既有单条删除 `afterCommit` 清文件前崩溃残留孤儿的同量级风险），不阻塞轮换。
+- `last_backup_id` 不受影响（备份 id 不变，软引用仍指向同一条记录）；`data_export_id` 不变（独立历史快照软引用保持）；`armed` 内存状态与调度配置不受影响。
+- 不回显：响应返回更新后的 `BackupRecordResponse`（`id`/`createdAt`/`algorithm`/`pbkdf2Iterations`/`dataExportId`/`fileName`/`sizeBytes`，其中 `sizeBytes` 为新密文大小；`salt`/`iv` 永不在响应暴露——`BackupRecordResponse` 本就不含 salt/iv），**不**回显 `oldPassphrase`/`newPassphrase` 或 `score`/`level`。
+- passphrase 与派生密钥永不持久化、不进日志、不回显；`oldPassphrase` 仅用于一次性解密，`newPassphrase` 仅用于一次性重新加密，均不落盘。
+- 幂等性由 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的响应，不重新解密/重加密/更新 DB/写审计（轮换是确定性写操作，重复执行语义同首次，幂等回放不重复副作用）。
+
+**密钥轮换审计日志**：`POST /backups/{backupId}/rotate-key` 在事务内 `UPDATE backup_record` 成功后，向既有 `audit_log` 表追加一条审计记录（仅追加，不更新/删除），供密钥轮换操作事后追溯：
+
+- 审计范围：密钥轮换（就地重加密）。与单条删除/按龄清理/按数量保留清理的删除审计（`BACKUP_DELETED`/`BACKUP_PURGED_BY_AGE`/`BACKUP_PURGED_BY_COUNT`，均销毁记录行）不同，轮换是就地改写密钥材料（记录行仍在），`action`/语义互不重叠。
+- 记录粒度：**每次成功轮换一条**。`resource_type=BACKUP_RECORD`、`resource_id`=被轮换 `backup_record` 的 id（UUID）、`action=BACKUP_KEY_ROTATED`、`before_snapshot_json`/`after_snapshot_json` 均为 `null`（与既有审计用法一致，不存快照，且快照会暴露密钥材料故绝不存）、`reason` 含可读说明（如 `Backup record key rotated by re-encryption with new passphrase.`）、`occurred_at`=UTC ISO。
+- 写入时机：在 `rotateKey` 的 `@Transactional` 事务内，`UPDATE backup_record` 成功后立即 `auditLogMapper.insert`。`oldPassphrase` 错误（422）/`newPassphrase` 弱（400）/记录不存在（404）均不写审计（未改写任何记录，无可追溯）。
+- best-effort：审计写入失败用 try-catch 包裹仅记日志，不阻塞轮换、不影响响应；审计随事务提交/回滚（强一致——DB 更新回滚则审计回滚，DB 更新提交则审计提交），与单条删除/批量清理审计同范式（事务内强一致）。
+- 不回显：审计写入不回显到响应，审计是内部行为；passphrase 不参与（审计记录从不存 passphrase，快照恒 null 不暴露 salt/iv）。
+- 查询入口：事后追溯经 `GET /audit-logs` 全量查询（按 `action=BACKUP_KEY_ROTATED` 或 `resourceType=BACKUP_RECORD` 过滤，见上文「全量审计日志查询」节）；不经 `GET /backups/orphans/audit`（该端点仅返回 `BACKUP_ORPHAN_CLEANED`）。
+- 幂等性：由轮换端点的 `Idempotency-Key` 保证（重复回放不重新执行 → 不重复写审计）。无需额外去重。
+- `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
 
 ## 8. 能力、证据与删除状态
 

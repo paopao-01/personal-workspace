@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { isApiError, isNetworkError } from '@/api/errors'
 import { newIdempotencyKey } from '@/api/idempotency'
+import { AUDIT_LOG_KEY } from '@/api/audit/auditLogApi'
 import type { components } from '@/api/generated/types'
 
 type Schemas = components['schemas']
@@ -49,6 +50,26 @@ export async function deleteBackup(id: string): Promise<void> {
   })
 }
 
+/**
+ * 密钥轮换（就地重加密）：用 oldPassphrase 解密既有 .enc 密文 → 用 newPassphrase + 新随机 salt/iv
+ * 重新加密同一明文，覆盖原 .enc 文件并就地更新 backup_record 的 salt/iv/size_bytes。
+ * 备份 id 与明文数据不变。newPassphrase 强制强度门槛（要求 strong，score<70 后端返回 400），
+ * oldPassphrase 豁免门槛（解密成功即授权，GCM 认证失败返回 422）。非销毁性操作，无 X-Confirm-Permanent-Delete。
+ * 两个 passphrase 仅写入不回显；Idempotency-Key 由拦截器自动注入，支持安全重试。
+ */
+export async function rotateBackupKey(
+  id: string,
+  oldPassphrase: string,
+  newPassphrase: string,
+): Promise<BackupRecord> {
+  const res = await apiClient.post<BackupRecord>(
+    `/backups/${id}/rotate-key`,
+    { oldPassphrase, newPassphrase },
+    { headers: { 'Idempotency-Key': newIdempotencyKey() } },
+  )
+  return res.data
+}
+
 export function useBackups() {
   return useQuery<BackupRecord[], Error>({
     queryKey: BACKUPS_KEY,
@@ -74,6 +95,19 @@ export function useDeleteBackup() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
       void queryClient.invalidateQueries({ queryKey: BACKUP_SCHEDULE_KEY })
+    },
+  })
+}
+
+/** 密钥轮换；成功后刷新备份列表（id 不变但 sizeBytes 可变）与审计日志。 */
+export function useRotateBackupKey() {
+  const queryClient = useQueryClient()
+  return useMutation<BackupRecord, Error, { id: string; oldPassphrase: string; newPassphrase: string }>({
+    mutationFn: ({ id, oldPassphrase, newPassphrase }) =>
+      rotateBackupKey(id, oldPassphrase, newPassphrase),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: AUDIT_LOG_KEY })
     },
   })
 }

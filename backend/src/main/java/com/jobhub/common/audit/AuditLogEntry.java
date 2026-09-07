@@ -13,6 +13,8 @@ public class AuditLogEntry {
 	public static final String ACTION_BACKUP_PURGED_BY_AGE = "BACKUP_PURGED_BY_AGE";
 	/** audit_log.action 取值：按数量保留清理 backup_record（DELETE /backups?keepLast=N）。 */
 	public static final String ACTION_BACKUP_PURGED_BY_COUNT = "BACKUP_PURGED_BY_COUNT";
+	/** audit_log.action 取值：密钥轮换就地重加密 backup_record（POST /backups/{backupId}/rotate-key）。 */
+	public static final String ACTION_BACKUP_KEY_ROTATED = "BACKUP_KEY_ROTATED";
 
 	private String id;
 	private String resourceType;
@@ -122,6 +124,23 @@ public class AuditLogEntry {
 		entry.resourceId = backupId;
 		entry.action = ACTION_BACKUP_PURGED_BY_COUNT;
 		entry.reason = "Backup record purged by count keepLast=" + keepLast + ".";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
+	/**
+	 * 密钥轮换审计：rotateKey 在 UPDATE backup_record 成功后于事务内追加一条记录。
+	 * 仅追加，best-effort 写入失败不阻塞轮换。resourceType=BACKUP_RECORD，resourceId=被轮换备份 id，
+	 * 不存快照（before/after 均为 null——快照会暴露密钥材料故绝不存），reason 含可读说明，
+	 * 审计随事务提交/回滚（强一致，同删除审计范式）。
+	 */
+	public static AuditLogEntry backupKeyRotated(String id, String backupId, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "BACKUP_RECORD";
+		entry.resourceId = backupId;
+		entry.action = ACTION_BACKUP_KEY_ROTATED;
+		entry.reason = "Backup record key rotated by re-encryption with new passphrase.";
 		entry.occurredAt = occurredAt;
 		return entry;
 	}

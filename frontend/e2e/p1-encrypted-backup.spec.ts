@@ -1019,3 +1019,137 @@ test('AT-50 full audit log query with action and resourceType filter', async ({ 
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+/**
+ * AT-53 密钥轮换（就地重加密）：POST /api/backups/{backupId}/rotate-key 用旧口令解密 → 新口令重新加密，
+ * 覆盖原 .enc 文件并就地更新 backup_record 的 salt/iv/size_bytes。备份 id 与明文数据不变。
+ *
+ * 真实轮换→恢复→审计链路由后端集成测试 BackupKeyRotationIntegrationTest 覆盖；
+ * 本 E2E 聚焦前端契约与端点：创建备份 → rotate-key 成功（id/fileName 不变，salt/iv 不暴露）→
+ * 旧口令恢复 422 → 新口令恢复 200 → 审计可按 action=BACKUP_KEY_ROTATED 查询 → UI「密钥轮换」按钮可见。
+ */
+test('AT-53 rotate-key re-encrypts in place keeping id unchanged', async ({ page, request }) => {
+  const suffix = Date.now()
+  const oldPass = `old-${suffix}!Strong`
+  const newPass = `new-${suffix}!Strong`
+
+  // 造一个岗位保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at53-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `轮换-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 创建一份加密备份（用旧口令，须达强）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at53-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: oldPass },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+  const backupId = created.id
+  const fileName = created.fileName
+
+  // 密钥轮换：用旧口令解密 → 新口令重新加密
+  const rotateRes = await request.post(`/api/backups/${backupId}/rotate-key`, {
+    headers: { 'Idempotency-Key': `e2e-at53-rotate-${suffix}-${crypto.randomUUID()}` },
+    data: { oldPassphrase: oldPass, newPassphrase: newPass },
+  })
+  expect(rotateRes.status()).toBe(200)
+  const rotated = await rotateRes.json()
+  // id/fileName 不变；sizeBytes 反映新密文大小
+  expect(rotated.id).toBe(backupId)
+  expect(rotated.fileName).toBe(fileName)
+  expect(rotated.algorithm).toBe('AES_256_GCM_PBKDF2')
+  // 响应不回显 passphrase/salt/iv/score/level
+  const rotatedJson = JSON.stringify(rotated)
+  expect(rotatedJson).not.toContain(oldPass)
+  expect(rotatedJson).not.toContain(newPass)
+  expect(rotatedJson).not.toContain('salt')
+  expect(rotatedJson).not.toContain('iv')
+  expect(rotatedJson).not.toContain('score')
+  expect(rotatedJson).not.toContain('level')
+
+  // 下载轮换后的 .enc 文件，分别用旧/新口令恢复
+  const downloadRes = await request.get(`/api/backups/${backupId}/download`)
+  expect(downloadRes.status()).toBe(200)
+  const encBuffer = await downloadRes.body()
+
+  // 构造 multipart：file part 的二进制内容为 encBuffer，passphrase part 为口令文本
+  const boundary = `----e2e-at53-${suffix}`
+  const fileHeader = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="file"; filename="backup.enc"',
+    'Content-Type: application/octet-stream',
+    '',
+    '',
+  ].join('\r\n')
+  const fileFooter = `\r\n--${boundary}\r\n`
+
+  // 旧口令恢复 → 422（旧口令已不可解密）
+  const oldPassPart = [
+    'Content-Disposition: form-data; name="passphrase"',
+    '',
+    oldPass,
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+  const oldMultipart = Buffer.concat([
+    Buffer.from(fileHeader, 'utf8'),
+    encBuffer,
+    Buffer.from(fileFooter + oldPassPart, 'utf8'),
+  ])
+  const restoreOldRes = await request.post('/api/backups/restore', {
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    data: oldMultipart,
+  })
+  expect(restoreOldRes.status()).toBe(422)
+
+  // 新口令恢复 → 200
+  const newPassPart = [
+    'Content-Disposition: form-data; name="passphrase"',
+    '',
+    newPass,
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+  const newMultipart = Buffer.concat([
+    Buffer.from(fileHeader, 'utf8'),
+    encBuffer,
+    Buffer.from(fileFooter + newPassPart, 'utf8'),
+  ])
+  const restoreNewRes = await request.post('/api/backups/restore', {
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    data: newMultipart,
+  })
+  expect(restoreNewRes.status()).toBe(200)
+
+  // 审计可按 action=BACKUP_KEY_ROTATED 查询
+  const auditRes = await request.get('/api/audit-logs?page=1&pageSize=100&action=BACKUP_KEY_ROTATED')
+  expect(auditRes.status()).toBe(200)
+  const auditBody = await auditRes.json()
+  expect(Array.isArray(auditBody.items)).toBe(true)
+  const found = auditBody.items.some((i: { resourceId: string }) => i.resourceId === backupId)
+  expect(found).toBe(true)
+  for (const item of auditBody.items) {
+    expect(item.action).toBe('BACKUP_KEY_ROTATED')
+    expect(item.resourceType).toBe('BACKUP_RECORD')
+  }
+  // 审计响应不含 passphrase/快照
+  expect(JSON.stringify(auditBody)).not.toContain(oldPass)
+  expect(JSON.stringify(auditBody)).not.toContain(newPass)
+  expect(JSON.stringify(auditBody)).not.toContain('beforeSnapshotJson')
+
+  // UI：设置页历史备份列表项有「密钥轮换」按钮
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: '密钥轮换' }).first()).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${backupId}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})

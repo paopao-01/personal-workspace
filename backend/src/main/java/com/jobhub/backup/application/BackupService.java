@@ -313,6 +313,133 @@ public class BackupService {
 	}
 
 	/**
+	 * 密钥轮换（就地重加密）：用 oldPassphrase 解密既有 .enc 密文 → 用 newPassphrase + 新随机 salt/iv
+	 * 重新加密同一明文 → 覆盖原 .enc 文件并就地更新 backup_record 的 salt/iv/size_bytes 三列
+	 * （「生成后不可修改」不变式的唯一受控例外，仅此三列可变，见 02-state-machines.md §9）。
+	 *
+	 * 处理流程（@Transactional 事务内）：
+	 * (1) selectById 取记录（404 if null）；
+	 * (2) 先校验 newPassphrase 强度门槛（要求 strong，score<70 返回 400，fail fast——不读文件、不解密、
+	 *     不落盘、不写审计）；oldPassphrase 豁免门槛（已与既有备份绑定，解密成功即授权）；
+	 * (3) 读 .enc 文件 → 按 salt(16)||iv(12)||ciphertext 布局拆分 → 用 oldPassphrase 解密
+	 *     （GCM 认证失败 → 422「passphrase 错误或备份文件损坏」）；
+	 * (4) 用 newPassphrase + 新随机 salt/iv 重新加密同一明文（算法/迭代次数不变）；
+	 * (5) 新密文写入临时文件（同 backup-dir，非 .enc 后缀避免孤儿扫描误判）；
+	 * (6) UPDATE backup_record SET salt/iv/size_bytes（仅此三列）；
+	 * (7) best-effort 事务内向 audit_log 追加一条 BACKUP_KEY_ROTATED 记录（随事务提交/回滚强一致）；
+	 * (8) afterCommit 原子 rename 临时文件 → 真实 .enc（覆盖旧密文）；事务回滚则删临时文件，
+	 *     旧密文与旧 salt/iv 未动，备份仍可用 oldPassphrase 恢复。
+	 *
+	 * newPassphrase 与 oldPassphrase 相同不拒绝（仍刷新 salt/iv，合法重加密）。
+	 * last_backup_id 不受影响（id 不变）；data_export_id 不变；armed 内存状态与调度配置不受影响。
+	 * passphrase 与派生密钥永不持久化、不进日志、不回显；响应返回更新后的 BackupRecord（不含 salt/iv）。
+	 * 幂等性由 Idempotency-Key 保证（重复回放不重新执行）。
+	 */
+	@Transactional
+	public BackupRecord rotateKey(String id, String oldPassphrase, String newPassphrase) {
+		BackupRecord record = mapper.selectById(id);
+		if (record == null) {
+			throw new ResourceNotFoundException("BackupRecord", id);
+		}
+		// 先校验 newPassphrase 强度门槛（fail fast：强度不足时不读文件、不解密、不落盘、不写审计）
+		PassphraseStrengthValidator.requireAcceptable(newPassphrase);
+
+		// 读既有 .enc 密文文件 → 拆 salt/iv/ciphertext
+		Path realFile = Paths.get(record.getFilePath());
+		if (!Files.exists(realFile)) {
+			throw new ResourceNotFoundException("BackupFile", id);
+		}
+		byte[] encBytes;
+		try {
+			encBytes = Files.readAllBytes(realFile);
+		} catch (Exception ex) {
+			throw new ResourceNotFoundException("BackupFile", id);
+		}
+		if (encBytes.length < SALT_BYTES + IV_BYTES) {
+			throw new BusinessRuleException("备份文件格式无效：缺少 salt/iv");
+		}
+		byte[] oldSalt = new byte[SALT_BYTES];
+		byte[] oldIv = new byte[IV_BYTES];
+		byte[] ciphertext = new byte[encBytes.length - SALT_BYTES - IV_BYTES];
+		System.arraycopy(encBytes, 0, oldSalt, 0, SALT_BYTES);
+		System.arraycopy(encBytes, SALT_BYTES, oldIv, 0, IV_BYTES);
+		System.arraycopy(encBytes, SALT_BYTES + IV_BYTES, ciphertext, 0, ciphertext.length);
+
+		// 用 oldPassphrase 解密（GCM 认证失败 → 422，等同恢复解密语义；oldPassphrase 豁免强度门槛）
+		byte[] plaintext;
+		try {
+			plaintext = encryption.decrypt(
+				new EncryptionService.EncryptedPayload(oldSalt, oldIv, ciphertext), oldPassphrase);
+		} catch (BusinessRuleException ex) {
+			throw new BusinessRuleException("passphrase 错误或备份文件损坏");
+		}
+
+		// 用 newPassphrase + 新随机 salt/iv 重新加密同一明文（算法/迭代次数不变）
+		EncryptionService.EncryptedPayload newPayload = encryption.encrypt(plaintext, newPassphrase);
+		byte[] newFileBytes = composeFileBytes(newPayload);
+
+		// 新密文写入临时文件（非 .enc 后缀避免孤儿扫描误判为合法 UUID 备份）
+		Path tempFile = Paths.get(record.getFilePath() + ".tmp");
+		try {
+			Files.createDirectories(tempFile.getParent());
+			Files.write(tempFile, newFileBytes);
+		} catch (Exception ex) {
+			throw new BusinessRuleException("轮换临时文件写入失败：" + ex.getMessage());
+		}
+
+		// UPDATE backup_record SET salt/iv/size_bytes（仅此三列，不动其余字段）
+		int affected = mapper.updateSaltIvSize(id, newPayload.salt(), newPayload.iv(), newFileBytes.length);
+		if (affected == 0) {
+			// 并发：记录刚被另一事务删除，清理临时文件后按不存在处理
+			deleteFile(tempFile);
+			throw new ResourceNotFoundException("BackupRecord", id);
+		}
+
+		// best-effort 审计：UPDATE 成功后于事务内追加一条 BACKUP_KEY_ROTATED 记录，失败仅记日志不阻塞轮换、
+		// 不影响响应；审计随事务提交/回滚（强一致）。幂等由 Idempotency-Key 保证（重复回放不重新执行）。
+		try {
+			auditLogMapper.insert(AuditLogEntry.backupKeyRotated(ids.newId(), id, time.now()));
+		} catch (Exception auditEx) {
+			System.getLogger(BackupService.class.getName())
+				.log(System.Logger.Level.WARNING, "密钥轮换审计写入失败：" + id, auditEx);
+		}
+
+		// 文件覆盖在事务提交后执行：commit → afterCommit 原子覆盖真实 .enc；rollback → 删临时文件，
+		// 旧密文与旧 salt/iv 未动，备份仍可用 oldPassphrase 恢复。
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				try {
+					Files.move(tempFile, realFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+						java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+				} catch (Exception ex) {
+					// ATOMIC_MOVE 不被支持时回退到 REPLACE_EXISTING（非原子但语义正确：DB 已提交新 salt/iv，
+					// 覆盖文件即达成一致；与既有单条删除 afterCommit 清文件前崩溃残留孤儿的同量级风险）
+					try {
+						Files.move(tempFile, realFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+					} catch (Exception ex2) {
+						System.getLogger(BackupService.class.getName())
+							.log(System.Logger.Level.WARNING, "轮换文件覆盖失败：" + realFile, ex2);
+						deleteFile(tempFile);
+					}
+				}
+			}
+
+			@Override
+			public void afterCompletion(int status) {
+				if (status == STATUS_ROLLED_BACK) {
+					// 事务回滚：DB 已回滚到旧 salt/iv，删临时文件，旧 .enc 密文未动
+					deleteFile(tempFile);
+				}
+			}
+		});
+
+		// 返回更新后的记录（重新查询以反映 salt/iv/size_bytes 已更新；其余字段不变）
+		BackupRecord updated = mapper.selectById(id);
+		return updated != null ? updated : record;
+	}
+
+	/**
 	 * 扫描并清理孤儿 .enc 密文文件：扫描 backup-dir 下全部 .enc 文件，物理删除其中无 backup_record 对应的孤儿。
 	 * 判定规则：备份文件名恒为 {@code <id>.enc}（id 为 UUID），取文件名去 {@code .enc} 得 candidate id；
 	 * 合法 UUID 且 backup_record 中无对应 file_name 的文件即孤儿，删除之；非 UUID 命名的 .enc（如用户随手放入的

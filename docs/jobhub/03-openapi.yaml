@@ -1026,6 +1026,43 @@ paths:
       responses:
         '200': { description: 加密备份文件, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+  /backups/{backupId}/rotate-key:
+    parameters: [ { $ref: '#/components/parameters/BackupId' } ]
+    post:
+      tags: [Backups]
+      summary: 密钥轮换（就地重加密：旧口令解密 → 新口令重新加密，备份 id 与明文数据不变）
+      description: |
+        在不新建备份、不改备份 id 与明文数据的前提下，把指定 `backup_record` 的保护口令从 `oldPassphrase`
+        换为 `newPassphrase`。处理流程（`@Transactional` 事务内）：(1) `selectById` 取记录（404 if null）；
+        (2) **先**校验 `newPassphrase` 强度门槛（强制，要求 strong：`score<70` 返回 400，同 `POST /backups`，
+        fail fast——不读文件、不解密、不落盘、不写审计）；(3) 读 `.enc` 文件 → 按 `salt(16) || iv(12) || ciphertext+gcmTag`
+        拆分 → 用 `oldPassphrase` 解密（GCM 认证失败 → 422「passphrase 错误或备份文件损坏」，同恢复语义）；
+        (4) 用 `newPassphrase` + 新随机 `salt`/`iv` 重新加密同一明文（算法/迭代次数不变）；(5) 新密文写入临时文件
+        （同 `backup-dir`，非 `.enc` 后缀避免孤儿扫描误判）；(6) `UPDATE backup_record SET salt/iv/size_bytes`
+        （仅此三列就地更新——这是「生成后不可修改」不变式的唯一受控例外，见 02-state-machines.md §9；不动
+        `id`/`created_at`/`algorithm`/`pbkdf2_iterations`/`data_export_id`/`file_path`/`file_name`）；(7) best-effort 事务内
+        向 `audit_log` 追加一条 `action=BACKUP_KEY_ROTATED`、`resourceType=BACKUP_RECORD` 的审计记录
+        （`resourceId`=被轮换备份 id，快照 null，`reason` 含轮换说明），写入失败仅记日志不阻塞轮换、不回显到响应；
+        事后追溯经 `GET /audit-logs?action=BACKUP_KEY_ROTATED` 查询。审计随事务提交/回滚（强一致）。(8) `afterCommit`
+        原子 `rename` 临时文件 → 真实 `.enc`（覆盖旧密文）；事务回滚则删临时文件，旧密文与旧 salt/iv 未动，备份仍可用
+        `oldPassphrase` 恢复。
+        `oldPassphrase` **豁免**强度门槛（已与既有备份绑定，用于解密历史密文，强制无意义且会锁死门槛上线前的历史备份，
+        同恢复端点豁免）；`newPassphrase` 与 `oldPassphrase` 相同不拒绝（仍刷新 salt/iv，合法重加密）。`oldPassphrase`
+        解密成功即证明持有当前保护口令，等同授权，故**无** `X-Confirm-Permanent-Delete` 确认头（轮换非销毁性）。
+        `last_backup_id` 不受影响（id 不变）；`data_export_id` 不变；`armed` 内存状态与调度配置不受影响。passphrase 与
+        派生密钥永不持久化、不进日志、不回显；响应返回更新后的 `BackupRecord`（`sizeBytes` 为新密文大小，不含 salt/iv，
+        本就不暴露 passphrase）。幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存响应，不重新解密/重加密/更新/写审计）。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateKeyRequest' }
+      responses:
+        '200': { description: 轮换后的备份记录, content: { application/json: { schema: { $ref: '#/components/schemas/BackupRecord' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /backups/restore:
     post:
       tags: [Backups]
@@ -1144,7 +1181,8 @@ paths:
         `BACKUP_ORPHAN_CLEANED`（`resourceType=BACKUP_FILE`，孤儿 .enc 文件清理）、
         `BACKUP_DELETED`（`resourceType=BACKUP_RECORD`，单条删除备份记录）、
         `BACKUP_PURGED_BY_AGE`（`resourceType=BACKUP_RECORD`，按龄批量清理备份记录）、
-        `BACKUP_PURGED_BY_COUNT`（`resourceType=BACKUP_RECORD`，按数量保留清理备份记录）。
+        `BACKUP_PURGED_BY_COUNT`（`resourceType=BACKUP_RECORD`，按数量保留清理备份记录）、
+        `BACKUP_KEY_ROTATED`（`resourceType=BACKUP_RECORD`，密钥轮换就地重加密）。
         每条记录返回 `id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、
         `action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`
         （当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase
@@ -1166,7 +1204,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 按动作类型过滤（可选，精确匹配），如 `BACKUP_ORPHAN_CLEANED`/`SECONDARY_APPLICATION_CONFIRMED`/`REQUIREMENT_MERGED`/`BACKUP_DELETED`/`BACKUP_PURGED_BY_AGE`/`BACKUP_PURGED_BY_COUNT`。
+          description: 按动作类型过滤（可选，精确匹配），如 `BACKUP_ORPHAN_CLEANED`/`SECONDARY_APPLICATION_CONFIRMED`/`REQUIREMENT_MERGED`/`BACKUP_DELETED`/`BACKUP_PURGED_BY_AGE`/`BACKUP_PURGED_BY_COUNT`/`BACKUP_KEY_ROTATED`。
         - name: resourceType
           in: query
           required: false
@@ -2468,6 +2506,12 @@ components:
       required: [passphrase]
       properties:
         passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储。强度门槛（强制，要求 strong）：score<70（弱或中）返回 400 }
+    RotateKeyRequest:
+      type: object
+      required: [oldPassphrase, newPassphrase]
+      properties:
+        oldPassphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于解密既有 .enc 密文以证明持有当前保护口令（解密成功即授权），豁免强度门槛（同恢复端点）。永不回显或存储 }
+        newPassphrase: { type: string, minLength: 8, maxLength: 256, description: "仅写入；用于 PBKDF2 派生新 AES-256-GCM 密钥重新加密明文，永不回显或存储。强度门槛（强制，要求 strong）：score<70（弱或中）返回 400，详见 POST /backups/{backupId}/rotate-key 描述与 02-state-machines.md §9" }
     BackupScheduleUpdateRequest:
       type: object
       required: [cronExpression, enabled, version]
