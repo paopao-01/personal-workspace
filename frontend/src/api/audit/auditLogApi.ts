@@ -15,11 +15,15 @@ export const AUDIT_ACTIONS = [
   'REQUIREMENT_MERGED',
   'REQUIREMENT_UPDATED',
   'REQUIREMENT_DELETED',
+  'BACKUP_DELETED',
+  'BACKUP_PURGED_BY_AGE',
+  'BACKUP_PURGED_BY_COUNT',
 ] as const
 
 /** 已知 resourceType 取值。 */
 export const AUDIT_RESOURCE_TYPES = [
   'BACKUP_FILE',
+  'BACKUP_RECORD',
   'APPLICATION',
   'JOB_REQUIREMENT',
 ] as const

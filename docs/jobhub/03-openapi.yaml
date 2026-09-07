@@ -914,6 +914,12 @@ paths:
         返回 200 `deletedCount=0`（不报 404，空集合法）。passphrase 不参与清理验证（清理即销毁密钥材料）；
         passphrase 与派生密钥永不持久化。返回清理摘要（删除记录数、清理文件数、是否置空 last_backup_id），
         幂等性由 `Idempotency-Key` 保证（重复回放返回相同摘要，不重新执行清理）。
+        删除审计：事务内逐条 `deleteById` 返回非 0 后立即 best-effort 向 `audit_log` 追加一条审计记录
+        （`resourceType=BACKUP_RECORD`、`resourceId`=被删备份 id、快照为 null、`reason` 含可读说明），
+        按龄清理写 `action=BACKUP_PURGED_BY_AGE`、按数量保留清理写 `action=BACKUP_PURGED_BY_COUNT`；
+        每被删记录一条，无匹配删除 0 条不写；写入失败仅记日志不阻塞清理、不回显到响应（`BackupPurgeSummary`
+        不加字段）；事后追溯经 `GET /audit-logs?action=BACKUP_PURGED_BY_AGE` 等查询。审计随事务提交/回滚
+        （强一致）；幂等性由 `Idempotency-Key` 保证（重复回放不重新执行、不重复写审计）。
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - name: olderThanDays
@@ -997,6 +1003,11 @@ paths:
         （删除即销毁，无需再验）。若被删备份 id 等于 `backup_schedule.last_backup_id`，
         则将该软引用置空（不影响 armed 内存状态）。`data_export_id` 软引用的导出记录行不联动删除
         （保留为独立历史快照，悬空软引用无外键阻拦）。passphrase 与派生密钥永不持久化。
+        删除审计：事务内 `deleteById` 返回非 0 后立即 best-effort 向 `audit_log` 追加一条
+        `action=BACKUP_DELETED`、`resourceType=BACKUP_RECORD` 的审计记录（`resourceId`=被删备份 id，
+        快照为 null，`reason` 含可读说明），写入失败仅记日志不阻塞删除、不回显到响应；
+        事后追溯经 `GET /audit-logs?action=BACKUP_DELETED` 查询。审计随事务提交/回滚（强一致）；
+        幂等性由 `Idempotency-Key` 保证（重复回放不重新执行、不重复写审计）。
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - name: X-Confirm-Permanent-Delete
@@ -1129,7 +1140,10 @@ paths:
         二者可单独或组合使用，均按字符串精确匹配）。只读暴露既有写入值，不新增 action：
         `SECONDARY_APPLICATION_CONFIRMED`（`resourceType=APPLICATION`，二次投递确认）、
         `REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（`resourceType=JOB_REQUIREMENT`，需求合并/编辑/删除）、
-        `BACKUP_ORPHAN_CLEANED`（`resourceType=BACKUP_FILE`，孤儿 .enc 文件清理）。
+        `BACKUP_ORPHAN_CLEANED`（`resourceType=BACKUP_FILE`，孤儿 .enc 文件清理）、
+        `BACKUP_DELETED`（`resourceType=BACKUP_RECORD`，单条删除备份记录）、
+        `BACKUP_PURGED_BY_AGE`（`resourceType=BACKUP_RECORD`，按龄批量清理备份记录）、
+        `BACKUP_PURGED_BY_COUNT`（`resourceType=BACKUP_RECORD`，按数量保留清理备份记录）。
         每条记录返回 `id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、
         `action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`
         （当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase
@@ -1146,12 +1160,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 按动作类型过滤（可选，精确匹配），如 `BACKUP_ORPHAN_CLEANED`/`SECONDARY_APPLICATION_CONFIRMED`/`REQUIREMENT_MERGED`。
+          description: 按动作类型过滤（可选，精确匹配），如 `BACKUP_ORPHAN_CLEANED`/`SECONDARY_APPLICATION_CONFIRMED`/`REQUIREMENT_MERGED`/`BACKUP_DELETED`/`BACKUP_PURGED_BY_AGE`/`BACKUP_PURGED_BY_COUNT`。
         - name: resourceType
           in: query
           required: false
           schema: { type: string }
-          description: 按资源类型过滤（可选，精确匹配），如 `BACKUP_FILE`/`APPLICATION`/`JOB_REQUIREMENT`。
+          description: 按资源类型过滤（可选，精确匹配），如 `BACKUP_FILE`/`BACKUP_RECORD`/`APPLICATION`/`JOB_REQUIREMENT`。
       responses:
         '200':
           description: 全量审计日志分页列表

@@ -177,6 +177,9 @@ public class BackupService {
 	 * 若被删集合含 last_backup_id 则置空该软引用。语义同单条 delete：文件清理在事务提交后执行
 	 * （afterCommit），文件清理失败仅记日志不回滚 DB。filesCleaned 为删行时文件存在的数量（将在 afterCommit 清理）。
 	 * 不联动删 data_export 行（独立历史快照）。无匹配记录返回 deletedCount=0（不报 404）。
+	 * 删除审计：事务内逐被删记录 deleteById 返回非 0 后 best-effort 向 audit_log 追加一条
+	 * BACKUP_PURGED_BY_AGE 记录（resourceType=BACKUP_RECORD），写入失败仅记日志不阻塞清理、
+	 * 不影响摘要计数，审计随事务提交/回滚（强一致）；无匹配删除 0 条不写审计。
 	 */
 	@Transactional
 	public BackupPurgeSummary purgeOlderThan(int days) {
@@ -201,6 +204,15 @@ public class BackupService {
 				continue;
 			}
 			deleted++;
+			// best-effort 审计：按龄清理删行成功后于事务内逐被删记录追加一条 BACKUP_PURGED_BY_AGE 记录，
+			// 失败仅记日志不阻塞清理、不影响摘要计数；审计随事务提交/回滚（强一致）；幂等由 Idempotency-Key 保证。
+			try {
+				auditLogMapper.insert(
+						AuditLogEntry.backupPurgedByAge(ids.newId(), r.getId(), days, time.now()));
+			} catch (Exception auditEx) {
+				System.getLogger(BackupService.class.getName())
+					.log(System.Logger.Level.WARNING, "按龄清理审计写入失败：" + r.getId(), auditEx);
+			}
 			if (scheduleMapper.clearLastBackupIdIfMatch(r.getId()) > 0) {
 				lastCleared = true;
 			}
@@ -230,6 +242,9 @@ public class BackupService {
 	 * 物理删除其余全部 backup_record + 落盘 .enc 文件，若被删集合含 last_backup_id 则置空该软引用。
 	 * 语义同按龄清理与单条 delete：文件清理在事务提交后执行（afterCommit），文件清理失败仅记日志不回滚 DB。
 	 * 不联动删 data_export 行（独立历史快照）。keepLast ≥ 现有总数时无备份被删，返回 deletedCount=0（不报 404）。
+	 * 删除审计：事务内逐被删记录 deleteById 返回非 0 后 best-effort 向 audit_log 追加一条
+	 * BACKUP_PURGED_BY_COUNT 记录（resourceType=BACKUP_RECORD），写入失败仅记日志不阻塞清理、
+	 * 不影响摘要计数，审计随事务提交/回滚（强一致）；无备份被删 0 条不写审计。
 	 */
 	@Transactional
 	public BackupPurgeSummary purgeKeepingLast(int keepLast) {
@@ -256,6 +271,15 @@ public class BackupService {
 				continue;
 			}
 			deleted++;
+			// best-effort 审计：按数量保留清理删行成功后于事务内逐被删记录追加一条 BACKUP_PURGED_BY_COUNT 记录，
+			// 失败仅记日志不阻塞清理、不影响摘要计数；审计随事务提交/回滚（强一致）；幂等由 Idempotency-Key 保证。
+			try {
+				auditLogMapper.insert(
+						AuditLogEntry.backupPurgedByCount(ids.newId(), r.getId(), keepLast, time.now()));
+			} catch (Exception auditEx) {
+				System.getLogger(BackupService.class.getName())
+					.log(System.Logger.Level.WARNING, "按数量保留清理审计写入失败：" + r.getId(), auditEx);
+			}
 			if (scheduleMapper.clearLastBackupIdIfMatch(r.getId()) > 0) {
 				lastCleared = true;
 			}
@@ -372,6 +396,8 @@ public class BackupService {
 	 * 不可恢复，不进入最近删除；passphrase 不参与删除验证（删除即销毁密钥材料）。
 	 * 文件清理在事务提交后执行（在事务内事务后置回调），文件清理失败仅记日志不回滚 DB，
 	 * 避免悬留已删记录却残留文件；文件不存在视为已清理不报错。
+	 * 删除审计：事务内 deleteById 返回非 0 后 best-effort 向 audit_log 追加一条 BACKUP_DELETED 记录
+	 * （resourceType=BACKUP_RECORD），写入失败仅记日志不阻塞删除，审计随事务提交/回滚（强一致）。
 	 */
 	@Transactional
 	public void delete(String id) {
@@ -385,6 +411,14 @@ public class BackupService {
 			throw new ResourceNotFoundException("BackupRecord", id);
 		}
 		scheduleMapper.clearLastBackupIdIfMatch(id);
+		// best-effort 审计：删行成功后于事务内追加一条 BACKUP_DELETED 记录，失败仅记日志不阻塞删除、
+		// 不影响响应；审计随事务提交/回滚（强一致）。幂等由 Idempotency-Key 保证（重复回放不重新执行）。
+		try {
+			auditLogMapper.insert(AuditLogEntry.backupDeleted(ids.newId(), id, time.now()));
+		} catch (Exception auditEx) {
+			System.getLogger(BackupService.class.getName())
+				.log(System.Logger.Level.WARNING, "单条删除审计写入失败：" + id, auditEx);
+		}
 		// 文件清理在事务提交后执行，避免悬留已删记录却残留文件
 		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 			@Override

@@ -7,6 +7,12 @@ public class AuditLogEntry {
 
 	/** audit_log.action 取值：孤儿 .enc 文件清理。独立孤儿端点与恢复联动 cleanOrphans 均写此值。 */
 	public static final String ACTION_BACKUP_ORPHAN_CLEANED = "BACKUP_ORPHAN_CLEANED";
+	/** audit_log.action 取值：单条删除 backup_record（DELETE /backups/{backupId}）。 */
+	public static final String ACTION_BACKUP_DELETED = "BACKUP_DELETED";
+	/** audit_log.action 取值：按龄批量清理 backup_record（DELETE /backups?olderThanDays=N）。 */
+	public static final String ACTION_BACKUP_PURGED_BY_AGE = "BACKUP_PURGED_BY_AGE";
+	/** audit_log.action 取值：按数量保留清理 backup_record（DELETE /backups?keepLast=N）。 */
+	public static final String ACTION_BACKUP_PURGED_BY_COUNT = "BACKUP_PURGED_BY_COUNT";
 
 	private String id;
 	private String resourceType;
@@ -68,6 +74,54 @@ public class AuditLogEntry {
 		entry.action = ACTION_BACKUP_ORPHAN_CLEANED;
 		entry.reason = "Orphan .enc file with no matching backup_record, removed by orphan scan cleanup (freedBytes="
 				+ freedBytes + ").";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
+	/**
+	 * 单条删除备份审计：delete(id) 在 deleteById 返回非 0 后于事务内追加一条记录。
+	 * 仅追加，best-effort 写入失败不阻塞删除。resourceType=BACKUP_RECORD，resourceId=被删备份 id，
+	 * 不存快照（before/after 均为 null），reason 含可读说明，审计随事务提交/回滚（强一致）。
+	 */
+	public static AuditLogEntry backupDeleted(String id, String backupId, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "BACKUP_RECORD";
+		entry.resourceId = backupId;
+		entry.action = ACTION_BACKUP_DELETED;
+		entry.reason = "Backup record deleted by single delete.";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
+	/**
+	 * 按龄批量清理审计：purgeOlderThan(days) 在 deleteById 返回非 0 后于事务内逐被删记录追加一条。
+	 * 仅追加，best-effort 写入失败不阻塞清理。resourceType=BACKUP_RECORD，resourceId=被删备份 id，
+	 * 不存快照，reason 含 olderThanDays 便于追溯，审计随事务提交/回滚（强一致）。
+	 */
+	public static AuditLogEntry backupPurgedByAge(String id, String backupId, int olderThanDays, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "BACKUP_RECORD";
+		entry.resourceId = backupId;
+		entry.action = ACTION_BACKUP_PURGED_BY_AGE;
+		entry.reason = "Backup record purged by age olderThanDays=" + olderThanDays + ".";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
+	/**
+	 * 按数量保留清理审计：purgeKeepingLast(keepLast) 在 deleteById 返回非 0 后于事务内逐被删记录追加一条。
+	 * 仅追加，best-effort 写入失败不阻塞清理。resourceType=BACKUP_RECORD，resourceId=被删备份 id，
+	 * 不存快照，reason 含 keepLast 便于追溯，审计随事务提交/回滚（强一致）。
+	 */
+	public static AuditLogEntry backupPurgedByCount(String id, String backupId, int keepLast, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "BACKUP_RECORD";
+		entry.resourceId = backupId;
+		entry.action = ACTION_BACKUP_PURGED_BY_COUNT;
+		entry.reason = "Backup record purged by count keepLast=" + keepLast + ".";
 		entry.occurredAt = occurredAt;
 		return entry;
 	}
