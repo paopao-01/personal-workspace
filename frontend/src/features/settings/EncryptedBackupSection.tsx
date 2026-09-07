@@ -95,10 +95,14 @@ export function EncryptedBackupSection() {
             + (orphan.skippedFiles > 0 ? `，跳过 ${orphan.skippedFiles} 个非备份文件` : '')
             + '）'
           : ''
+      const weakSuffix = report.passphraseResetRecommended
+        ? '｜此备份口令偏弱，建议重新创建备份时设置更强口令'
+        : ''
       pushToast(
         `恢复完成：插入 ${report.inserted} 行，重复跳过 ${report.skippedIdentical}，`
         + `冲突 ${report.skippedConflict}，缺父级 ${report.skippedMissingParent}，失败 ${report.failed}`
-        + orphanSuffix,
+        + orphanSuffix
+        + weakSuffix,
       )
     } catch (caught) {
       pushToast(backupErrorMessage(caught as Error), 'error')

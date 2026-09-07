@@ -33,6 +33,15 @@ public final class JsonProbe {
 		return node == null ? null : node.asInt();
 	}
 
+	/** 读取根字段为布尔；字段缺省或 JSON null 返回 null。 */
+	public static Boolean bool(String json, String path) {
+		JsonNode node = node(json, path);
+		if (node == null || node.isNull()) {
+			return null;
+		}
+		return node.asBoolean();
+	}
+
 	/** 读取数组长度。 */
 	public static int arraySize(String json, String path) {
 		JsonNode node = node(json, path);

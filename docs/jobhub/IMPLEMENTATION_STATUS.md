@@ -1,5 +1,38 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-1
+
+- 目标：实现「恢复后弱口令重设提示」最小切片——在已完成的 passphrase 强度强制门槛（AT-45，创建/武装入口拒绝弱口令）之上，让 `POST /backups/restore` 恢复成功后对本次提交的 passphrase（已在调用栈内存）复用 `PassphraseStrengthValidator.evaluate()` 做一次内存评估，**仅当弱（score<40）** 时置响应 `passphraseResetRecommended=true` 提示用户用强口令新建备份替换，强/中为 false，恢复端点仍豁免门槛（仅提示不阻塞）。承接 2026-09-06-11「下一窗口只做」候选切片「备份恢复后强制 passphrase 重设提示」。不实现密钥轮换、真正的重设 passphrase 端点（系统无全局 passphrase 可重设）、第三方日历 ICS 订阅。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：「重设」在本系统的唯一自洽语义为「建议用户用强口令新建备份替换旧弱口令备份」（passphrase 每条备份绑定、从不持久化，无全局 passphrase 可重设）；触发条件与力度经用户拍板为「仅弱口令（score<40）才提示、非阻塞 toast 追加」；OpenAPI 暴露为 `ImportResultReport` 加可选 nullable boolean `passphraseResetRecommended`（不回显 score/level，避免经响应侧信道泄露 passphrase 特征）。
+  - 规格（按权威顺序）：`02-state-machines.md §9` 加「恢复后弱口令重设提示」节（触发时机=恢复成功后事务内同步、恢复失败不触发、仅弱置 true、不阻塞、恢复仍豁免门槛、不新增端点、不回显 passphrase/score/level、幂等回放返回首次值、标准恢复 null、「重设」语义=建议用强口价新建备份替换）；`03-openapi.yaml` `ImportResultReport` 加 `passphraseResetRecommended`（nullable boolean，非 required，描述注明仅 `/backups/restore` 填充、弱=true 建议、强/中=false、标准恢复 null、不回显 passphrase/score/level）+ `/backups/restore` description 补「恢复成功后内存评估弱口令置 recommended，不强制门槛仅提示」；`04-database-design.md §6` 补「内存评估，不新增表/列/迁移，passphrase 不持久化」；`01-page-spec.md P11` 恢复入口补「recommended=true 时 toast 追加『此备份口令偏弱，建议重新创建备份时设置更强口令』，非阻塞」；`05-acceptance-test-cases.md` 新增 AT-46（弱口令恢复→200+recommended=true+toast 追加提示、强/中→false、错误 passphrase 422 不评估、幂等回放返回首次值、标准恢复 null、passphrase 不落盘/不回显、响应不回显 score/level）+ 发布门槛升到 AT-46；`jobhub-prd.md §10/§19` 标注恢复后弱口令重设提示已实现最小切片。
+  - 后端 `datamanagement/api/ImportResultResponse` record 加 `Boolean passphraseResetRecommended` 字段（末位，包装类型支持 null，类 Javadoc 补说明）；`backup/application/BackupService.restore()` 在 `importService.restore()` 成功 + `cleanOrphans` 之后调 `PassphraseStrengthValidator.evaluate(passphrase)`，`level==WEAK` → `true` 否则 `false`，传入新构造器末参（passphrase 已在调用栈内存，评估后随栈销毁，不落盘/不进日志/不回显）；`datamanagement/application/ImportService.restore()` 标准数据恢复末参传 `null`（不评估）。`PassphraseStrengthValidator.evaluate()`/`Result`/`Level` 同包可见，无需改可见性。
+  - 前端 `EncryptedBackupSection.tsx` `submitRestore`：`report.passphraseResetRecommended===true` 时 toast 追加「｜此备份口令偏弱，建议重新创建备份时设置更强口令」（与 orphanCleanSummary 的 toast 追加同型，非阻塞）；`backupApi.ts` `RestoreReport` 沿用 `ImportResultReport`（重新生成 types.ts 后自动含 `passphraseResetRecommended` 可选字段，不入库）。
+  - E2E `p1-encrypted-backup.spec.ts` 加 AT-46（强口令恢复→响应 passphraseResetRecommended=false + toast 不含「偏弱」+ 输入框清空 + 响应不回显 passphrase/score/level）；修复 AT-36/AT-44 既有过严断言 `not.toContain('passphrase')`（本切片新增 `passphraseResetRecommended` 字段名含 "passphrase" 子串导致误断言）改为检查口令值不被回显 `not.toContain(\`secret-${suffix}\`)`。
+- 未完成：不做密钥轮换、不加「重设 passphrase」端点（无全局 passphrase 可重设，重设=建议新建强口令备份）、不阻塞恢复、不回显 score/level、不改强度门槛（仍 score≥40 拒绝 weak）、不改 V1~V25 既有迁移、不做常驻警告条/模态框、不做强制 fair/strong（仅弱才提示）。
+- 单窗口边界：本切片 11 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 2[ImportResultResponse + BackupService] + 后端测试 1[扩既有 BackupRestoreIntegrationTest + JsonProbe 加 bool] + 前端 1[EncryptedBackupSection] + E2E 1[p1-encrypted-backup] + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因新增响应字段 + 状态机/DB/页面三处语义 + 新测试 + 既有断言修正，与既有 AT-37~AT-45 备份切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`datamanagement/api/ImportResultResponse.java`（加 passphraseResetRecommended 字段 + Javadoc）、`backup/application/BackupService.java`（restore 末尾调 evaluate 置 recommended）、`datamanagement/application/ImportService.java`（标准恢复末参传 null）。
+  - 后端测试：`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（加 AT-46 六用例 + createBackupEncFileWithPassphrase 辅助绕过门槛造弱口令备份）、`src/test/java/com/jobhub/integration/support/JsonProbe.java`（加 bool 读取）。
+  - 前端：`src/features/settings/EncryptedBackupSection.tsx`（restore toast 追加弱口令提示）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-46 + 修 AT-36/AT-44 过严断言）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupRestoreIntegrationTest`：14 tests，0 failures（含新增 6 个 AT-46 用例）。
+  - `cd backend && mvn clean test`：165 tests，0 failures，0 errors，0 skipped（上一窗口 159→本窗口 165，+6 AT-46）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：10 passed（含新增 AT-46 + 修正 AT-36/AT-44）。
+  - `cd frontend && npm run e2e -- --reporter=dot`：40 passed，1 failed（p1-encrypted-backup AT-38 定时备份触发）；单独复跑 AT-38 全过（16.4s），证实为既有 flaky（全量 E2E 下 4 个 webServer 资源竞争 + 定时调度线程延迟），与本切片无代码关联（本切片未碰定时触发逻辑、AI 任务建议、通知代码与后端）。
+- 验证结果：恢复后弱口令重设提示链路（弱口令备份恢复 → 200 + passphraseResetRecommended=true + toast 追加提示；强/中口令恢复 → false + toast 无提示；错误 passphrase 422 不评估；重复恢复确定性一致；标准数据恢复 null；passphrase 不落盘/不回显/不进日志；响应不回显 score/level）有集成测试（6 用例）与浏览器级 E2E 覆盖；OpenAPI 变更为加可选字段（非破坏性，标准数据恢复 null，既有消费者透明）；无数据库迁移（内存评估）；passphrase 与派生密钥不落盘、不回显、不进日志；恢复端点仍豁免强度门槛（仅提示不阻塞）；后端算法与前端同源以状态机 §9 为单一事实来源防漂移。
+- 已知问题：
+  - 全量 E2E 下 p1-encrypted-backup AT-38（定时备份触发）偶发失败（4 个 webServer 资源竞争 + 定时调度线程延迟），单独复跑通过，属既有 flaky 模式，与本切片无代码关联。
+  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
+  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
+  - 弱口令备份无法经 `POST /backups` 创建（AT-45 门槛拒绝），AT-46 弱口令恢复用例经测试辅助 `createBackupEncFileWithPassphrase` 直接调 `ExportService` + `EncryptionService` 构造弱口令 .enc 文件 + 写 backup_record 行模拟「历史弱口令备份」，真实弱口令备份恢复链路由后端集成测试覆盖；E2E 聚焦强口令契约（recommended=false + toast 无提示 + 不回显）。
+  - 强度评估为启发式打分（与 AT-45 同算法），非密码学熵估算，符合「提示」定位（建议重设，非安全保证）。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志、强制 fair/strong 口令门槛升级）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建恢复后弱口令评估逻辑；不要给响应回显 score/level（避免侧信道泄露 passphrase 特征）；不要加「重设 passphrase」端点（无全局 passphrase 可重设，重设=建议新建强口令备份）；不要把恢复端点改回强制门槛（恢复豁免，passphrase 已与备份绑定）；不要做常驻警告条/模态框（用户已选非阻塞 toast）；不要改 V1~V25 既有迁移；不要做强制 fair/strong（仅弱才提示，留后续切片）。
+
 ### 窗口 2026-09-06-11
 
 - 目标：实现「passphrase 强度强制门槛」最小切片——在已完成的纯前端强度提示（AT-40）之上，把创建备份（`POST /backups`）与武装调度（`POST /backups/schedule/arm`）的 passphrase 从「纯前端提示不阻塞」升级为「后端入口强制校验，弱口令（score<40）返回 400」，恢复端点豁免（passphrase 已与备份绑定）。承接 2026-09-06-10「下一窗口只做」候选切片「强制 passphrase 强度门槛」。不实现密钥轮换、dry-run、第三方日历 ICS 订阅。

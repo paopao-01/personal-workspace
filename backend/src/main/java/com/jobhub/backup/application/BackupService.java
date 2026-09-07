@@ -152,10 +152,15 @@ public class BackupService {
 				.log(System.Logger.Level.WARNING, "恢复后自动孤儿清理失败", ex);
 			orphanSummary = null;
 		}
+		// 恢复成功后对本次 passphrase 做内存强度评估：仅弱（score<40）置 passphraseResetRecommended=true，
+		// 提示用户用强口令新建备份替换（系统无全局 passphrase 可重设）。恢复端点仍豁免门槛（仅提示不阻塞）；
+		// 评估在内存进行，passphrase 不落盘/不进日志/不回显，响应仅返回布尔不回显 score/level。
+		boolean resetRecommended =
+			PassphraseStrengthValidator.evaluate(passphrase).level() == PassphraseStrengthValidator.Level.WEAK;
 		return new ImportResultResponse(result.reportId(), result.restoredAt(), result.packageFingerprint(),
 			result.status(), result.inserted(), result.skippedIdentical(), result.skippedConflict(),
 			result.skippedMissingParent(), result.failed(), result.tableResults(), result.issues(),
-			result.rowResults(), orphanSummary);
+			result.rowResults(), orphanSummary, resetRecommended);
 	}
 
 	public List<BackupRecord> list() {

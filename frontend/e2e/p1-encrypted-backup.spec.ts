@@ -77,7 +77,8 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
   const report = await restoreRes.json()
   expect(report.status).toMatch(/COMPLETED/)
   expect(report.skippedIdentical).toBeGreaterThanOrEqual(0)
-  expect(JSON.stringify(report)).not.toContain('passphrase')
+  // 响应不含 passphrase 值（字段名 passphraseResetRecommended 不含口令值，仅返回布尔）
+  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}`)
 
   // 再次恢复：幂等，inserted=0（无新增行）
   const restoreAgainRes = await request.post('/api/backups/restore', {
@@ -164,8 +165,8 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
   expect(report.orphanCleanSummary.scannedFiles).toBeGreaterThanOrEqual(0)
   expect(report.orphanCleanSummary.orphanFiles).toBeGreaterThanOrEqual(0)
   expect(report.orphanCleanSummary.deletedFiles).toBeGreaterThanOrEqual(0)
-  // 响应不含 passphrase
-  expect(JSON.stringify(report)).not.toContain('passphrase')
+  // 响应不含 passphrase 值（字段名 passphraseResetRecommended 不含口令值，仅返回布尔）
+  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}`)
 
   // 错误 passphrase 返回 422，不触发孤儿清理
   const badRes = await request.post('/api/backups/restore', {
@@ -179,6 +180,75 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
 
   // 恢复端点无需 X-Confirm-Permanent-Delete 确认头（不带也能成功）
   expect(restoreRes.status()).toBe(200)
+})
+
+/**
+ * AT-46 恢复后弱口令重设提示：恢复成功后后端内存评估 passphrase，仅弱（score<40）置
+ * passphraseResetRecommended=true 提示用户用强口令新建备份替换；强/中为 false。
+ * 弱口令创建已被门槛拒绝（无法经 API 造弱口令备份），故 true 分支由后端集成测试覆盖；
+ * E2E 聚焦契约：强口令恢复 → passphraseResetRecommended=false、toast 不追加弱口令提示、
+ * 响应不回显 passphrase/score/level。
+ */
+test('AT-46 restore with strong passphrase returns recommended=false and no weak hint', async ({ page, request }) => {
+  const suffix = Date.now()
+  const passphrase = `StrongPass42!${suffix}` // 强口令（含大小写/数字/符号，长度 ≥16）
+
+  // 造数 + 生成一份强口令加密备份
+  await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at46-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `弱口令提示-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at46-backup-${crypto.randomUUID()}` },
+    data: { passphrase },
+  })
+  expect(createRes.ok()).toBe(true)
+  const created = await createRes.json()
+
+  // 下载 .enc
+  const downloadRes = await request.get(`/api/backups/${created.id}/download`)
+  expect(downloadRes.ok()).toBe(true)
+  const encBytes = await downloadRes.body()
+
+  // 恢复：契约断言（API 层）
+  const restoreRes = await request.post('/api/backups/restore', {
+    headers: { 'Idempotency-Key': `e2e-at46-restore-${crypto.randomUUID()}` },
+    multipart: {
+      file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
+      passphrase,
+    },
+  })
+  expect(restoreRes.ok(), `POST /backups/restore returned ${restoreRes.status()}`).toBe(true)
+  const report = await restoreRes.json()
+  // 强口令 → passphraseResetRecommended=false
+  expect(report.passphraseResetRecommended).toBe(false)
+  // 响应不回显 passphrase 值，不含 score/level
+  expect(JSON.stringify(report)).not.toContain(passphrase)
+  expect(JSON.stringify(report)).not.toMatch(/"score"/)
+  expect(JSON.stringify(report)).not.toMatch(/"level"/)
+
+  // UI：设置页恢复同一备份，恢复成功 toast 不追加弱口令提示
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
+  const restoreFileInput = page.getByLabel('选择加密备份文件')
+  const restorePassphraseInput = page.getByLabel('恢复 passphrase')
+  await restoreFileInput.setInputFiles({
+    name: created.fileName,
+    mimeType: 'application/octet-stream',
+    buffer: encBytes,
+  })
+  await restorePassphraseInput.fill(passphrase)
+  await page.getByRole('button', { name: '恢复备份' }).click()
+  // 恢复成功 toast 出现，且不含「偏弱」字样
+  const toast = page.locator('[role="status"], [role="alert"]').filter({ hasText: '恢复完成' })
+  await expect(toast).toBeVisible()
+  await expect(toast).not.toContainText('偏弱')
+  // 输入框清空
+  await expect(restorePassphraseInput).toHaveValue('')
 })
 
 /**

@@ -1038,6 +1038,11 @@ paths:
         passphrase 不参与清理验证（清理即销毁密钥材料）。本端点无需 `X-Confirm-Permanent-Delete` 确认头（恢复非销毁性
         操作，附带清理是 best-effort 防御）；幂等性由 `Idempotency-Key` 保证，重复回放返回首次缓存的完整响应（含
         `orphanCleanSummary`，不重新执行恢复与清理）。
+        恢复成功后对本次提交的 passphrase 在内存做一次强度评估（与创建/武装入口同一算法、同一阈值，详见 §9 强度门槛），
+        **仅当评估为弱（score<40）** 时置响应 `passphraseResetRecommended=true`（非阻塞提示，建议用户用强口令新建备份替换；
+        系统 无全局 passphrase 可重设，详见状态机）。恢复端点仍豁免强度门槛——评估仅为提示，不拒绝恢复、不返回强度 400
+        （passphrase 已与既有备份绑定）。评估在内存进行，passphrase 不落盘、不进日志、不回显；响应仅返回布尔
+        `passphraseResetRecommended`，不回显 passphrase 或 score/level 等派生信息；不新增评估端点。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -2474,6 +2479,8 @@ components:
         标准数据恢复结果报告（每表 inserted/skipped/failed 计数与问题明细）。
         `orphanCleanSummary` 仅由 `POST /backups/restore` 在恢复成功后自动触发孤儿清理时填充；
         `POST /data-imports/restore` 标准数据恢复不触发孤儿清理，该字段缺省。
+        `passphraseResetRecommended` 仅由 `POST /backups/restore` 在恢复成功后内存评估 passphrase 为弱（score<40）时为 true（建议用强口令新建备份替换）；
+        强/中为 false；标准数据恢复不评估，该字段为 null。不回显 passphrase 或 score/level。
       properties:
         reportId: { type: string, format: uuid }
         restoredAt: { type: string, format: date-time }
@@ -2492,6 +2499,10 @@ components:
           description: 恢复成功后自动触发的孤儿 .enc 文件扫描清理摘要（仅 POST /backups/restore 填充；标准数据恢复缺省）。清理失败仍返回尽力清理的结果，恢复结果不受影响。
           allOf:
             - $ref: '#/components/schemas/BackupOrphanCleanSummary'
+        passphraseResetRecommended:
+          type: boolean
+          nullable: true
+          description: 恢复成功后内存评估 passphrase 为弱（score<40）时为 true（建议用强口令新建备份替换，非阻塞）；强/中为 false；标准数据恢复不评估为 null。不回显 passphrase 或 score/level。仅 POST /backups/restore 填充。
     ImportRowResult:
       type: object
       required: [action]

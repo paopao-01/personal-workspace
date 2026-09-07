@@ -682,8 +682,27 @@ And 恢复端点无需 X-Confirm-Permanent-Delete 确认头（恢复非销毁性
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
+### AT-46 恢复后弱口令重设提示（恢复成功后内存评估弱口令置 recommended；恢复仍豁免门槛）
+
+```gherkin
+Given 用户持有一份用弱 passphrase（如 "aaaaaaaa"，score<40）创建的合法加密备份 .enc 文件与正确 passphrase
+When 用户在设置页恢复入口上传该 .enc 文件并输入弱 passphrase，点击「恢复备份」（POST /api/backups/restore）
+Then 返回 200 且响应含 passphraseResetRecommended=true（恢复本身不拒绝，端点仍豁免强度门槛，仅提示）
+And 恢复成功 toast 追加展示「此备份口令偏弱，建议重新创建备份时设置更强口令」
+When 用户用强/中 passphrase（如 "CorrectHorse42!battery"，score≥40）创建的备份恢复
+Then 返回 200 且响应 passphraseResetRecommended=false（或非 true），恢复成功 toast 不追加弱口令提示
+When 用户上传错误的 passphrase 或损坏的 .enc 文件（GCM 认证失败）
+Then 返回 422 且不进行强度评估（响应不含 passphraseResetRecommended，不产生提示副作用）
+When 用户以相同 Idempotency-Key 重复恢复（幂等回放）
+Then 返回 200 且响应（含 passphraseResetRecommended）与首次一致（幂等回放不重新评估、不产生副作用）
+When 用户调用 POST /api/data-imports/restore（标准数据恢复）
+Then 响应 passphraseResetRecommended 为 null（标准恢复不评估 passphrase）
+And 任意端点的响应与日志均不含 passphrase，passphrase 永不落盘/不回显/不进日志
+And 响应不回显 passphrase 的 score 或 level 等派生信息（仅返回布尔 passphraseResetRecommended）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-44 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-46 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
