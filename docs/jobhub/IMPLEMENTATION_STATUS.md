@@ -1,5 +1,38 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-5
+
+- 目标：实现「全量审计日志查询」最小切片——在已完成的孤儿清理审计日志查询（AT-49，`GET /backups/orphans/audit` 仅查 `action=BACKUP_ORPHAN_CLEANED` 的备份域便捷入口）之上，新增 `GET /audit-logs` 只读分页查询全量 `audit_log` 端点，支持可选 `action` 与 `resourceType` 过滤（均可空、可单独或组合，按字符串精确匹配，空=不过滤返回全量），承接 2026-09-07-4「下一窗口只做」候选切片「全量 audit_log 查询端点 GET /audit-logs 带 action/resourceType 过滤」。查询范围经用户拍板为跨域全量审计（只读暴露既有写入值不新增 action：SECONDARY_APPLICATION_CONFIRMED/APPLICATION、REQUIREMENT_MERGED/REQUIREMENT_UPDATED/REQUIREMENT_DELETED/JOB_REQUIREMENT、BACKUP_ORPHAN_CLEANED/BACKUP_FILE），保留 AT-49 端点不废弃（备份域便捷入口语义固定仅 BACKUP_ORPHAN_CLEANED），返回字段含 resourceType（全量查询不固定）、省略恒 null 的 before/afterSnapshotJson，不加二级索引迁移（本地单用户量小全表扫描可接受）。不区分独立 clean 与恢复联动来源、不新增表/列/迁移/索引、不审计单条删除/按龄/按数量保留、不做密钥轮换、不做第三方日历 ICS 订阅。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：查询范围经用户拍板为「跨域全量审计」（AT-49 仅 BACKUP_ORPHAN_CLEANED 的备份域便捷入口保留不废弃，新端点为通用查询入口），二者并存——`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 AT-49 相同记录集（字段含 resourceType，AT-49 省略固定 resourceType）。返回字段经用户拍板为「含 resourceType、省略快照」（全量查询 resourceType 不固定需返回以区分记录类型；before/afterSnapshotJson 当前所有审计记录恒为 null 无展示价值，与 AT-49 一致省略）；响应不含 passphrase（审计记录本身从不存 passphrase）。过滤参数为可选 `action` 与 `resourceType`（均 string 精确匹配，可单独或组合，空=不过滤返回全量），不增加 resourceId 过滤（交接记录候选仅提 action/resourceType，resourceId 过滤过细用途不大，留后续切片）。不加 V26 索引迁移（audit_log V1 起无二级索引，本地单用户审计量小，ORDER BY occurred_at DESC 带可选 WHERE 全表扫描性能可接受，遵循最小切片与不新增迁移惯例）。
+  - 规格（按权威顺序）：`02-state-machines.md §9.1` 新增「全量审计日志查询（只读）」节（查询范围全量 audit_log 所有 action/resourceType、可选 action+resourceType 过滤可单独或组合精确匹配空=不过滤、只读暴露既有写入值不新增 action 列举 5 个 action×3 个 resourceType、每条字段含 resourceType 省略恒 null 快照、occurred_at DESC 排序、复用 page/pageSize 分页、空表或过滤无匹配 items=[] total=0、只读不需确认头/幂等键、不动任何业务表、响应不含 passphrase、无二级索引全表扫描不新增迁移、AuditLogMapper 在 selectPageByAction/countByAction 之外新增只读 selectPage(action,resourceType,...)+count(action,resourceType) 动态 SQL 参数 null 不加条件、action=BACKUP_ORPHAN_CLEANED 时与 GET /backups/orphans/audit 返回相同记录集含 resourceType）。`03-openapi.yaml` 新增 `GET /audit-logs` 路径（summary 分页查询全量审计日志只读可按 action/resourceType 过滤、description 详述承接 AT-49 不废弃、范围全量、5 action×3 resourceType、每条字段语义含 resourceType 省略快照、occurred_at DESC、只读不需确认头/幂等键、响应不含 passphrase、空表或过滤无匹配 total=0、分页复用 Page/PageSize）+ `action`/`resourceType` 两个可选 query 参数 + `AuditLogEntry` schema（id/resourceType/resourceId/action/reason/occurredAt）+ `PageAuditLogEntry` 包装（items+page+pageSize+total+totalPages 对齐 PageJob）。`04-database-design.md §6` 孤儿清理审计查询条目后新增全量审计查询条目（只读复用 V1 既有 audit_log 表不新增表/列/迁移/索引、AuditLogMapper 在 selectPageByAction/countByAction 之外新增只读 selectPage(action,resourceType,...)+count(action,resourceType) 动态 SQL 参数 null 不加条件、occurred_at DESC 排序 ISO 字典序与时间序一致、offset=(page-1)*pageSize、带可选 WHERE 全表扫描量小可接受、响应含 resourceType 省略恒 null 快照、不含 passphrase、只读不需确认头/幂等键不动任何业务表、action=BACKUP_ORPHAN_CLEANED 时与 GET /backups/orphans/audit 相同记录集字段含 resourceType）。`01-page-spec.md P11` 在定时备份调度区块后新增「审计日志（全量查询）」条目（GET /api/audit-logs 只读分页拉取、action 与 resourceType 两个可选下拉过滤留空=不过滤、按 occurred_at DESC 表格展示时间/资源类型/动作/资源ID/详情、刷新按钮、空态、本地分页、明示事后追溯只读不含 passphrase 省略快照）。`05-acceptance-test-cases.md` 新增 AT-50（无过滤返回全部 action+字段断言+分页 total/totalPages+响应不含 passphrase/快照+occurred_at DESC+action=BACKUP_ORPHAN_CLEANED 过滤+与 AT-49 端点 id 集合一致+resourceType=APPLICATION 过滤+action+resourceType 组合过滤+action=NONEXISTENT 空表+空表 items=[] total=0+pageSize=1 分页+非法分页 400）+ 发布门槛升 AT-50。`jobhub-prd.md §10/§19` 两处追加全量审计查询切片标注。
+  - 后端 `common/audit/infrastructure/AuditLogMapper.java` 新增 `selectPage(action, resourceType, pageSize, offset)`（`@Select("<script>")` 动态 SQL，`<where>`+`<if>` 参数 null/空不加条件，列别名 snake→camel，ORDER BY occurred_at DESC LIMIT/OFFSET）+ `count(action, resourceType)`（动态 SQL 同条件），均为只读纯 SELECT 不违背仅追加语义，不触碰既有 selectPageByAction/countByAction/insert。新增 `common/audit/api/AuditLogController.java`（`@RestController` `@RequestMapping("/api")` `@Validated`，注入 AuditLogMapper，`GET /audit-logs` 端点参数 page 默认 1 @Min(1) + pageSize 默认 20 @Min(1) @Max(100) + 可选 action + 可选 resourceType，调 count+selectPage 转 PageAuditLogEntryResponse）。新增 `common/audit/api/AuditLogEntryResponse.java` record（id/resourceType/resourceId/action/reason/occurredAt + from(AuditLogEntry) 静态方法，含 resourceType 省略快照）+ `common/audit/api/PageAuditLogEntryResponse.java` record（items/total/page/pageSize/totalPages + from 静态方法 totalPages 向上取整，对齐 PageBackupOrphanAuditEntryResponse）。
+  - 测试新增 `AuditLogQueryIntegrationTest`（8 个 AT-50 用例，jdbc 直接插 audit_log 行模拟既有写入值聚焦查询端点行为：`AT50_listAllReturnsEveryActionWithFieldsAndDescOrder` 4 种 action×递增 occurred_at→无过滤 200+items 4 条+全部 action 类型+每条字段断言+DESC 排序首条最新+不含 passphrase/快照；`AT50_filterByActionBackupOrphanCleanedMatchesOrphanAuditEndpoint` BACKUP_ORPHAN_CLEANED 过滤+resourceType=BACKUP_FILE+与 /backups/orphans/audit id 集合一致；`AT50_filterByResourceTypeApplication` APPLICATION 过滤只返回 SECONDARY_APPLICATION_CONFIRMED；`AT50_filterByActionAndResourceTypeCombined` REQUIREMENT_MERGED+JOB_REQUIREMENT 组合过滤只返回 MERGED；`AT50_filterNoMatchReturnsEmpty` action=NONEXISTENT_ACTION 空 items total=0 totalPages=0；`AT50_emptyTableReturnsEmpty` 空表 items=0 total=0 totalPages=0；`AT50_pageSizeOneSplitsPages` 3 条 pageSize=1→items 1+total 3+totalPages 3+首条最新；`AT50_rejectsInvalidPaging` page=0/pageSize=0/pageSize=101 均返回 400）。
+  - 前端 `src/api/audit/auditLogApi.ts` 新增 `listAuditLogs({page,pageSize,action?,resourceType?})` async 函数（GET /audit-logs，只读无确认头/幂等键）+ `useAuditLogs(query)` useQuery hook（queryKey 含 page/pageSize/action/resourceType，placeholderData 翻页保旧数据）+ 类型 `AuditLogEntry`/`PageAuditLogEntry`（从 generated types）+ `AUDIT_LOG_KEY` 查询键 + `AUDIT_ACTIONS`/`AUDIT_RESOURCE_TYPES` 常量数组（已知 action/resourceType 供前端下拉）。`AuditLogSection.tsx` 新增设置页独立「审计日志」card：action 与 resourceType 两个可选 Select 下拉过滤（留空=全部）+ 刷新按钮 + `Table`（时间/资源类型/动作/资源ID/详情五列）+ `EmptyState`/`Spinner`/`ErrorState` 四态 + 本地 `page` state + 上一页/下一页分页 + 共 X 条·第 N/M 页；过滤变更重置到第 1 页。`SettingsPage.tsx` 在 EncryptedBackupSection 与 ImportRestoreSection 之间挂载 `<AuditLogSection />`。`types.ts` 经 `npm run gen-types` 重新生成（不入库）。
+  - E2E `p1-encrypted-backup.spec.ts` 末尾新增 AT-50（造岗位+合法备份→触发 clean→GET /api/audit-logs 无过滤 200+分页字段齐全+page/pageSize 断言+items 数组结构（有记录时 id/resourceType/resourceId/action/reason/occurredAt）+响应不含 passphrase/beforeSnapshotJson/afterSnapshotJson→GET ?action=BACKUP_ORPHAN_CLEANED 过滤每条 action/resourceType 断言+id 集合与 /backups/orphans/audit 一致→非法分页 page=0 返回 400→UI 设置页「审计日志」heading 可见→末尾清理备份）。
+- 未完成：不区分独立 clean 与恢复联动来源（当前审计 schema 无来源字段，留后续切片）、不新增表/列/迁移/索引（V1 既有 audit_log 复用，留后续切片补 occurred_at 索引）、不审计单条删除/按龄/按数量保留清理（本切片范围仅查询不扩审计写入点）、不做密钥轮换、不做第三方日历 ICS 订阅、不增加 resourceId 过滤（留后续切片）、不做审计导出、不做审计时间范围过滤（from/to，留后续切片）。
+- 单窗口边界：本切片 16 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 1 编辑[AuditLogMapper] + 后端 3 新增[Controller + 2 DTO] + 后端测试 1[新增 AuditLogQueryIntegrationTest] + 前端 3[auditLogApi + AuditLogSection + SettingsPage] + E2E 1[p1-encrypted-backup] + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因查询端点需新增 Mapper 动态查询方法 + Controller + 2 DTO + 状态机/DB/页面三处语义 + 新测试 + 前端独立区块 + E2E，与既有 AT-37~AT-49 备份/审计切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`common/audit/infrastructure/AuditLogMapper.java`（加 selectPage + count 动态查询只读方法）。
+  - 后端新增：`common/audit/api/AuditLogController.java`（GET /audit-logs 端点）、`common/audit/api/AuditLogEntryResponse.java`（item DTO）、`common/audit/api/PageAuditLogEntryResponse.java`（分页包装 DTO）。
+  - 后端测试：`src/test/java/com/jobhub/integration/AuditLogQueryIntegrationTest.java`（新增 8 个 AT-50 用例）。
+  - 前端：`src/api/audit/auditLogApi.ts`（新增 listAuditLogs + useAuditLogs + 类型 + 查询键 + 常量）、`src/features/settings/AuditLogSection.tsx`（新增审计日志区块）、`src/features/settings/SettingsPage.tsx`（挂载 AuditLogSection）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-50）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=AuditLogQueryIntegrationTest`：8 tests，0 failures（含新增 8 个 AT-50 用例）。
+  - `cd backend && mvn clean test`：186 tests，0 failures，0 errors，0 skipped（上一窗口 178→本窗口 186，+8 AT-50）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：12 passed（含新增 AT-50）。
+- 验证结果：全量审计查询链路（无过滤返回全部 action 类型+字段 id/resourceType/resourceId/action/reason/occurredAt+分页 total/totalPages+occurred_at DESC 排序+响应不含 passphrase/快照+action=BACKUP_ORPHAN_CLEANED 过滤+与 AT-49 端点 id 集合一致+resourceType=APPLICATION 过滤+action+resourceType 组合过滤+action=NONEXISTENT 过滤无匹配空表+空表 items=[] total=0+pageSize=1 分页+非法分页 400+前端 UI 审计日志区块可见）有后端集成测试（8 新增用例）与浏览器级 E2E 覆盖；OpenAPI 变更为新增路径+schema（非破坏性，既有端点不变）；无数据库迁移（复用 V1 既有 audit_log 表，AuditLogMapper 加只读 select/count 动态查询不违背仅追加语义）；审计记录从不存 passphrase，查询响应不含 passphrase；只读查询不需确认头/幂等键，不动任何业务表。
+- 已知问题：
+  - audit_log 表无二级索引，查询走 ORDER BY occurred_at DESC 带可选 WHERE 全表扫描；本地单用户审计量小可接受，未来数据量增长可另开迁移补 occurred_at 索引。
+  - 测试用 jdbc 直接插 audit_log 行模拟既有写入值（不走真实业务流程），聚焦查询端点行为；真实多 action 写入链路（二次投递确认/需求合并变更/孤儿清理）由各业务模块既有集成测试覆盖，本切片测试不重复验证写入端。
+  - E2E 无法保证每次都有审计记录（取决于 clean 是否删到孤儿），故 AT-50 E2E 的 items 结构断言为「有记录时校验结构」条件分支；真实查询链路由后端集成测试确定覆盖。
+  - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、第三方日历同步最小化单向 ICS 订阅、审计日志时间范围过滤 from/to、审计日志导出 CSV/JSON）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建 selectPage/count 动态查询逻辑；不要废弃 GET /backups/orphans/audit（AT-49 备份域便捷入口保留）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要给响应加 before/afterSnapshotJson（恒 null 省略）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅追加 + 只读 select/count）；不要做密钥轮换、第三方日历 ICS 订阅；不要增加 resourceId 过滤（留后续切片）；不要做审计导出、时间范围过滤（留后续切片）。
+
 ### 窗口 2026-09-07-4
 
 - 目标：实现「孤儿清理审计日志查询」最小切片——在已完成的孤儿清理审计日志（AT-47，cleanOrphans 每删一个孤儿文件向 audit_log 追加一条 BACKUP_ORPHAN_CLEANED，本版仅写不读）之上，新增 `GET /backups/orphans/audit` 只读分页查询端点，让此前「事后追溯直接查 audit_log 表」的审计记录可经 API 分页查询，承接 2026-09-07-3「下一窗口只做」候选切片「审计日志查询/展示端点 GET /backups/orphans/audit」。查询范围经用户拍板为「仅孤儿清理审计」（action=BACKUP_ORPHAN_CLEANED，不区分独立 clean 与恢复联动来源，不暴露投递确认/需求变更等其他 action），不加二级索引迁移（本地单用户量小，全表扫描可接受）。不实现全量 audit_log 查询、不区分清理来源、不新增表/列/迁移/索引、不审计单条删除/按龄/按数量保留、不做密钥轮换、不做第三方日历 ICS 订阅。
@@ -129,54 +162,16 @@
 - 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志、强制 fair/strong 口令门槛升级）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建恢复后弱口令评估逻辑；不要给响应回显 score/level（避免侧信道泄露 passphrase 特征）；不要加「重设 passphrase」端点（无全局 passphrase 可重设，重设=建议新建强口令备份）；不要把恢复端点改回强制门槛（恢复豁免，passphrase 已与备份绑定）；不要做常驻警告条/模态框（用户已选非阻塞 toast）；不要改 V1~V25 既有迁移；不要做强制 fair/strong（仅弱才提示，留后续切片）。
 
-### 窗口 2026-09-06-11
-
-- 目标：实现「passphrase 强度强制门槛」最小切片——在已完成的纯前端强度提示（AT-40）之上，把创建备份（`POST /backups`）与武装调度（`POST /backups/schedule/arm`）的 passphrase 从「纯前端提示不阻塞」升级为「后端入口强制校验，弱口令（score<40）返回 400」，恢复端点豁免（passphrase 已与备份绑定）。承接 2026-09-06-10「下一窗口只做」候选切片「强制 passphrase 强度门槛」。不实现密钥轮换、dry-run、第三方日历 ICS 订阅。
-- 状态：**DONE**。
-- 已完成：
-  - OpenAPI 三端点描述补强度门槛：`POST /backups` summary 改「弱口令拒绝」、description 补「入口按与前端同一算法评估，score<40 返回 400 VALIDATION_ERROR 含 score 与失败规则，不进行加密与落盘；强度评估在内存进行，passphrase 不落盘/不进日志/不回显，不新增评估端点」；`POST /backups/schedule/arm` 同补；`POST /backups/restore` 明示「不强制强度门槛：passphrase 已与备份绑定，强制无意义且会锁死门槛上线前用弱口令创建的历史备份，解密失败按 422」；`BackupCreateRequest`/`BackupArmRequest` passphrase 字段 description 补「强度门槛（强制）：score<40 返回 400」；恢复端 multipart passphrase 字段补「恢复端点不强制强度门槛」。
-  - 状态机 §9 加「passphrase 强度门槛（强制，V1.0 最小切片）」节：创建与武装入口按与前端同一算法评估（阈值弱<40/中40–69/强≥70，维度：长度分上限 35、字符种类分上限 45、弱模式扣分；20 条黑名单）；score<40 返回 400 VALIDATION_ERROR 含 score 与失败规则，不进行后续加密/落盘/武装；评估在内存进行，passphrase 不落盘/不进日志/不回显，不新增评估端点；算法维度与黑名单以本节为单一事实来源防漂移。恢复端点不强制门槛。
-  - 数据库 §6 补「passphrase 强度门槛在内存校验，不新增表/列/迁移，passphrase 与派生密钥永不持久化，评估仅在调用栈内进行，不新增评估端点；恢复端点不强制」。
-  - 页面规格 P11 强度评估段从「纯前端非强制」改为「提示性，弱口令提交被后端拒绝」：前端强度计为提示不禁用提交按钮，后端是唯一强制闸门，弱口令提交后按后端 400 toast 提示，恢复端点不强制，前端弱口令文案补「弱口令将无法提交」。
-  - 验收 AT-40 修订「纯前端、非强制」措辞为「纯前端提示，弱口令提交由后端拒绝」，改「弱口令提交仍成功」断言为「弱口令提交被后端返 400，不进行加密/落盘/武装，passphrase 清空，强度提示消失」；AT-45 新增（创建弱口令 400+score+≥40+不落盘不写文件、武装弱口令 400+armed 仍 false、中等/强口令创建 201+武装 200 armed=true、恢复弱口令豁免返 422 非强度 400、passphrase 不落盘/不进日志/不回显）；05 发布门槛 AT-01~AT-45；PRD §10 P2 / §19 V1.0 标注强制门槛已实现最小切片。
-  - 后端新增 `backup/application/PassphraseStrengthValidator.java`：纯静态工具，`evaluate(passphrase)` 返回 `Result(score, level, reasons)`，与前端 `passphraseStrength.ts` 逐行对齐（长度分上限 35 + 字符种类分上限 45 − 弱模式扣分[纯重复字符 −25、命中 20 条黑名单 −30、连续 3+ 相同字符 −10]，钳制 [0,100]，阈值 weak<40/fair 40–69/strong≥70）；`requireAcceptable(passphrase)` 弱口令抛 `BusinessRuleException(VALIDATION_ERROR)` 含「score=X/100，需 ≥40；失败规则：…」。黑名单与符号集与前端完全一致。
-  - `BackupService.create()` 入口首行调 `PassphraseStrengthValidator.requireAcceptable(passphrase)`（加密前拦截）；`BackupScheduleService.arm()` 长度校验后调同方法（不写入内存武装前拦截）。恢复端点 `BackupService.restore()` 不调（豁免）。
-  - 前端 `PassphraseStrengthMeter.tsx` 弱口令时建议列表前置「弱口令将无法提交（后端拒绝）」条目；`passphraseStrength.ts` 头注释从「纯前端、非强制」改为「纯前端提示，后端是唯一强制闸门」。
-  - E2E `p1-encrypted-backup.spec.ts` AT-40 改测「弱口令显示弱+建议含『弱口令将无法提交』，弱口令提交被后端拒（按钮不禁用，点击后 400，输入未清空，强度提示仍在）」；AT-45 新增（创建弱口令 400+VALIDATION_ERROR+score+≥40，武装弱口令 400+VALIDATION_ERROR，中等/强口令创建 201+武装 200 armed=true，恢复弱口令豁免返 422 非 score，passphrase 不回显，末尾清理）。
-  - 既有备份集成测试的弱口令 `test1234`（score=0，纯数字+小写无大写无符号，弱）升级为 `TestPass1234`（score=55，fair，≥40 放行），涉及 7 个测试类（BackupIntegrationTest/BackupRestoreIntegrationTest/BackupDeletionIntegrationTest/BackupPurgeIntegrationTest/BackupOrphanScanIntegrationTest/BackupRetainIntegrationTest/BackupScheduleIntegrationTest），避免强度门槛上线后既有用例回归红。
-- 未完成：不做密钥轮换、不做 dry-run、不做第三方日历 ICS 订阅、不做孤儿清理审计日志、不做强制 fair/strong（仅拒绝 weak）、不新增评估端点、不改加密算法/迭代次数、不改 passphrase 落盘规则、不改长度限制（仍 8–256）。
-- 单窗口边界：本切片 13 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 3[PassphraseStrengthValidator 新增 + BackupService + BackupScheduleService] + 后端测试 2[新增 BackupPassphraseStrengthIntegrationTest + 7 既有测试类弱口令升级] + 前端 2[PassphraseStrengthMeter/passphraseStrength] + E2E 1），略超 MASTER_PROMPT ≤10 文件边界。因需新增 Validator + 三端点接入 + 状态机/DB/页面三处语义 + 新测试 + 既有弱口令批量升级，与既有 AT-37~AT-44 备份切片同量级，项目惯例认可。
-- 修改文件：
-  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
-  - 后端新增：`backup/application/PassphraseStrengthValidator.java`（强度评估纯函数 + 门槛校验）。
-  - 后端修改：`backup/application/BackupService.java`（create 入口调 requireAcceptable）、`backup/application/BackupScheduleService.java`（arm 入口调 requireAcceptable）。
-  - 后端测试：新增 `src/test/java/com/jobhub/integration/BackupPassphraseStrengthIntegrationTest.java`（AT-45，6 用例）；既有 7 个备份测试类弱口令 `test1234` → `TestPass1234`。
-  - 前端：`src/features/settings/PassphraseStrengthMeter.tsx`（弱口令建议前置「弱口令将无法提交」）、`src/features/settings/passphraseStrength.ts`（头注释改）、`e2e/p1-encrypted-backup.spec.ts`（AT-40 改测 + AT-45 新增）、`src/api/generated/types.ts`（重新生成，不入库）。
-- 已运行验证：
-  - `cd backend && mvn test -Dtest=BackupPassphraseStrengthIntegrationTest`：6 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
-  - `cd backend && mvn test -Dtest='BackupIntegrationTest,BackupRestoreIntegrationTest,BackupDeletionIntegrationTest,BackupPurgeIntegrationTest,BackupOrphanScanIntegrationTest,BackupRetainIntegrationTest,BackupScheduleIntegrationTest'`：47 tests，0 failures（弱口令升级后既有契约不破坏）。
-  - `cd backend && mvn clean test`：159 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
-  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
-  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：9 passed（含修订 AT-40 与新增 AT-45）。
-  - `cd frontend && npm run e2e -- --reporter=dot`：36 passed，3 failed（p1-encrypted-backup AT-38 定时备份触发、p1-ai-task-suggestion、p1-notifications）；单独复跑这 3 个全部 passed（21.4s），证实为既有 flaky（全量 E2E 下 4 个 webServer 资源竞争 + AI 时序竞态），与本切片无代码关联（本切片未碰定时触发逻辑、AI 任务建议、通知代码与后端）。
-- 验证结果：强度强制门槛链路（创建弱口令 → 400 VALIDATION_ERROR + score + ≥40 + 不生成记录/文件；武装弱口令 → 400 + armed 仍 false；中等/强口令 → 201/200 放行；恢复弱口令 → 豁免返 422 非强度 400；passphrase 不落盘/不进日志/不回显）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为描述补强（非破坏性，既有字段与状态码不变）；无数据库迁移（内存校验）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证；前后端算法与黑名单以状态机 §9 为单一事实来源防漂移。
-- 已知问题：
-  - 全量 E2E 下 p1-encrypted-backup AT-38（定时备份触发）、p1-ai-task-suggestion、p1-notifications 偶发失败（4 个 webServer 资源竞争 + AI 时序竞态 + 定时调度线程延迟），单独复跑通过，属既有共享库时序竞态模式，与本切片无代码关联。
-  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
-  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
-  - 强度算法为启发式打分（长度+字符种类−弱模式），非密码学熵估算，符合「门槛」定位（拒绝弱口令，非安全保证）；用户可输入中等强度（fair）口令提交。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志、备份恢复后强制 passphrase 重设提示）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
-- 不要重复做：不要重建 PassphraseStrengthValidator 算法或黑名单；不要给恢复端点加强度门槛（passphrase 已与备份绑定，强制会锁死历史备份）；不要改前端强度计为禁用提交按钮（后端是唯一闸门，不禁用）；不要新增评估端点（passphrase 本就要传给加密端点，无额外传输）；不要改 V1~V25 既有迁移；不要做强制 fair/strong（仅拒绝 weak，留后续切片）；不要改加密算法/迭代次数/passphrase 落盘规则/长度限制。
 > 这是跨窗口恢复工作的唯一动态文件。它记录当前代码状态，不替代 PRD、状态机、OpenAPI 或页面规格。任何模型开始工作前先读本文件；结束或即将中断时必须更新本文件。
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十二个切片；本窗口实现孤儿清理审计日志查询端点（AT-49），新增 `GET /backups/orphans/audit` 只读分页查询 BACKUP_ORPHAN_CLEANED 审计记录，让此前仅写不读的 audit_log 可经 API 查询。
+- 项目阶段：P1（V0.2）已完成二十三个切片；本窗口实现全量审计日志查询端点（AT-50），新增 `GET /audit-logs` 只读分页查询全量 audit_log（可按 action/resourceType 过滤），承接 AT-49 仅 BACKUP_ORPHAN_CLEANED 的备份域便捷入口作为跨域通用查询入口。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：孤儿清理审计日志查询切片（AT-49）已在窗口 2026-09-07-4 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：全量审计日志查询切片（AT-50）已在窗口 2026-09-07-5 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-07（窗口 2026-09-07-4）。
+- 最后更新：2026-09-07（窗口 2026-09-07-5）。
 
 ## 2. 已完成内容
 

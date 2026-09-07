@@ -1118,6 +1118,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PageBackupOrphanAuditEntry' }
         '400': { $ref: '#/components/responses/ValidationError' }
+  /audit-logs:
+    get:
+      tags: [DataManagement]
+      summary: 分页查询全量审计日志（只读，可按 action/resourceType 过滤）
+      description: |
+        分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的事后统一追溯。承接
+        `GET /backups/orphans/audit`（仅 `BACKUP_ORPHAN_CLEANED` 的备份域便捷入口，不废弃、不替代），
+        本端点为跨域通用查询入口：支持可选 `action` 与 `resourceType` 过滤（均可空，空=不过滤返回全量；
+        二者可单独或组合使用，均按字符串精确匹配）。只读暴露既有写入值，不新增 action：
+        `SECONDARY_APPLICATION_CONFIRMED`（`resourceType=APPLICATION`，二次投递确认）、
+        `REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（`resourceType=JOB_REQUIREMENT`，需求合并/编辑/删除）、
+        `BACKUP_ORPHAN_CLEANED`（`resourceType=BACKUP_FILE`，孤儿 .enc 文件清理）。
+        每条记录返回 `id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、
+        `action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`
+        （当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase
+        （审计记录本身从不存 passphrase）。
+        按 `occurred_at DESC` 排序（最新优先）。只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete`
+        确认头、不需 `Idempotency-Key`（GET 幂等天然）、不动 `backup_record`/文件系统/任何业务表。
+        分页参数复用 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）；空表或过滤无匹配返回 `items=[]`、`total=0`。
+        无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描；本地单用户审计量小，
+        全表扫描性能可接受，**不新增索引迁移**。
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按动作类型过滤（可选，精确匹配），如 `BACKUP_ORPHAN_CLEANED`/`SECONDARY_APPLICATION_CONFIRMED`/`REQUIREMENT_MERGED`。
+        - name: resourceType
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按资源类型过滤（可选，精确匹配），如 `BACKUP_FILE`/`APPLICATION`/`JOB_REQUIREMENT`。
+      responses:
+        '200':
+          description: 全量审计日志分页列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageAuditLogEntry' }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /data-imports/validate:
     post:
       tags: [DataManagement]
@@ -2818,3 +2859,19 @@ components:
       required: [items, page, pageSize, total, totalPages]
       description: 孤儿清理审计日志分页包装（对齐 PageJob/PageApplication）
       properties: { items: { type: array, items: { $ref: '#/components/schemas/BackupOrphanAuditEntry' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }
+    AuditLogEntry:
+      type: object
+      required: [id, resourceType, resourceId, action, reason, occurredAt]
+      description: 全量审计日志单条记录（audit_log 行的只读视图，跨域通用查询）
+      properties:
+        id: { type: string, description: 审计记录 id（UUID） }
+        resourceType: { type: string, description: 资源类型，如 BACKUP_FILE/APPLICATION/JOB_REQUIREMENT }
+        resourceId: { type: string, description: 关联资源 id（如被删文件 UUID、投递 id、需求 id） }
+        action: { type: string, description: 动作类型，如 BACKUP_ORPHAN_CLEANED/SECONDARY_APPLICATION_CONFIRMED/REQUIREMENT_MERGED/REQUIREMENT_UPDATED/REQUIREMENT_DELETED }
+        reason: { type: string, description: 可读说明，原样呈现（如含 freedBytes=N 子串） }
+        occurredAt: { type: string, description: 操作发生的 UTC ISO-8601 时间 }
+    PageAuditLogEntry:
+      type: object
+      required: [items, page, pageSize, total, totalPages]
+      description: 全量审计日志分页包装（对齐 PageJob/PageApplication/PageBackupOrphanAuditEntry）
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/AuditLogEntry' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }
