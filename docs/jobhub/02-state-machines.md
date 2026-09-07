@@ -328,6 +328,16 @@ ABANDONED ──restore──> TODO
 - 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描；本地单用户审计量小（仅孤儿清理追加写入），全表扫描性能可接受，**不新增索引迁移**。若未来数据量增长可另开迁移补 `occurred_at` 索引。
 - `AuditLogMapper` 在既有 `insert` 之外新增只读 `selectPageByAction` + `countByAction` 方法（仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。
 
+**全量审计日志查询（只读）**：`GET /audit-logs` 分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的跨域统一事后追溯（承接 `GET /backups/orphans/audit` 仅覆盖孤儿清理的备份域便捷入口，本端点为通用查询入口，**不废弃、不替代**前者）。
+
+- 查询范围：全量 `audit_log`（所有 action、所有 resourceType）。支持两个可选过滤参数 `action` 与 `resourceType`，均可空、可单独或组合使用，按字符串精确匹配；空=不过滤返回全量。只读暴露既有写入值，不新增 action：`SECONDARY_APPLICATION_CONFIRMED`（二次投递确认，`resourceType=APPLICATION`）、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（需求合并/编辑/删除，`resourceType=JOB_REQUIREMENT`）、`BACKUP_ORPHAN_CLEANED`（孤儿清理，`resourceType=BACKUP_FILE`）。`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 `GET /backups/orphans/audit` 相同的记录集，但字段含 `resourceType`（本端点不省略，因全量查询 resourceType 不固定）。
+- 每条记录字段：`id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、`action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`（当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase（审计记录本身从不存 passphrase）。
+- 排序：按 `occurred_at DESC`（最新优先），与 `GET /backups/orphans/audit` 一致。
+- 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageBackupOrphanAuditEntry`）。空表或过滤无匹配返回 `items=[]`、`total=0`、`totalPages=0`。
+- 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase。
+- 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描（带可选 `WHERE action=? AND resource_type=?`）；本地单用户审计量小，全表扫描性能可接受，**不新增索引迁移**。
+- `AuditLogMapper` 在既有 `selectPageByAction`/`countByAction` 之外新增只读 `selectPage(action, resourceType, pageSize, offset)` + `count(action, resourceType)` 方法（动态 SQL，参数 null 不加条件，仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。
+
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。

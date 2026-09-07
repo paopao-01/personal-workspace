@@ -766,8 +766,34 @@ When 用户传入非法分页参数（page=0 或 pageSize=0 或 pageSize=101）
 Then 返回 400 VALIDATION_ERROR
 ```
 
+### AT-50 全量审计日志查询（GET /audit-logs 只读分页查询，可按 action/resourceType 过滤）
+
+```gherkin
+Given audit_log 表存在多种 action 的记录：1 条二次投递确认（SECONDARY_APPLICATION_CONFIRMED，resourceType=APPLICATION）、2 条需求变更（REQUIREMENT_MERGED 与 REQUIREMENT_UPDATED，resourceType=JOB_REQUIREMENT）、孤儿清理产生的 BACKUP_ORPHAN_CLEANED 记录（resourceType=BACKUP_FILE）
+When 用户调用 GET /api/audit-logs?page=1&pageSize=20（只读，不携带确认头与幂等键，不传过滤参数）
+Then 返回 200 且 items 含全部 action 类型记录，每条 id 为非空 UUID、resourceType 为非空、resourceId 为非空、action 为已知 action 之一、reason 为非空、occurredAt 为非空 UTC ISO
+And total=记录总数、page=1、pageSize=20、totalPages=1（或按数量向上取整）
+And 响应不含 passphrase、不含 before/afterSnapshotJson（恒 null 省略）
+And 记录按 occurred_at DESC 排序（最新优先）
+When 用户调用 GET /api/audit-logs?action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且 items 仅含 BACKUP_ORPHAN_CLEANED 记录，每条 resourceType=BACKUP_FILE
+And 该记录集与 GET /api/backups/orphans/audit 返回的记录 id 集合一致（字段含 resourceType，其余语义一致）
+When 用户调用 GET /api/audit-logs?resourceType=APPLICATION
+Then 返回 200 且 items 仅含 SECONDARY_APPLICATION_CONFIRMED 记录，每条 resourceType=APPLICATION
+When 用户调用 GET /api/audit-logs?action=REQUIREMENT_MERGED&resourceType=JOB_REQUIREMENT
+Then 返回 200 且 items 仅含 REQUIREMENT_MERGED 记录，每条 resourceType=JOB_REQUIREMENT
+When 用户调用 GET /api/audit-logs?action=NONEXISTENT_ACTION
+Then 返回 200 且 items=[]、total=0、totalPages=0（过滤无匹配，不报错）
+When audit_log 表为空时调用 GET /api/audit-logs?page=1
+Then 返回 200 且 items=[]、total=0、totalPages=0
+When 用户调用 GET /api/audit-logs?page=1&pageSize=1
+Then 返回 200 且 items 仅 1 条（最新一条）、total=记录总数、totalPages=按总数向上取整
+When 用户传入非法分页参数（page=0 或 pageSize=0 或 pageSize=101）
+Then 返回 400 VALIDATION_ERROR
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-49 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-50 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

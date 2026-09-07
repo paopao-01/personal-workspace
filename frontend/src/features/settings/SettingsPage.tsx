@@ -20,6 +20,7 @@ import { Field, Input } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDateTime } from '@/features/jobs/statusLabels'
 import { AiProviderSection } from '@/features/settings/AiProviderSection'
+import { AuditLogSection } from '@/features/settings/AuditLogSection'
 import { EncryptedBackupSection } from '@/features/settings/EncryptedBackupSection'
 import { ImportRestoreSection } from '@/features/settings/ImportRestoreSection'
 import { NotificationChannelSection } from '@/features/settings/NotificationChannelSection'
@@ -218,6 +219,8 @@ export function SettingsPage() {
       <NotificationChannelSection />
 
       <EncryptedBackupSection />
+
+      <AuditLogSection />
 
       <ImportRestoreSection />
 

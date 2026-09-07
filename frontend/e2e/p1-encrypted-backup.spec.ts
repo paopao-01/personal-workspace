@@ -925,3 +925,97 @@ test('AT-49 orphan clean audit log query returns paged entries', async ({ page, 
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+/**
+ * AT-50 全量审计日志查询：GET /api/audit-logs 分页查询全量 audit_log，可按 action/resourceType 过滤。
+ * 只读，无需确认头/幂等键；响应不含 passphrase、省略恒 null 的快照字段；前端设置页审计日志区块可见。
+ *
+ * 真实多 action 写入链路由后端集成测试 AuditLogQueryIntegrationTest 覆盖；
+ * 本 E2E 聚焦前端契约与查询端点：触发 clean 产生 BACKUP_ORPHAN_CLEANED → GET 全量端点 200 + 过滤 + 分页字段 +
+ * items 结构（含 resourceType，全量查询不固定）+ 不含 passphrase/快照 → UI 审计日志区块可见。
+ */
+test('AT-50 full audit log query with action and resourceType filter', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造一个岗位保证导出有数据，再造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at50-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `全量审计-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at50-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（可能删 0 个孤儿，但 DB 跨测试残留的历史孤儿会写审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // GET /api/audit-logs 无过滤（只读，不携带确认头与幂等键）
+  const allRes = await request.get('/api/audit-logs?page=1&pageSize=20')
+  expect(allRes.status()).toBe(200)
+  const allBody = await allRes.json()
+  // 分页字段齐全
+  expect(allBody).toHaveProperty('items')
+  expect(allBody).toHaveProperty('total')
+  expect(allBody).toHaveProperty('page')
+  expect(allBody).toHaveProperty('pageSize')
+  expect(allBody).toHaveProperty('totalPages')
+  expect(allBody.page).toBe(1)
+  expect(allBody.pageSize).toBe(20)
+  // items 为数组，每条结构含 id/resourceType/resourceId/action/reason/occurredAt
+  expect(Array.isArray(allBody.items)).toBe(true)
+  if (allBody.items.length > 0) {
+    const first = allBody.items[0]
+    expect(first.id).toBeTruthy()
+    expect(first.resourceType).toBeTruthy()
+    expect(first.resourceId).toBeTruthy()
+    expect(first.action).toBeTruthy()
+    expect(first.reason).toBeTruthy()
+    expect(first.occurredAt).toBeTruthy()
+  }
+  // 响应不含 passphrase、不含快照字段（恒 null 省略）
+  expect(JSON.stringify(allBody)).not.toContain('passphrase')
+  expect(JSON.stringify(allBody)).not.toContain('beforeSnapshotJson')
+  expect(JSON.stringify(allBody)).not.toContain('afterSnapshotJson')
+
+  // GET /api/audit-logs?action=BACKUP_ORPHAN_CLEANED 过滤
+  const filteredRes = await request.get('/api/audit-logs?page=1&pageSize=20&action=BACKUP_ORPHAN_CLEANED')
+  expect(filteredRes.status()).toBe(200)
+  const filteredBody = await filteredRes.json()
+  // 过滤后 items 仅含 BACKUP_ORPHAN_CLEANED，每条 resourceType=BACKUP_FILE
+  expect(Array.isArray(filteredBody.items)).toBe(true)
+  for (const item of filteredBody.items) {
+    expect(item.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(item.resourceType).toBe('BACKUP_FILE')
+  }
+  // action=BACKUP_ORPHAN_CLEANED 的 id 集合与 GET /api/backups/orphans/audit 一致
+  const orphanRes = await request.get('/api/backups/orphans/audit?page=1&pageSize=100')
+  expect(orphanRes.status()).toBe(200)
+  const orphanBody = await orphanRes.json()
+  const auditIds = filteredBody.items.map((i: { id: string }) => i.id).sort()
+  const orphanIds = (orphanBody.items ?? []).map((i: { id: string }) => i.id).sort()
+  expect(auditIds).toEqual(orphanIds)
+
+  // 非法分页 400
+  const badRes = await request.get('/api/audit-logs?page=0&pageSize=20')
+  expect(badRes.status()).toBe(400)
+
+  // UI：设置页「审计日志」区块可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志' })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})
