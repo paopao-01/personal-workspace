@@ -52,6 +52,23 @@ public class AuditLogEntry {
 		return entry;
 	}
 
+	/**
+	 * 孤儿 .enc 文件清理审计：cleanOrphans 删除一个无 backup_record 对应的孤儿文件后追加一条记录。
+	 * 仅追加，best-effort 写入失败不阻塞清理。resourceType=BACKUP_FILE，resourceId=被删文件名去 .enc 的 UUID，
+	 * 不存快照（before/after 均为 null，与既有审计用法一致），reason 含释放字节数便于追溯。
+	 */
+	public static AuditLogEntry backupOrphanCleaned(String id, String fileId, long freedBytes, String occurredAt) {
+		AuditLogEntry entry = new AuditLogEntry();
+		entry.id = id;
+		entry.resourceType = "BACKUP_FILE";
+		entry.resourceId = fileId;
+		entry.action = "BACKUP_ORPHAN_CLEANED";
+		entry.reason = "Orphan .enc file with no matching backup_record, removed by orphan scan cleanup (freedBytes="
+				+ freedBytes + ").";
+		entry.occurredAt = occurredAt;
+		return entry;
+	}
+
 	public String getId() { return id; }
 	public String getResourceType() { return resourceType; }
 	public String getResourceId() { return resourceId; }

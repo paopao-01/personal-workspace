@@ -1032,12 +1032,13 @@ paths:
         判定逻辑：扫描 `jobhub.backup-dir` 下 `.enc`、合法 UUID 且 `backup_record` 无对应 `file_name` 即孤儿、物理删除；
         非 UUID `.enc` 跳过计入 `skippedFiles`；`backup-dir` 不存在返回全 0 摘要），清理结果在响应 `orphanCleanSummary`
         字段返回。该自动清理为防御性补偿：恢复本身不落盘 `.enc` 文件，但既有 afterCommit 崩溃残留或 DB 直接删行绕过
-        服务留下的孤儿可借此一并清理；清理在恢复成功后于事务内同步执行（`cleanOrphans` 只读 DB 查 `file_name` 集合 +
-        删文件，无 DB 写），best-effort：清理失败用 try-catch 包裹不影响恢复事务提交与响应（恢复已成功，
-        `orphanCleanSummary` 反映尽力清理的结果）。
+        服务留下的孤儿可借此一并清理；清理在恢复成功后于事务内同步执行（`cleanOrphans` 只读 `backup_record` 查
+        `file_name` 集合 + 删文件 + best-effort 写既有 `audit_log` 审计），best-effort：清理与审计失败均用 try-catch
+        包裹不影响恢复事务提交与响应（恢复已成功，`orphanCleanSummary` 反映尽力清理的结果）。
         passphrase 不参与清理验证（清理即销毁密钥材料）。本端点无需 `X-Confirm-Permanent-Delete` 确认头（恢复非销毁性
         操作，附带清理是 best-effort 防御）；幂等性由 `Idempotency-Key` 保证，重复回放返回首次缓存的完整响应（含
-        `orphanCleanSummary`，不重新执行恢复与清理）。
+        `orphanCleanSummary`，不重新执行恢复与清理）。恢复联动 `cleanOrphans` 删除的孤儿文件同样按独立孤儿端点语义向
+        `audit_log` 追加审计记录（每删一个一条，best-effort，见 `POST /backups/orphans/clean` 描述）。
         恢复成功后对本次提交的 passphrase 在内存做一次强度评估（与创建/武装入口同一算法、同一阈值，详见 §9 强度门槛），
         **仅当评估为弱（score<40）** 时置响应 `passphraseResetRecommended=true`（非阻塞提示，建议用户用强口令新建备份替换；
         系统 无全局 passphrase 可重设，详见状态机）。恢复端点仍豁免强度门槛——评估仅为提示，不拒绝恢复、不返回强度 400
@@ -1082,6 +1083,9 @@ paths:
         不可恢复，不进入最近删除（`trash_item`）。要求携带 `X-Confirm-Permanent-Delete: true` 确认头
         （缺失或非 `true` 返回 400）防误清。`backup-dir` 不存在时返回 `scannedFiles=0`（不报错）。
         幂等性由 `Idempotency-Key` 保证：重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用。
+        孤儿清理审计日志：每删除一个孤儿文件成功后向既有 `audit_log` 表追加一条记录（仅追加），本版
+        不新增查询/展示端点、不回显到响应，事后追溯直接查 `audit_log` 表。审计写入为 best-effort，
+        失败仅记日志不阻塞清理、不影响摘要计数。
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - name: X-Confirm-Permanent-Delete

@@ -292,7 +292,7 @@ ABANDONED ──restore──> TODO
 
 - 清理前置：携带 `X-Confirm-Permanent-Delete: true` 确认头（缺失或非 `true` 返回 400）。
 - 判定规则：备份文件名恒为 `<id>.enc`（id 为 UUID），取文件名去 `.enc` 得 candidate id；**合法 UUID 且** `backup_record` 中无对应 `file_name` 的行即孤儿，删除之；非 UUID 命名的 `.enc`（如用户随手放入的无关文件）跳过不删，计入 `skippedFiles`，避免误删。
-- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`：本端点只读 DB（查 `file_name` 集合）+ 删文件，无 DB 写，无需 `afterCommit`（与单条删除/按龄清理先提交 DB 行再清文件不同——本端点不动 DB 行，直接删文件即可）。
+- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`：本端点只读 `backup_record`（查 `file_name` 集合）+ 删文件 + best-effort 写 `audit_log` 审计（见下节「孤儿清理审计日志」），无需 `afterCommit`（与单条删除/按龄清理先提交 DB 行再清文件不同——本端点不动 `backup_record` 行，直接删文件并追加审计即可）。
 - 不可恢复，不进入最近删除（`trash_item`）；passphrase 不参与清理验证（同单条删除硬规则）。
 - `backup-dir` 不存在时 `scannedFiles=0`（不报错）；无孤儿时返回全 0 摘要（不报 404，空集合法）。
 - 返回清理摘要（`scannedFiles`/`orphanFiles`/`deletedFiles`/`freedBytes`/`skippedFiles`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用）。
@@ -301,11 +301,22 @@ ABANDONED ──restore──> TODO
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、恢复事务提交前）后于事务内同步调用 `cleanOrphans`；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发清理。
 - 该自动清理为防御性补偿：恢复本身不落盘 `.enc` 文件，补偿的是既有 afterCommit 崩溃残留或 DB 直接删行绕过服务留下的孤儿。
-- `cleanOrphans` 只读 DB（查 `file_name` 集合）+ 删文件，无 DB 写，对恢复事务无影响；best-effort：清理失败用 try-catch 包裹，不影响恢复事务提交与响应（恢复已成功，`orphanCleanSummary` 反映尽力清理的结果，失败时为 null）。
-- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`（同独立孤儿清理端点：只读 DB 查 `file_name` 集合 + 删文件，无 DB 写）。
+- `cleanOrphans` 只读 `backup_record`（查 `file_name` 集合）+ 删文件 + best-effort 写 `audit_log` 审计（见「孤儿清理审计日志」节），对恢复事务无实质影响；best-effort：清理与审计失败均用 try-catch 包裹，不影响恢复事务提交与响应（恢复已成功，`orphanCleanSummary` 反映尽力清理的结果，失败时为 null）。
+- 不写 `backup_record`、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`（同独立孤儿清理端点：只读 `backup_record` 查 `file_name` 集合 + 删文件 + best-effort 写 `audit_log`）。
 - 无需 `X-Confirm-Permanent-Delete` 确认头：恢复非销毁性操作，附带清理是 best-effort 防御，用户已主动发起恢复即视为授权。
 - 清理结果通过恢复响应的 `orphanCleanSummary` 字段返回（`ImportResultReport` 可选字段）；`POST /data-imports/restore` 标准数据恢复不触发此联动，该字段缺省。
 - 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `orphanCleanSummary`），不重新执行恢复与清理。
+
+**孤儿清理审计日志**：`POST /backups/orphans/clean` 与 `POST /backups/restore` 联动的 `cleanOrphans` 在删除每个孤儿 `.enc` 文件成功后，向既有 `audit_log` 表追加一条审计记录（仅追加，不更新/删除），供物理删除操作事后追溯：
+
+- 审计范围：仅孤儿文件清理（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans`）。单条删除、按龄清理、按数量保留清理不写审计（各有响应摘要可追溯，本切片不扩散）。
+- 记录粒度：**每个被删孤儿文件一条**。`resource_type=BACKUP_FILE`、`resource_id`=被删文件名去 `.enc` 的 UUID、`action=BACKUP_ORPHAN_CLEANED`、`before_snapshot_json`/`after_snapshot_json` 均为 `null`（与既有二次投递确认/需求变更用法一致，不存快照）、`reason` 含被释放字节数（如 `Orphan .enc file with no matching backup_record, removed by orphan scan cleanup (freedBytes=N).`）、`occurred_at`=UTC ISO。
+- 写入时机：在 `cleanOrphans` 逐文件循环内，删孤儿文件成功后立即 `auditLogMapper.insert`。无孤儿删除 0 个时不写审计（空操作无可追溯）；非 UUID 命名的 `.enc`（`skippedFiles`）不写审计（未删除）。
+- best-effort：审计写入失败用 try-catch 包裹仅记日志，不阻塞清理循环、不影响恢复事务提交与响应、不影响 `BackupOrphanCleanSummary` 计数（`deletedFiles` 反映实际删除的文件数，与审计是否落库无关）。语义同 restore 对 `cleanOrphans` 的 best-effort 容错。
+- 不写 `backup_record`（只读其 `file_name` 集合判定孤儿）、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`；仅向 `audit_log` 追加。
+- 不新增查询/展示端点：本版审计仅写不读，不暴露 `GET` 接口、不回显到响应（`BackupOrphanCleanSummary` 不加字段），事后追溯直接查 `audit_log` 表；查询入口留后续切片。
+- 幂等性：独立孤儿端点由其 `Idempotency-Key` 保证（重复回放返回首次缓存摘要不重新执行 → 不重复写审计）；恢复联动由恢复的 `Idempotency-Key` 保证（重复回放不重新执行恢复与清理 → 不重复写审计）。无需额外去重。
+- `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
 
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**仅当评估为弱（`score<40`）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令偏弱、建议用强口令新建备份替换；强/中口令为 `false`。
 

@@ -1,5 +1,35 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-2
+
+- 目标：实现「孤儿文件清理审计日志」最小切片——在已完成的孤儿 .enc 文件扫描清理（AT-42）与恢复后自动孤儿清理联动（AT-44）之上，让 `BackupService.cleanOrphans()` 删除每个孤儿 `.enc` 文件成功后向既有 `audit_log` 表追加一条审计记录，事后可追溯「哪个文件何时因孤儿被清」。承接 2026-09-07-1「下一窗口只做」候选切片「孤儿文件清理审计日志」。不实现单条删除/按龄/按数量保留的审计、不新增查询/展示端点、不新增表/迁移。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：关键发现——`audit_log` 表在 V1 初始迁移已存在（`V1__initial_schema.sql:316`，字段 id/resource_type/resource_id/action/before_snapshot_json/after_snapshot_json/reason/occurred_at），`AuditLogEntry` 实体 + `AuditLogMapper.insert` 基础设施已就位（当前用于二次投递确认 AT-17A、需求合并/变更），故本切片**不新建表、不加 V26 迁移**，仅复用既有基础设施加写入点。审计范围经用户拍板为「仅孤儿清理」（独立 `POST /backups/orphans/clean` + `POST /backups/restore` 联动的 `cleanOrphans`，不扩散到单条删除/按龄/按数量）；审计粒度为「每个被删孤儿文件一条」（resource_id=文件 UUID，满足 NOT NULL）；查询入口「只写不读」（本版不新增端点/UI，事后追溯直接查 `audit_log` 表，留后续切片）；审计写入失败 best-effort 记日志不阻塞清理（同 restore 对 cleanOrphans 的 best-effort 风格）。
+  - 规格（按权威顺序）：`02-state-machines.md §9.1` 新增「孤儿清理审计日志」节（审计范围仅孤儿清理、记录粒度每文件一条、字段值 resource_type=BACKUP_FILE/resource_id=被删文件 UUID/action=BACKUP_ORPHAN_CLEANED/快照 null/reason 含 freedBytes/occurred_at=UTC ISO、写入时机在 cleanOrphans 逐文件循环内删成功后立即 insert、best-effort 失败仅记日志不阻塞不影响计数、无孤儿删 0 不写、非 UUID skipped 不写、不新增查询端点本版仅写不读、幂等回放不重复写、复用 V1 既有表不新增迁移、仅追加不更新/删除）；修订孤儿清理节与恢复联动节既有「无 DB 写」措辞为「best-effort 写 audit_log」；`03-openapi.yaml` `/backups/orphans/clean` 与 `/backups/restore` 描述补审计写入说明（响应 schema 不变，BackupOrphanCleanSummary 不加字段）；`04-database-design.md §6` 孤儿清理条目与恢复条目补「复用 V1 既有 audit_log 表，不新增迁移，只写不读」；`01-page-spec.md P11` 孤儿清理子区块补「后端写审计日志，本版不提供查看入口」；`05-acceptance-test-cases.md` 新增 AT-47（2 孤儿→2 条 audit + 字段断言 + 响应不回显审计 + 无孤儿不写 + 非 UUID skipped 不写 + 幂等回放不重复写 + 恢复联动同样写）+ 发布门槛升 AT-47；`jobhub-prd.md §10/§19` 标注已实现最小切片。
+  - 后端 `common/audit/AuditLogEntry.java` 加静态工厂 `backupOrphanCleaned(id, fileId, freedBytes, occurredAt)`（resourceType=BACKUP_FILE、resourceId=fileId、action=BACKUP_ORPHAN_CLEANED、reason 含 freedBytes、快照默认 null，与既有 secondaryApplicationConfirmation/requirementMerged 同范式）；`backup/application/BackupService.java` 注入 `AuditLogMapper`（构造器末位前插），`cleanOrphans()` 在 `deleteFile(file)` 成功分支内 `auditLogMapper.insert(AuditLogEntry.backupOrphanCleaned(ids.newId(), candidateId, size, time.now()))`（candidateId 已在循环内算出，ids/time 已是本类依赖），best-effort try-catch 失败仅记日志不影响 deleted/freed 计数；cleanOrphans 保持无 `@Transactional`（audit insert 各自 auto-commit，restore 联动时参与 restore 事务，restore 已 try-catch 包 cleanOrphans 语义自洽）；幂等由既有 Idempotency-Key 保证（重复回放不重新执行→不重复写审计）。
+  - 测试扩既有：`BackupOrphanScanIntegrationTest` 加 4 个 AT-47 用例（2 孤儿→audit_log 恰 2 条 + 字段断言[resource_type/resource_id/action/before-after_snapshot null/reason 含 freedBytes/occurred_at 非空] + 响应不含审计字段 + passphrase 不落库；无孤儿删 0 不写；非 UUID skipped 不写；幂等回放不重复写）；`BackupRestoreIntegrationTest` 的 AT-44 恢复联动用例补 audit_log 断言（orphanId 对应一条 BACKUP_ORPHAN_CLEANED 行）。
+- 未完成：不审计单条删除/按龄/按数量保留清理、不新增查询/展示端点（GET /audit-logs 或 UI）、不改响应 schema（BackupOrphanCleanSummary 不加字段）、不加新迁移、不回显审计信息、不改 V1~V25 既有迁移、不做密钥轮换、不做强制 fair/strong、不做第三方日历 ICS 订阅。
+- 单窗口边界：本切片 10 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 2[AuditLogEntry + BackupService] + 后端测试 2[扩既有 BackupOrphanScanIntegrationTest + BackupRestoreIntegrationTest]），符合 MASTER_PROMPT ≤10 文件边界。因复用既有 audit_log 表与 AuditLogMapper（无新迁移、无新表、无新 schema），仅加静态工厂 + cleanOrphans 写入点 + 扩既有测试，比前几个备份切片更轻。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`common/audit/AuditLogEntry.java`（加 backupOrphanCleaned 静态工厂）、`backup/application/BackupService.java`（注入 AuditLogMapper + cleanOrphans 写 audit）。
+  - 后端测试：`src/test/java/com/jobhub/integration/BackupOrphanScanIntegrationTest.java`（加 4 个 AT-47 用例 + import Map）、`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（AT-44 用例补 audit 断言 + import Map）。
+  - 前端：无改动（只写不读，响应 schema 不变，types.ts 不重新生成，E2E 不加——HTTP API 无法验证 DB，由后端集成测试覆盖）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest='BackupOrphanScanIntegrationTest,BackupRestoreIntegrationTest'`：24 tests，0 failures（含新增 4 个 AT-47 用例 + AT-44 恢复联动 audit 断言）。
+  - `cd backend && mvn clean test`：169 tests，0 failures，0 errors，0 skipped（上一窗口 165→本窗口 169，+4 AT-47）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run typecheck && npm run lint`：全部通过（前端无改动，确认未被波及，未跑 build/e2e）。
+- 验证结果：孤儿清理审计链路（2 孤儿清理→audit_log 恰 2 条 BACKUP_ORPHAN_CLEANED + resource_type=BACKUP_FILE + resource_id=被删文件 UUID + 快照 null + reason 含 freedBytes + occurred_at 非空 + 响应不回显审计字段 + 无孤儿删 0 不写 + 非 UUID skipped 不写 + 幂等回放不重复写 + 恢复联动 cleanOrphans 同样写 + passphrase 不落库/不回显）有后端集成测试覆盖（4 新增 + 1 既有补断言）；OpenAPI 变更为描述补强（非破坏性，响应 schema 不变）；无数据库迁移（复用 V1 既有 audit_log 表）；audit_log 仅追加（AuditLogMapper 仅 insert，无 update/delete 接口）；审计写入 best-effort 失败不阻塞清理；复用既有 Idempotency-Key 幂等防重复写审计。
+- 已知问题：
+  - 前端无查看入口（本版仅写不读），事后追溯需直接查 `audit_log` 表，查询/展示端点留后续切片。
+  - 审计写入 best-effort：cleanOrphans 独立调用时 audit insert 各自 auto-commit，极端情况（删 N 个文件、写第 k 条 audit 失败）会出现「文件已删但部分审计缺失」，失败仅记日志不影响清理计数；语义为 best-effort 追溯（同 restore 对 cleanOrphans 的容错），符合「审计是附加观测、不阻塞清理」定位。
+  - E2E 无法验证 audit_log（Playwright 走 HTTP API 无法查 DB），audit_log 写入链路由后端集成测试覆盖；E2E 既有 AT-42 不变。
+  - 全量 E2E 仍可能输出既有 flaky（p1-encrypted-backup AT-38 定时备份触发等，4 个 webServer 资源竞争），与本切片无代码关联（本切片未碰定时触发逻辑）；本窗口未跑全量 E2E（前端无改动）。
+  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、强制 fair/strong 口令门槛升级、审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建孤儿清理审计写入逻辑；不要给 audit_log 加查询端点（本版仅写不读，留后续切片）；不要审计单条删除/按龄/按数量保留（本切片范围仅孤儿清理）；不要改 BackupOrphanCleanSummary 加审计字段（审计是内部行为不回显）；不要新建 audit_log 表或新增迁移（V1 已存在，复用）；不要给 AuditLogMapper 加 update/delete（仅追加）；不要改 V1~V25 既有迁移；不要改 cleanOrphans 加 @Transactional（保持无事务，audit 各自 auto-commit，restore 联动参与 restore 事务）。
+
 ### 窗口 2026-09-07-1
 
 - 目标：实现「恢复后弱口令重设提示」最小切片——在已完成的 passphrase 强度强制门槛（AT-45，创建/武装入口拒绝弱口令）之上，让 `POST /backups/restore` 恢复成功后对本次提交的 passphrase（已在调用栈内存）复用 `PassphraseStrengthValidator.evaluate()` 做一次内存评估，**仅当弱（score<40）** 时置响应 `passphraseResetRecommended=true` 提示用户用强口令新建备份替换，强/中为 false，恢复端点仍豁免门槛（仅提示不阻塞）。承接 2026-09-06-11「下一窗口只做」候选切片「备份恢复后强制 passphrase 重设提示」。不实现密钥轮换、真正的重设 passphrase 端点（系统无全局 passphrase 可重设）、第三方日历 ICS 订阅。

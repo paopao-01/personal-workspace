@@ -7,6 +7,8 @@ import com.jobhub.backup.api.BackupPurgeSummary;
 import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.infrastructure.BackupRecordMapper;
 import com.jobhub.backup.infrastructure.BackupScheduleMapper;
+import com.jobhub.common.audit.AuditLogEntry;
+import com.jobhub.common.audit.infrastructure.AuditLogMapper;
 import com.jobhub.common.error.BusinessRuleException;
 import com.jobhub.common.error.ResourceNotFoundException;
 import com.jobhub.common.id.IdGenerator;
@@ -46,19 +48,22 @@ public class BackupService {
 	private final EncryptionService encryption;
 	private final BackupRecordMapper mapper;
 	private final BackupScheduleMapper scheduleMapper;
+	private final AuditLogMapper auditLogMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 	private final String backupDir;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	public BackupService(ExportService exportService, ImportService importService, EncryptionService encryption,
-			BackupRecordMapper mapper, BackupScheduleMapper scheduleMapper, IdGenerator ids, UtcTime time,
+			BackupRecordMapper mapper, BackupScheduleMapper scheduleMapper, AuditLogMapper auditLogMapper,
+			IdGenerator ids, UtcTime time,
 			@Value("${jobhub.backup-dir:./data/backups}") String backupDir) {
 		this.exportService = exportService;
 		this.importService = importService;
 		this.encryption = encryption;
 		this.mapper = mapper;
 		this.scheduleMapper = scheduleMapper;
+		this.auditLogMapper = auditLogMapper;
 		this.ids = ids;
 		this.time = time;
 		this.backupDir = backupDir;
@@ -288,8 +293,10 @@ public class BackupService {
 	 * 判定规则：备份文件名恒为 {@code <id>.enc}（id 为 UUID），取文件名去 {@code .enc} 得 candidate id；
 	 * 合法 UUID 且 backup_record 中无对应 file_name 的文件即孤儿，删除之；非 UUID 命名的 .enc（如用户随手放入的
 	 * 无关文件）跳过不删，计入 skippedFiles，避免误删。
-	 * 本方法不写 backup_record、不联动 last_backup_id、不联动删 data_export；无 DB 写、无 @Transactional、
+	 * 本方法不写 backup_record、不联动 last_backup_id、不联动删 data_export；无 @Transactional、
 	 * 无 afterCommit（与单条删除/按龄清理先提交 DB 行再清文件不同——本方法不动 DB 行，直接删文件即可）。
+	 * 删除每个孤儿文件成功后 best-effort 向既有 audit_log 表追加一条审计记录（见 AuditLogEntry.backupOrphanCleaned），
+	 * 写入失败仅记日志不阻塞清理、不影响摘要计数。
 	 * backup-dir 不存在时返回 scannedFiles=0（不报错）；幂等性由 Idempotency-Key 保证（重复回放返回首次缓存摘要）。
 	 */
 	public BackupOrphanCleanSummary cleanOrphans() {
@@ -336,6 +343,14 @@ public class BackupService {
 			if (deleteFile(file)) {
 				deleted++;
 				freed += size;
+				// best-effort 审计：删除孤儿文件成功后向 audit_log 追加一条记录，失败仅记日志不阻塞清理、
+				// 不影响计数（同 restore 对 cleanOrphans 的 best-effort 容错）。candidateId 为文件名去 .enc 的 UUID。
+				try {
+					auditLogMapper.insert(AuditLogEntry.backupOrphanCleaned(
+							ids.newId(), candidateId, size, time.now()));
+				} catch (Exception auditEx) {
+					// 审计写入失败不影响清理结果与摘要计数
+				}
 			}
 		}
 		return new BackupOrphanCleanSummary(scanned, orphan, deleted, freed, skipped);
