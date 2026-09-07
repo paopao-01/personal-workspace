@@ -701,8 +701,27 @@ And 任意端点的响应与日志均不含 passphrase，passphrase 永不落盘
 And 响应不回显 passphrase 的 score 或 level 等派生信息（仅返回布尔 passphraseResetRecommended）
 ```
 
+### AT-47 孤儿文件清理审计日志（清理每个孤儿文件后向 audit_log 追加一条；best-effort 不阻塞）
+
+```gherkin
+Given backup-dir 下存在 2 个无 backup_record 对应的合法 UUID 命名孤儿 .enc 文件，且 backup_record 有一条合法记录对应一个 .enc 文件
+When 用户在设置页孤儿清理入口二次确认后点击「清理孤儿文件」（POST /api/backups/orphans/clean，携带 X-Confirm-Permanent-Delete: true）
+Then 返回 200 且 BackupOrphanCleanSummary 的 deletedFiles=2、freedBytes>0、skippedFiles=0（合法文件保留）
+And audit_log 表新增 2 条记录，每条 resource_type=BACKUP_FILE、resource_id=被删文件名去 .enc 的 UUID、action=BACKUP_ORPHAN_CLEANED、before/after_snapshot_json 为 null、reason 含 freedBytes、occurred_at 为非空 UTC ISO
+And 响应不回显审计信息（BackupOrphanCleanSummary 不含审计字段），passphrase 不落库/不回显/不进日志
+When backup-dir 下无孤儿（仅有合法 .enc 文件或目录不存在）
+Then 返回 200 且 deletedFiles=0，audit_log 未新增任何记录（空操作无可追溯）
+Given backup-dir 下还存在 1 个非 UUID 命名的 .enc 文件（如 notes.enc）
+When 用户点击「清理孤儿文件」
+Then 非 UUID 文件被跳过计入 skippedFiles=1 且不删除，audit_log 不为被跳过的文件新增记录（只为被删孤儿写）
+When 用户恢复一份加密备份（POST /api/backups/restore）且 backup-dir 存在孤儿 .enc 文件
+Then 恢复成功且联动 cleanOrphans 删除孤儿后，audit_log 同样为每个被删孤儿新增一条 BACKUP_ORPHAN_CLEANED 记录
+When 用户以相同 Idempotency-Key 重复调用孤儿清理或恢复（幂等回放）
+Then 返回首次缓存的摘要，audit_log 不新增重复记录（幂等回放不重新执行清理、不重复写审计）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-46 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-47 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

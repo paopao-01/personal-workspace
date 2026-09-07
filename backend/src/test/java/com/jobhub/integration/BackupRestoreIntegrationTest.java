@@ -18,6 +18,7 @@ import org.springframework.web.client.RestClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -212,6 +213,14 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		// backup_record 无变更（恢复不写、清理只删文件）
 		Integer backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Integer.class);
 		assertThat(backupCount).isEqualTo(1);
+
+		// AT-47 恢复联动 cleanOrphans 删除孤儿后，audit_log 同样为被删孤儿写一条审计记录
+		Map<String, Object> auditRow = jdbc.queryForMap(
+			"SELECT resource_type, resource_id, action, reason FROM audit_log "
+				+ "WHERE action = 'BACKUP_ORPHAN_CLEANED' AND resource_id = ?", orphanId);
+		assertThat(auditRow.get("resource_type")).isEqualTo("BACKUP_FILE");
+		assertThat(auditRow.get("resource_id")).isEqualTo(orphanId);
+		assertThat(String.valueOf(auditRow.get("reason"))).contains("freedBytes=");
 	}
 
 	@Test

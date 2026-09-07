@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -205,6 +206,100 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 		Integer legitCount = jdbc.queryForObject(
 			"SELECT COUNT(*) FROM backup_record WHERE id = ?", Integer.class, b.id);
 		assertThat(legitCount).isEqualTo(1);
+	}
+
+	@Test
+	void AT47_cleanOrphansWritesAuditLogPerDeletedOrphan() {
+		// 造 2 份合法备份，删除两份的 backup_record 行但保留 .enc 文件 → 2 个孤儿
+		CreatedBackup orphan1 = createBackup("TestPass1234");
+		CreatedBackup orphan2 = createBackup("TestPass1234");
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan1.id);
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan2.id);
+
+		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.intVal(body, "deletedFiles")).isEqualTo(2);
+		assertThat(JsonProbe.lng(body, "freedBytes")).isGreaterThan(0L);
+
+		// audit_log 为每个被删孤儿追加一条：resource_type=BACKUP_FILE、resource_id=被删文件 UUID、
+		// action=BACKUP_ORPHAN_CLEANED、before/after 快照为 null、reason 含 freedBytes、occurred_at 非空
+		Map<String, Object> row1 = jdbc.queryForMap(
+			"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, occurred_at "
+				+ "FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED' AND resource_id = ?", orphan1.id);
+		assertThat(row1.get("resource_type")).isEqualTo("BACKUP_FILE");
+		assertThat(row1.get("action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		assertThat(row1.get("before_snapshot_json")).isNull();
+		assertThat(row1.get("after_snapshot_json")).isNull();
+		assertThat(String.valueOf(row1.get("reason"))).contains("freedBytes=");
+		assertThat(row1.get("occurred_at")).asString().isNotEmpty();
+		assertThat(row1.get("resource_id")).isEqualTo(orphan1.id);
+
+		Map<String, Object> row2 = jdbc.queryForMap(
+			"SELECT resource_type, resource_id, action FROM audit_log "
+				+ "WHERE action = 'BACKUP_ORPHAN_CLEANED' AND resource_id = ?", orphan2.id);
+		assertThat(row2.get("resource_type")).isEqualTo("BACKUP_FILE");
+
+		// 恰好 2 条审计记录（不多不少）
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED'", Integer.class);
+		assertThat(auditCount).isEqualTo(2);
+
+		// 响应不回显审计信息（BackupOrphanCleanSummary 不含审计字段）
+		assertThat(body).doesNotContain("auditLog").doesNotContain("BACKUP_ORPHAN_CLEANED");
+		// passphrase 不落库
+		Integer passCol = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM pragma_table_info('backup_record') WHERE name = 'passphrase'", Integer.class);
+		assertThat(passCol).isZero();
+	}
+
+	@Test
+	void AT47_noOrphansWritesNoAuditLog() {
+		// 无孤儿：文件与记录都在
+		createBackup("TestPass1234");
+		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedFiles")).isZero();
+		// 空操作无可追溯，audit_log 未新增
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED'", Integer.class);
+		assertThat(auditCount).isZero();
+	}
+
+	@Test
+	void AT47_nonUuidSkippedWritesNoAuditLog() {
+		// 只放一个非 UUID .enc 文件（被跳过不删），无孤儿删除
+		placeNonUuidEncFile();
+		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "skippedFiles")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedFiles")).isZero();
+		// 被跳过的文件不写审计（未删除）
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED'", Integer.class);
+		assertThat(auditCount).isZero();
+	}
+
+	@Test
+	void AT47_idempotentReplayWritesNoDuplicateAuditLog() {
+		CreatedBackup orphan = createBackup("TestPass1234");
+		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan.id);
+		String key = TestFixtures.newKey();
+
+		ResponseEntity<String> first = cleanOrphans(key, true);
+		assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(first.getBody(), "deletedFiles")).isEqualTo(1);
+		Integer firstCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED'", Integer.class);
+		assertThat(firstCount).isEqualTo(1);
+
+		// 相同 Idempotency-Key 回放 → 幂等，返回首次缓存摘要，不重新执行清理 → 不重复写审计
+		ResponseEntity<String> second = cleanOrphans(key, true);
+		assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(second.getBody(), "deletedFiles")).isEqualTo(1);
+		Integer secondCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED'", Integer.class);
+		assertThat(secondCount).isEqualTo(1);
 	}
 
 	@SuppressWarnings("unused")
