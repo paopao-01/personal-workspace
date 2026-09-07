@@ -120,6 +120,73 @@ class BackupPurgeIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void AT51_purgeWritesBackupPurgedByAgeAuditLogPerDeletedRecord() {
+		CreatedBackup old1 = createBackup("TestPass1234!plus");
+		CreatedBackup old2 = createBackup("TestPass1234!plus");
+		CreatedBackup recent = createBackup("TestPass1234!plus");
+		ageBackup(old1.id, 10);
+		ageBackup(old2.id, 10);
+
+		ResponseEntity<String> res = purge(5, TestFixtures.newKey(), true);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedCount")).isEqualTo(2);
+
+		// audit_log 为每个被删记录追加一条 BACKUP_PURGED_BY_AGE
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_PURGED_BY_AGE'", Integer.class);
+		assertThat(auditCount).isEqualTo(2);
+
+		// 每条 resource_type=BACKUP_RECORD、resource_id 对应被删备份 id、reason 含 olderThanDays
+		for (String deletedId : new String[] {old1.id, old2.id}) {
+			Map<String, Object> row = jdbc.queryForMap(
+				"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, occurred_at "
+					+ "FROM audit_log WHERE action = 'BACKUP_PURGED_BY_AGE' AND resource_id = ?", deletedId);
+			assertThat(row.get("resource_type")).isEqualTo("BACKUP_RECORD");
+			assertThat(row.get("action")).isEqualTo("BACKUP_PURGED_BY_AGE");
+			assertThat(row.get("resource_id")).isEqualTo(deletedId);
+			assertThat(row.get("before_snapshot_json")).isNull();
+			assertThat(row.get("after_snapshot_json")).isNull();
+			assertThat(String.valueOf(row.get("reason"))).contains("olderThanDays=5");
+			assertThat(row.get("occurred_at")).asString().isNotEmpty();
+		}
+		// 保留的 recent 不在审计中
+		Integer recentAudit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE resource_id = ?", Integer.class, recent.id);
+		assertThat(recentAudit).isZero();
+		// 响应不回显审计信息（BackupPurgeSummary 不含审计字段）
+		assertThat(res.getBody()).doesNotContain("BACKUP_PURGED_BY_AGE").doesNotContain("auditLog");
+	}
+
+	@Test
+	void AT51_purgeNoMatchWritesNoAuditLog() {
+		// 无匹配记录 deletedCount=0，不写审计
+		CreatedBackup b = createBackup("TestPass1234!plus");
+		ResponseEntity<String> res = purge(5, TestFixtures.newKey(), true);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedCount")).isZero();
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_PURGED_BY_AGE'", Integer.class);
+		assertThat(auditCount).isZero();
+		Integer bAudit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE resource_id = ?", Integer.class, b.id);
+		assertThat(bAudit).isZero();
+	}
+
+	@Test
+	void AT51_purgeIdempotentReplayWritesNoDuplicateAuditLog() {
+		CreatedBackup b = createBackup("TestPass1234!plus");
+		ageBackup(b.id, 10);
+		String key = TestFixtures.newKey();
+
+		purge(5, key, true);
+		// 相同 Idempotency-Key 重复清理 → 幂等回放，不重复写审计
+		purge(5, key, true);
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_PURGED_BY_AGE' AND resource_id = ?",
+			Integer.class, b.id);
+		assertThat(auditCount).isEqualTo(1);
+	}
+
+	@Test
 	void purgeWithoutConfirmHeaderReturns400() {
 		CreatedBackup b = createBackup("TestPass1234!plus");
 		ageBackup(b.id, 10);

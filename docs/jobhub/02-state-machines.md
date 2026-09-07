@@ -279,6 +279,7 @@ ABANDONED ──restore──> TODO
 - 删除联动：物理删除 `backup_record` 行；配套清理 `jobhub.backup-dir` 下的 `.enc` 密文文件（文件不存在视为已清理，不报错）；若被删 id 等于 `backup_schedule.last_backup_id`，将该软引用置空（不影响 armed 内存状态与调度配置）。
 - `data_export_id` 软引用的导出记录行不联动删除：`data_export` 为独立历史快照，悬空软引用无外键阻拦，保留可追溯。
 - 删除失败不得产生部分副作用：文件已删但记录行未删（或反之）须在事务内回滚到一致状态（文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB，避免悬留记录却丢失文件）。
+- 删除审计：事务内 `mapper.deleteById` 返回非 0（实际删行）后立即 best-effort 向既有 `audit_log` 表追加一条 `action=BACKUP_DELETED` 审计记录（见下文「备份删除/批量清理审计日志」节），`resource_type=BACKUP_RECORD`、`resource_id`=被删备份 id；写入失败仅记日志不阻塞删除、不影响响应，审计随事务提交/回滚（强一致）；幂等性由 `Idempotency-Key` 保证（重复回放不重新执行→不重复写审计）。
 
 **按龄批量清理**：`DELETE /backups?olderThanDays=N` 物理删除 `created_at` 早于「当前 UTC − N 天」的全部 `backup_record`，语义同单条删除：
 
@@ -287,6 +288,8 @@ ABANDONED ──restore──> TODO
 - 逐条联动同单条删除：删 `backup_record` 行 + `afterCommit` 清理 `.enc` 文件（文件不存在视为已清理不报错，不计入 `filesCleaned`）+ 若被删集合含 `last_backup_id` 则置空该软引用（`lastBackupIdCleared=true`）。
 - `data_export_id` 软引用行不联动删除（同单条删除语义）。
 - 文件清理在 DB 提交后执行，文件清理失败仅记日志不回滚 DB（同单条删除）；返回清理摘要（`deletedCount`/`filesCleaned`/`lastBackupIdCleared`），幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存的相同摘要，不重新执行清理）。
+- 删除审计：事务内逐条 `mapper.deleteById` 返回非 0 后立即 best-effort 向既有 `audit_log` 表追加一条 `action=BACKUP_PURGED_BY_AGE` 审计记录（见下文「备份删除/批量清理审计日志」节），`resource_type=BACKUP_RECORD`、`resource_id`=该被删备份 id；写入失败仅记日志不阻塞清理、不影响摘要计数，审计随事务提交/回滚；幂等性由 `Idempotency-Key` 保证（重复回放不重新执行→不重复写审计）。无匹配记录 `deletedCount=0` 时不写审计。
+- **按数量保留清理**（`DELETE /backups?keepLast=N`）语义同按龄清理，仅 action 取 `BACKUP_PURGED_BY_COUNT`（按 `created_at DESC` 取最近 N 条为保留集，对其余全部逐条删行 + best-effort 写审计 + `afterCommit` 清文件 + 置空 `last_backup_id`）；`keepLast ≥ 现有总数` 时无备份被删、不写审计；其余联动、best-effort、幂等、不回显语义同按龄清理。
 
 **孤儿文件扫描清理**：`POST /backups/orphans/clean` 扫描 `jobhub.backup-dir` 下全部 `.enc` 文件，物理删除其中无 `backup_record` 对应的孤儿文件，补偿单条删除/按龄清理在 `afterCommit` 文件清理前崩溃残留的孤儿（或 DB 直接删行绕过服务）：
 
@@ -309,13 +312,24 @@ ABANDONED ──restore──> TODO
 
 **孤儿清理审计日志**：`POST /backups/orphans/clean` 与 `POST /backups/restore` 联动的 `cleanOrphans` 在删除每个孤儿 `.enc` 文件成功后，向既有 `audit_log` 表追加一条审计记录（仅追加，不更新/删除），供物理删除操作事后追溯：
 
-- 审计范围：仅孤儿文件清理（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans`）。单条删除、按龄清理、按数量保留清理不写审计（各有响应摘要可追溯，本切片不扩散）。
+- 审计范围：仅孤儿文件清理（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans`）。单条删除、按龄清理、按数量保留清理的审计见下文「备份删除/批量清理审计日志」节。
 - 记录粒度：**每个被删孤儿文件一条**。`resource_type=BACKUP_FILE`、`resource_id`=被删文件名去 `.enc` 的 UUID、`action=BACKUP_ORPHAN_CLEANED`、`before_snapshot_json`/`after_snapshot_json` 均为 `null`（与既有二次投递确认/需求变更用法一致，不存快照）、`reason` 含被释放字节数（如 `Orphan .enc file with no matching backup_record, removed by orphan scan cleanup (freedBytes=N).`）、`occurred_at`=UTC ISO。
 - 写入时机：在 `cleanOrphans` 逐文件循环内，删孤儿文件成功后立即 `auditLogMapper.insert`。无孤儿删除 0 个时不写审计（空操作无可追溯）；非 UUID 命名的 `.enc`（`skippedFiles`）不写审计（未删除）。
 - best-effort：审计写入失败用 try-catch 包裹仅记日志，不阻塞清理循环、不影响恢复事务提交与响应、不影响 `BackupOrphanCleanSummary` 计数（`deletedFiles` 反映实际删除的文件数，与审计是否落库无关）。语义同 restore 对 `cleanOrphans` 的 best-effort 容错。
 - 不写 `backup_record`（只读其 `file_name` 集合判定孤儿）、不联动 `backup_schedule.last_backup_id`、不联动删 `data_export`；仅向 `audit_log` 追加。
 - 查询入口：审计写入不回显到响应（`BackupOrphanCleanSummary` 不加字段），事后追溯经 `GET /backups/orphans/audit` 分页查询（见下节「孤儿清理审计日志查询」），本写入节不涉及读取。
 - 幂等性：独立孤儿端点由其 `Idempotency-Key` 保证（重复回放返回首次缓存摘要不重新执行 → 不重复写审计）；恢复联动由恢复的 `Idempotency-Key` 保证（重复回放不重新执行恢复与清理 → 不重复写审计）。无需额外去重。
+- `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
+
+**备份删除/批量清理审计日志**：`DELETE /backups/{backupId}`（单条删除）、`DELETE /backups?olderThanDays=N`（按龄清理）、`DELETE /backups?keepLast=N`（按数量保留清理）在事务内逐条 `mapper.deleteById` 返回非 0（实际删行）后，向既有 `audit_log` 表追加一条审计记录（仅追加，不更新/删除），供物理删除操作事后追溯：
+
+- 审计范围：单条删除、按龄批量清理、按数量保留清理三类 `backup_record` 物理删除操作。孤儿文件清理审计见上节「孤儿清理审计日志」，两者 `action`/`resource_type` 不同，互不重叠。
+- 记录粒度：**每个被删 `backup_record` 行一条**。单条删除写 1 条；批量清理按实际被删记录数逐条写（每行一条）。`resource_type=BACKUP_RECORD`（删的是记录行+附带清文件，与孤儿清理的 `BACKUP_FILE` 区分）、`resource_id`=被删 `backup_record` 的 id（UUID）、`action` 按来源区分：单条删除=`BACKUP_DELETED`、按龄清理=`BACKUP_PURGED_BY_AGE`、按数量保留清理=`BACKUP_PURGED_BY_COUNT`；`before_snapshot_json`/`after_snapshot_json` 均为 `null`（与既有审计用法一致，不存快照）、`reason` 含来源可读说明（如 `Backup record deleted by single delete.` / `Backup record purged by age olderThanDays=N.` / `Backup record purged by count keepLast=N.`）、`occurred_at`=UTC ISO。
+- 写入时机：在 `delete`/`purgeOlderThan`/`purgeKeepingLast` 的 `@Transactional` 事务内，`mapper.deleteById` 返回非 0（实际删行）后立即 `auditLogMapper.insert`。无匹配记录删除 0 条时不写审计（空操作无可追溯）；并发删除（`deleteById` 返回 0，记录刚被另一事务删除）跳过不写审计。
+- best-effort：审计写入失败用 try-catch 包裹仅记日志，不阻塞删除/清理、不影响 `BackupPurgeSummary`/删除响应计数；审计随事务提交/回滚（强一致——删行回滚则审计回滚，删行提交则审计提交），与孤儿清理审计的「事务外 best-effort、可能删后审计缺失」语义不同（本节审计与删行同事务，强一致）。
+- 不回显：审计写入不回显到响应（`BackupPurgeSummary` 不加字段，单条删除无响应体），审计是内部行为；passphrase 不参与（审计记录从不存 passphrase）。
+- 查询入口：事后追溯经 `GET /audit-logs` 全量查询（按 `action=BACKUP_DELETED`/`BACKUP_PURGED_BY_AGE`/`BACKUP_PURGED_BY_COUNT` 或 `resourceType=BACKUP_RECORD` 过滤，见下文「全量审计日志查询」节）；不经 `GET /backups/orphans/audit`（该端点仅返回 `BACKUP_ORPHAN_CLEANED`）。
+- 幂等性：由各端点的 `Idempotency-Key` 保证（重复回放返回首次缓存摘要/响应不重新执行 → 不重复写审计）。无需额外去重。
 - `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
 
 **孤儿清理审计日志查询（只读）**：`GET /backups/orphans/audit` 分页查询 `audit_log` 表中 `action=BACKUP_ORPHAN_CLEANED` 的审计记录，供物理删除孤儿文件操作事后追溯（承接「仅写不读」的查询入口缺口）。
@@ -330,7 +344,7 @@ ABANDONED ──restore──> TODO
 
 **全量审计日志查询（只读）**：`GET /audit-logs` 分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的跨域统一事后追溯（承接 `GET /backups/orphans/audit` 仅覆盖孤儿清理的备份域便捷入口，本端点为通用查询入口，**不废弃、不替代**前者）。
 
-- 查询范围：全量 `audit_log`（所有 action、所有 resourceType）。支持两个可选过滤参数 `action` 与 `resourceType`，均可空、可单独或组合使用，按字符串精确匹配；空=不过滤返回全量。只读暴露既有写入值，不新增 action：`SECONDARY_APPLICATION_CONFIRMED`（二次投递确认，`resourceType=APPLICATION`）、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（需求合并/编辑/删除，`resourceType=JOB_REQUIREMENT`）、`BACKUP_ORPHAN_CLEANED`（孤儿清理，`resourceType=BACKUP_FILE`）。`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 `GET /backups/orphans/audit` 相同的记录集，但字段含 `resourceType`（本端点不省略，因全量查询 resourceType 不固定）。
+- 查询范围：全量 `audit_log`（所有 action、所有 resourceType）。支持两个可选过滤参数 `action` 与 `resourceType`，均可空、可单独或组合使用，按字符串精确匹配；空=不过滤返回全量。只读暴露既有写入值，不新增 action：`SECONDARY_APPLICATION_CONFIRMED`（二次投递确认，`resourceType=APPLICATION`）、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（需求合并/编辑/删除，`resourceType=JOB_REQUIREMENT`）、`BACKUP_ORPHAN_CLEANED`（孤儿清理，`resourceType=BACKUP_FILE`）、`BACKUP_DELETED`（单条删除，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_AGE`（按龄批量清理，`resourceType=BACKUP_RECORD`）、`BACKUP_PURGED_BY_COUNT`（按数量保留清理，`resourceType=BACKUP_RECORD`）。`action=BACKUP_ORPHAN_CLEANED` 时本端点返回与 `GET /backups/orphans/audit` 相同的记录集，但字段含 `resourceType`（本端点不省略，因全量查询 resourceType 不固定）。
 - 每条记录字段：`id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、`action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`（当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase（审计记录本身从不存 passphrase）。
 - 排序：按 `occurred_at DESC`（最新优先），与 `GET /backups/orphans/audit` 一致。
 - 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageBackupOrphanAuditEntry`）。空表或过滤无匹配返回 `items=[]`、`total=0`、`totalPages=0`。

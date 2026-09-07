@@ -195,4 +195,41 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		// pageSize=101 非法（最大 100）
 		assertThat(listAuditLogs("?page=1&pageSize=101").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 	}
+
+	@Test
+	void AT50_filterByResourceTypeBackupRecordReturnsAllDeletionActions() {
+		// 造 3 类 BACKUP_RECORD 审计行（单条删除/按龄清理/按数量保留清理），验证 resourceType 过滤
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted by single delete.", "2026-09-07T10:00:00Z");
+		insertAuditRow("BACKUP_PURGED_BY_AGE", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record purged by age olderThanDays=5.", "2026-09-07T11:00:00Z");
+		insertAuditRow("BACKUP_PURGED_BY_COUNT", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record purged by count keepLast=2.", "2026-09-07T12:00:00Z");
+		// 一条其他 resourceType 的记录不应被返回
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"Orphan .enc file removed (freedBytes=1024).", "2026-09-07T13:00:00Z");
+
+		String body = listAuditLogs("?page=1&pageSize=20&resourceType=BACKUP_RECORD").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(3L);
+		List<String> actions = JsonProbe.collectArrayField(body, "items", "action");
+		assertThat(actions).containsExactlyInAnyOrder(
+				"BACKUP_DELETED", "BACKUP_PURGED_BY_AGE", "BACKUP_PURGED_BY_COUNT");
+		// 每条 resourceType=BACKUP_RECORD
+		for (int i = 0; i < 3; i++) {
+			assertThat(JsonProbe.arrStr(body, "items", i, "resourceType")).isEqualTo("BACKUP_RECORD");
+		}
+	}
+
+	@Test
+	void AT50_filterByActionBackupPurgedByAge() {
+		insertAuditRow("BACKUP_PURGED_BY_AGE", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record purged by age olderThanDays=5.", "2026-09-07T10:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"single delete.", "2026-09-07T11:00:00Z");
+
+		String body = listAuditLogs("?action=BACKUP_PURGED_BY_AGE").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body, "items", 0, "action")).isEqualTo("BACKUP_PURGED_BY_AGE");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceType")).isEqualTo("BACKUP_RECORD");
+	}
 }

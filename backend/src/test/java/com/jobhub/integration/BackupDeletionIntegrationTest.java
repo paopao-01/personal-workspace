@@ -18,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -72,6 +73,60 @@ class BackupDeletionIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void AT51_deleteWritesBackupDeletedAuditLog() throws Exception {
+		CreatedBackup b = createBackup("TestPass1234!plus");
+
+		ResponseEntity<String> deleted = delete(b.id, TestFixtures.newKey(), true);
+		assertThat(deleted.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+		// audit_log 新增 1 条 BACKUP_DELETED 记录
+		Map<String, Object> row = jdbc.queryForMap(
+			"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, occurred_at "
+				+ "FROM audit_log WHERE action = 'BACKUP_DELETED' AND resource_id = ?", b.id);
+		assertThat(row.get("resource_type")).isEqualTo("BACKUP_RECORD");
+		assertThat(row.get("action")).isEqualTo("BACKUP_DELETED");
+		assertThat(row.get("resource_id")).isEqualTo(b.id);
+		assertThat(row.get("before_snapshot_json")).isNull();
+		assertThat(row.get("after_snapshot_json")).isNull();
+		assertThat(String.valueOf(row.get("reason"))).contains("delete");
+		assertThat(row.get("occurred_at")).asString().isNotEmpty();
+
+		// 恰好 1 条（不多不少）
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_DELETED'", Integer.class);
+		assertThat(auditCount).isEqualTo(1);
+
+		// 响应不回显审计信息（删除无响应体）
+		assertThat(deleted.getBody()).isNull();
+	}
+
+	@Test
+	void AT51_deleteMissingIdWritesNoAuditLog() {
+		// 删除不存在的 id 返回 404，不写审计（无实际删行）
+		String missingId = "99999999-9999-9999-9999-999999999999";
+		ResponseEntity<String> missing = delete(missingId, TestFixtures.newKey(), true);
+		assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_DELETED' AND resource_id = ?", Integer.class, missingId);
+		assertThat(auditCount).isZero();
+	}
+
+	@Test
+	void AT51_deleteIdempotentReplayWritesNoDuplicateAuditLog() throws Exception {
+		CreatedBackup b = createBackup("TestPass1234!plus");
+		String key = TestFixtures.newKey();
+
+		delete(b.id, key, true);
+		// 相同 Idempotency-Key 重复删除 → 幂等回放 204，不重复写审计
+		ResponseEntity<String> second = delete(b.id, key, true);
+		assertThat(second.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_DELETED' AND resource_id = ?", Integer.class, b.id);
+		assertThat(auditCount).isEqualTo(1);
+	}
+
+	@Test
 	void AT39_deleteRemovesRecordFileAndClearsLastBackupId() throws Exception {
 		CreatedBackup b = createBackup("TestPass1234!plus");
 
@@ -105,6 +160,20 @@ class BackupDeletionIntegrationTest extends AbstractIntegrationTest {
 		Integer passCol = jdbc.queryForObject(
 			"SELECT COUNT(*) FROM pragma_table_info('backup_record') WHERE name = 'passphrase'", Integer.class);
 		assertThat(passCol).isZero();
+	}
+
+	/** AT-51 全量查询可按 action=BACKUP_DELETED 过滤查到单条删除审计记录。 */
+	@Test
+	void AT51_auditLogQueryFiltersByBackupDeleted() throws Exception {
+		CreatedBackup b = createBackup("TestPass1234!plus");
+		delete(b.id, TestFixtures.newKey(), true);
+
+		// GET /audit-logs?action=BACKUP_DELETED 只返回 BACKUP_DELETED 记录
+		String body = restTemplate.getForEntity(url("/audit-logs?action=BACKUP_DELETED"), String.class).getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body, "items", 0, "action")).isEqualTo("BACKUP_DELETED");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceType")).isEqualTo("BACKUP_RECORD");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceId")).isEqualTo(b.id);
 	}
 
 	@Test

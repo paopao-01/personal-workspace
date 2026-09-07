@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -113,6 +114,62 @@ class BackupRetainIntegrationTest extends AbstractIntegrationTest {
 
 		// 清理保留的备份
 		jdbc.update("DELETE FROM backup_record WHERE id IN (?, ?)", b4.id, b5.id);
+	}
+
+	@Test
+	void AT51_keepLastWritesBackupPurgedByCountAuditLogPerDeletedRecord() {
+		CreatedBackup b1 = createBackup("TestPass1234!plus");
+		CreatedBackup b2 = createBackup("TestPass1234!plus");
+		CreatedBackup b3 = createBackup("TestPass1234!plus");
+		CreatedBackup b4 = createBackup("TestPass1234!plus");
+		CreatedBackup b5 = createBackup("TestPass1234!plus");
+
+		// keepLast=2：保留 b5、b4，删除 b3、b2、b1
+		ResponseEntity<String> res = retain(2, TestFixtures.newKey(), true);
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedCount")).isEqualTo(3);
+
+		// audit_log 为每个被删记录追加一条 BACKUP_PURGED_BY_COUNT
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_PURGED_BY_COUNT'", Integer.class);
+		assertThat(auditCount).isEqualTo(3);
+
+		for (String deletedId : new String[] {b1.id, b2.id, b3.id}) {
+			Map<String, Object> row = jdbc.queryForMap(
+				"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, occurred_at "
+					+ "FROM audit_log WHERE action = 'BACKUP_PURGED_BY_COUNT' AND resource_id = ?", deletedId);
+			assertThat(row.get("resource_type")).isEqualTo("BACKUP_RECORD");
+			assertThat(row.get("action")).isEqualTo("BACKUP_PURGED_BY_COUNT");
+			assertThat(row.get("resource_id")).isEqualTo(deletedId);
+			assertThat(row.get("before_snapshot_json")).isNull();
+			assertThat(row.get("after_snapshot_json")).isNull();
+			assertThat(String.valueOf(row.get("reason"))).contains("keepLast=2");
+			assertThat(row.get("occurred_at")).asString().isNotEmpty();
+		}
+		// 保留的 b4/b5 不在审计中
+		for (String keptId : new String[] {b4.id, b5.id}) {
+			Integer keptAudit = jdbc.queryForObject(
+				"SELECT COUNT(*) FROM audit_log WHERE resource_id = ?", Integer.class, keptId);
+			assertThat(keptAudit).isZero();
+		}
+		// 响应不回显审计信息
+		assertThat(res.getBody()).doesNotContain("BACKUP_PURGED_BY_COUNT").doesNotContain("auditLog");
+		// 清理保留的备份
+		jdbc.update("DELETE FROM backup_record WHERE id IN (?, ?)", b4.id, b5.id);
+	}
+
+	@Test
+	void AT51_keepLastNoDeletionWritesNoAuditLog() {
+		// keepLast ≥ 现有总数，无备份被删，不写审计
+		CreatedBackup b = createBackup("TestPass1234!plus");
+		ResponseEntity<String> res = retain(10, TestFixtures.newKey(), true);
+		assertThat(JsonProbe.intVal(res.getBody(), "deletedCount")).isZero();
+		Integer auditCount = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_PURGED_BY_COUNT'", Integer.class);
+		assertThat(auditCount).isZero();
+		Integer bAudit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE resource_id = ?", Integer.class, b.id);
+		assertThat(bAudit).isZero();
 	}
 
 	@Test

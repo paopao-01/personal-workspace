@@ -792,8 +792,36 @@ When 用户传入非法分页参数（page=0 或 pageSize=0 或 pageSize=101）
 Then 返回 400 VALIDATION_ERROR
 ```
 
+### AT-51 备份删除/批量清理审计日志（单条删除/按龄清理/按数量保留清理每被删记录写一条；best-effort 不阻塞、不回显；全量查询可查）
+
+```gherkin
+Given 服务已启动且 backup_record 与 audit_log 已清空，且已生成 1 份加密备份
+When 用户以 DELETE /api/backups/{backupId} 携带 X-Confirm-Permanent-Delete: true 删除该备份（携带唯一 Idempotency-Key）
+Then 返回 204 且 backup_record 该行消失、落盘 .enc 文件被清理
+And audit_log 表新增 1 条记录，resource_type=BACKUP_RECORD、resource_id=被删备份 id、action=BACKUP_DELETED、before/after_snapshot_json 为 null、reason 含可读说明、occurred_at 为非空 UTC ISO
+And 响应不回显审计信息（删除无响应体），passphrase 不落库/不回显/不进日志
+When 无匹配记录删除（如 deleteById 返回 0 的并发场景或空批量集合）
+Then audit_log 不新增任何记录（空操作无可追溯）
+Given 用户已生成 3 份加密备份（created_at 各异，2 份早于阈值，1 份最新）
+When 用户以 DELETE /api/backups?olderThanDays=N 携带 X-Confirm-Permanent-Delete: true 按龄清理（删除 2 份旧备份）
+Then 返回 200 且 deletedCount=2
+And audit_log 表新增 2 条 action=BACKUP_PURGED_BY_AGE 记录，每条 resource_type=BACKUP_RECORD、resource_id 对应一个被删备份 id、reason 含可读说明、occurred_at 为非空 UTC ISO
+And 按龄清理无匹配记录（deletedCount=0）时 audit_log 不新增任何记录
+Given 用户已生成 5 份加密备份（created_at 各异，列表最新优先）
+When 用户以 DELETE /api/backups?keepLast=2 携带 X-Confirm-Permanent-Delete: true 按数量保留（删除除最近 2 条外的 3 份）
+Then 返回 200 且 deletedCount=3
+And audit_log 表新增 3 条 action=BACKUP_PURGED_BY_COUNT 记录，每条 resource_type=BACKUP_RECORD、resource_id 对应一个被删备份 id
+When 用户以相同 Idempotency-Key 重复单条删除或批量清理（幂等回放）
+Then 返回首次缓存的响应（204 或相同摘要），audit_log 不新增重复记录（幂等回放不重新执行、不重复写审计）
+When 用户调用 GET /api/audit-logs?action=BACKUP_DELETED
+Then 返回 200 且 items 仅含 BACKUP_DELETED 记录，每条 resourceType=BACKUP_RECORD
+When 用户调用 GET /api/audit-logs?resourceType=BACKUP_RECORD
+Then 返回 200 且 items 仅含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT 三类记录，每条 resourceType=BACKUP_RECORD
+And 任何时刻数据库不存储 passphrase 或派生密钥，审计记录不含 passphrase
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-50 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-51 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
