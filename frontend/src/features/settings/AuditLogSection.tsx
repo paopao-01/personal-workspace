@@ -14,6 +14,15 @@ import {
 
 const AUDIT_PAGE_SIZE = 20
 
+/** 将 datetime-local 本地时间值转为 ISO-8601 UTC 字符串（后端 from/to 参数用）。空返回空串。 */
+function toUtcIso(localValue: string): string {
+  if (!localValue) return ''
+  // datetime-local 值如 "2026-09-03T10:00"，本地时区；转 Date 取 ISO UTC（Instant.parse 接受的格式）
+  const d = new Date(localValue)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toISOString()
+}
+
 /**
  * 设置页「审计日志」区块：只读分页查询全量 audit_log（跨域通用入口，
  * 承接「孤儿清理审计日志」子区块仅 BACKUP_ORPHAN_CLEANED 的备份域便捷入口）。
@@ -23,15 +32,23 @@ export function AuditLogSection() {
   const [page, setPage] = useState(1)
   const [action, setAction] = useState('')
   const [resourceType, setResourceType] = useState('')
+  const [fromLocal, setFromLocal] = useState('')  // datetime-local 本地时间值
+  const [toLocal, setToLocal] = useState('')      // datetime-local 本地时间值
 
   const query = useAuditLogs({
     page,
     pageSize: AUDIT_PAGE_SIZE,
     action: action || undefined,
     resourceType: resourceType || undefined,
+    from: fromLocal ? toUtcIso(fromLocal) : undefined,
+    to: toLocal ? toUtcIso(toLocal) : undefined,
   })
 
   const onFilterChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setter(event.target.value)
+    setPage(1)
+  }
+  const onDateChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setter(event.target.value)
     setPage(1)
   }
@@ -44,7 +61,7 @@ export function AuditLogSection() {
       <div className="card-body">
         <p className="muted" style={{ marginTop: 0 }}>
           只读追溯关键用户确认与不可覆盖操作：二次投递确认、需求合并/编辑/删除、孤儿文件清理。
-          可按动作类型与资源类型过滤；按时间倒序展示。审计为事后只读视图，不含 passphrase，
+          可按动作类型、资源类型与时间范围过滤；按时间倒序展示。审计为事后只读视图，不含 passphrase，
           省略恒为空的快照字段。
         </p>
         <div className="flex-row" style={{ justifyContent: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -74,6 +91,26 @@ export function AuditLogSection() {
                   <option key={r} value={r}>{r}</option>
                 ))}
               </Select>
+            </Field>
+          </div>
+          <div style={{ minWidth: 200 }}>
+            <Field label="起始时间">
+              <input
+                type="datetime-local"
+                value={fromLocal}
+                onChange={onDateChange(setFromLocal)}
+                aria-label="按起始时间过滤（含边界）"
+              />
+            </Field>
+          </div>
+          <div style={{ minWidth: 200 }}>
+            <Field label="结束时间">
+              <input
+                type="datetime-local"
+                value={toLocal}
+                onChange={onDateChange(setToLocal)}
+                aria-label="按结束时间过滤（含边界）"
+              />
             </Field>
           </div>
           <div className="flex-row" style={{ justifyContent: 'flex-start', alignSelf: 'flex-end' }}>
