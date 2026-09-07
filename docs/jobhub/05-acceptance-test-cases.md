@@ -745,8 +745,29 @@ And 任意端点的响应与日志均不含 passphrase，passphrase 永不落盘
 And 响应不回显 score 或 level 等派生信息（恢复端点仅返回布尔 passphraseResetRecommended）
 ```
 
+### AT-49 孤儿清理审计日志查询（GET /backups/orphans/audit 只读分页查询 BACKUP_ORPHAN_CLEANED）
+
+```gherkin
+Given backup-dir 下存在 2 个无 backup_record 对应的合法 UUID 命名孤儿 .enc 文件
+When 用户在设置页孤儿清理入口二次确认后点击「清理孤儿文件」（POST /api/backups/orphans/clean，携带 X-Confirm-Permanent-Delete: true）
+Then 返回 200 且 deletedFiles=2，audit_log 表新增 2 条 BACKUP_ORPHAN_CLEANED 记录
+When 用户调用 GET /api/backups/orphans/audit?page=1&pageSize=20（只读，不携带确认头与幂等键）
+Then 返回 200 且 items 含 2 条记录，每条 id 为非空 UUID、resourceId 为被删文件名去 .enc 的 UUID、action 为 BACKUP_ORPHAN_CLEANED、reason 含 freedBytes、occurredAt 为非空 UTC ISO
+And total=2、page=1、pageSize=20、totalPages=1
+And 响应不含 passphrase、不含 resourceType（固定省略）、不含 before/afterSnapshotJson（恒 null 省略）
+And 记录按 occurred_at DESC 排序（最新优先）
+When backup-dir 无孤儿且无历史审计记录时调用 GET /api/backups/orphans/audit?page=1
+Then 返回 200 且 items=[]、total=0、totalPages=0
+When 用户恢复一份加密备份（POST /api/backups/restore）且 backup-dir 存在孤儿 .enc 文件
+Then 恢复联动 cleanOrphans 删除孤儿后，GET /api/backups/orphans/audit 同样返回这些删除的 BACKUP_ORPHAN_CLEANED 记录（不区分独立/恢复来源）
+When 用户调用 GET /api/backups/orphans/audit?page=1&pageSize=1
+Then 返回 200 且 items 仅 1 条（最新一条）、total=2、totalPages=2
+When 用户传入非法分页参数（page=0 或 pageSize=0 或 pageSize=101）
+Then 返回 400 VALIDATION_ERROR
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-48 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-49 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

@@ -436,4 +436,21 @@ public class BackupService {
 		System.arraycopy(ct, 0, out, salt.length + iv.length, ct.length);
 		return out;
 	}
+
+	/**
+	 * 分页查询孤儿清理审计日志（只读，仅 action=BACKUP_ORPHAN_CLEANED）。
+	 * 独立 POST /backups/orphans/clean 与恢复联动 cleanOrphans 两类来源均写此 action，本方法不区分来源。
+	 * 排序 occurred_at DESC（最新优先）；无二级索引，走全表扫描（本地单用户量小可接受）。
+	 * 只读：不写 audit_log、不动 backup_record/文件系统。
+	 */
+	public List<AuditLogEntry> listOrphanAudit(int pageSize, int offset) {
+		return auditLogMapper.selectPageByAction(
+				AuditLogEntry.ACTION_BACKUP_ORPHAN_CLEANED, pageSize, offset);
+	}
+
+	/** 孤儿清理审计记录总数（action=BACKUP_ORPHAN_CLEANED），供分页 totalPages 计算。 */
+	public long countOrphanAudit() {
+		return auditLogMapper.countByAction(AuditLogEntry.ACTION_BACKUP_ORPHAN_CLEANED);
+	}
 }
+

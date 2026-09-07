@@ -1038,7 +1038,7 @@ paths:
         passphrase 不参与清理验证（清理即销毁密钥材料）。本端点无需 `X-Confirm-Permanent-Delete` 确认头（恢复非销毁性
         操作，附带清理是 best-effort 防御）；幂等性由 `Idempotency-Key` 保证，重复回放返回首次缓存的完整响应（含
         `orphanCleanSummary`，不重新执行恢复与清理）。恢复联动 `cleanOrphans` 删除的孤儿文件同样按独立孤儿端点语义向
-        `audit_log` 追加审计记录（每删一个一条，best-effort，见 `POST /backups/orphans/clean` 描述）。
+        `audit_log` 追加审计记录（每删一个一条，best-effort，见 `POST /backups/orphans/clean` 描述），事后追溯可经 `GET /backups/orphans/audit` 分页查询（仅返回 `BACKUP_ORPHAN_CLEANED`，不区分独立/恢复来源）。
         恢复成功后对本次提交的 passphrase 在内存做一次强度评估（与创建/武装入口同一算法、同一阈值，详见 §9 强度门槛），
         **当评估未达 strong（score<70，即弱或中）** 时置响应 `passphraseResetRecommended=true`（非阻塞提示，建议用户用强口令新建备份替换；
         系统 无全局 passphrase 可重设，详见状态机）。恢复端点仍豁免强度门槛——评估仅为提示，不拒绝恢复、不返回强度 400
@@ -1083,9 +1083,9 @@ paths:
         不可恢复，不进入最近删除（`trash_item`）。要求携带 `X-Confirm-Permanent-Delete: true` 确认头
         （缺失或非 `true` 返回 400）防误清。`backup-dir` 不存在时返回 `scannedFiles=0`（不报错）。
         幂等性由 `Idempotency-Key` 保证：重复回放返回首次缓存的相同摘要，不重新执行清理、不产生额外副作用。
-        孤儿清理审计日志：每删除一个孤儿文件成功后向既有 `audit_log` 表追加一条记录（仅追加），本版
-        不新增查询/展示端点、不回显到响应，事后追溯直接查 `audit_log` 表。审计写入为 best-effort，
-        失败仅记日志不阻塞清理、不影响摘要计数。
+        孤儿清理审计日志：每删除一个孤儿文件成功后向既有 `audit_log` 表追加一条记录（仅追加），
+        事后追溯可经 `GET /backups/orphans/audit` 分页查询（只读，不需确认头与幂等键）；审计写入为
+        best-effort，失败仅记日志不阻塞清理、不影响摘要计数。
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
         - name: X-Confirm-Permanent-Delete
@@ -1094,6 +1094,29 @@ paths:
           schema: { type: boolean, enum: [true] }
       responses:
         '200': { description: 清理摘要, content: { application/json: { schema: { $ref: '#/components/schemas/BackupOrphanCleanSummary' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /backups/orphans/audit:
+    get:
+      tags: [Backups]
+      summary: 分页查询孤儿清理审计日志（只读，仅 BACKUP_ORPHAN_CLEANED）
+      description: |
+        分页查询 `audit_log` 表中 `action=BACKUP_ORPHAN_CLEANED` 的审计记录，供物理删除孤儿文件操作事后追溯。
+        范围仅孤儿清理审计（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans` 两类来源均写
+        `BACKUP_ORPHAN_CLEANED`，本端点不区分来源；投递确认/需求增删改合并等其他 action 不经本端点暴露）。
+        每条审计记录对应一个被删孤儿 `.enc` 文件：`resourceId` 为文件名去 `.enc` 的 UUID，
+        `reason` 内嵌 `freedBytes=N`（非结构化字段，展示时原样呈现或前端解析），`occurredAt` 为 UTC ISO。
+        按 `occurred_at DESC` 排序（最新优先）。只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete`
+        确认头、不需 `Idempotency-Key`、不动 `backup_record`/文件系统。响应不含 passphrase（审计记录本身不含）。
+        分页参数复用 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）；空表返回 `items=[]`、`total=0`。
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 孤儿清理审计日志分页列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageBackupOrphanAuditEntry' }
         '400': { $ref: '#/components/responses/ValidationError' }
   /data-imports/validate:
     post:
@@ -2780,3 +2803,18 @@ components:
       type: object
       required: [items, page, pageSize, total]
       properties: { items: { type: array, items: { $ref: '#/components/schemas/LearningTask' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
+    BackupOrphanAuditEntry:
+      type: object
+      required: [id, resourceId, action, reason, occurredAt]
+      description: 孤儿清理审计日志单条记录（audit_log 行，action=BACKUP_ORPHAN_CLEANED 的只读视图）
+      properties:
+        id: { type: string, description: 审计记录 id（UUID） }
+        resourceId: { type: string, description: 被删孤儿文件名去 .enc 的 UUID }
+        action: { type: string, description: 固定 BACKUP_ORPHAN_CLEANED }
+        reason: { type: string, description: 含 freedBytes=N 的可读说明，原样呈现 }
+        occurredAt: { type: string, description: 删除发生的 UTC ISO-8601 时间 }
+    PageBackupOrphanAuditEntry:
+      type: object
+      required: [items, page, pageSize, total, totalPages]
+      description: 孤儿清理审计日志分页包装（对齐 PageJob/PageApplication）
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/BackupOrphanAuditEntry' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer }, totalPages: { type: integer } }

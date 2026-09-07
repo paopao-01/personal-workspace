@@ -5,6 +5,9 @@ package com.jobhub.common.audit;
  */
 public class AuditLogEntry {
 
+	/** audit_log.action 取值：孤儿 .enc 文件清理。独立孤儿端点与恢复联动 cleanOrphans 均写此值。 */
+	public static final String ACTION_BACKUP_ORPHAN_CLEANED = "BACKUP_ORPHAN_CLEANED";
+
 	private String id;
 	private String resourceType;
 	private String resourceId;
@@ -62,7 +65,7 @@ public class AuditLogEntry {
 		entry.id = id;
 		entry.resourceType = "BACKUP_FILE";
 		entry.resourceId = fileId;
-		entry.action = "BACKUP_ORPHAN_CLEANED";
+		entry.action = ACTION_BACKUP_ORPHAN_CLEANED;
 		entry.reason = "Orphan .enc file with no matching backup_record, removed by orphan scan cleanup (freedBytes="
 				+ freedBytes + ").";
 		entry.occurredAt = occurredAt;

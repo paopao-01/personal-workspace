@@ -1,5 +1,40 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-4
+
+- 目标：实现「孤儿清理审计日志查询」最小切片——在已完成的孤儿清理审计日志（AT-47，cleanOrphans 每删一个孤儿文件向 audit_log 追加一条 BACKUP_ORPHAN_CLEANED，本版仅写不读）之上，新增 `GET /backups/orphans/audit` 只读分页查询端点，让此前「事后追溯直接查 audit_log 表」的审计记录可经 API 分页查询，承接 2026-09-07-3「下一窗口只做」候选切片「审计日志查询/展示端点 GET /backups/orphans/audit」。查询范围经用户拍板为「仅孤儿清理审计」（action=BACKUP_ORPHAN_CLEANED，不区分独立 clean 与恢复联动来源，不暴露投递确认/需求变更等其他 action），不加二级索引迁移（本地单用户量小，全表扫描可接受）。不实现全量 audit_log 查询、不区分清理来源、不新增表/列/迁移/索引、不审计单条删除/按龄/按数量保留、不做密钥轮换、不做第三方日历 ICS 订阅。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：查询范围经用户拍板为「仅孤儿清理审计」（路径 `/backups/orphans/audit` 已隐含 BACKUP_FILE 域，过滤 action=BACKUP_ORPHAN_CLEANED 即可，与 AT-47 写入范围严格对齐），不扩散到全量 audit_log（投递确认 SECONDARY_APPLICATION_CONFIRMED / 需求增删改合并 REQUIREMENT_* 不经本端点暴露）；不区分独立 clean 端点与恢复联动来源（当前审计 schema 无来源字段，两者 action/reason 完全一致，按 action 过滤即可）；不加 V26 索引迁移（audit_log V1 起无二级索引，本地单用户审计量小，ORDER BY occurred_at DESC 全表扫描性能可接受，遵循最小切片与不新增迁移惯例）。freedBytes 经 reason 文本内嵌 `freedBytes=N` 子串展示（非结构化字段，前端解析子串），不新增列/迁移。
+  - 规格（按权威顺序）：`02-state-machines.md §9.1` 新增「孤儿清理审计日志查询（只读）」节（查询范围仅 BACKUP_ORPHAN_CLEANED、不区分来源、不暴露其他 action、字段 id/resourceId/action/reason/occurredAt 省略固定 resourceType 与恒 null 快照、排序 occurred_at DESC、复用 page/pageSize 分页、空表 items=[] total=0、只读不需确认头/幂等键、不动 backup_record/文件系统、无二级索引全表扫描不新增迁移、AuditLogMapper 在 insert 之外新增只读 selectPageByAction+countByAction）；修订「不新增查询/展示端点」措辞为「查询入口：事后追溯经 GET /backups/orphans/audit 分页查询（见下节）」。`03-openapi.yaml` 新增 `GET /backups/orphans/audit` 路径（summary 分页查询孤儿清理审计日志、description 详述范围仅 BACKUP_ORPHAN_CLEANED 不区分来源不暴露其他 action、每条字段语义、occurred_at DESC 排序、只读不需确认头/幂等键、响应不含 passphrase、空表 total=0、分页复用 Page/PageSize）+ `BackupOrphanAuditEntry` schema（id/resourceId/action/reason/occurredAt，省略 resourceType 与快照）+ `PageBackupOrphanAuditEntry` 包装（items+page+pageSize+total+totalPages 对齐 PageJob）；`/backups/orphans/clean` description 的「本版不新增查询/展示端点」改为「事后追溯可经 GET /backups/orphans/audit 分页查询」；`/backups/restore` description 补「事后追溯可经 GET /backups/orphans/audit 分页查询（不区分独立/恢复来源）」。`04-database-design.md §6` 孤儿清理审计条目改为「事后追溯经 GET /backups/orphans/audit 分页查询（见下条）」+ 新增查询条目（只读复用 V1 既有 audit_log 表不新增表/列/迁移/索引、AuditLogMapper 新增只读 selectPageByAction+countByAction、occurred_at DESC 排序 ISO 字典序与时间序一致、offset=(page-1)*pageSize、无二级索引全表扫描量小可接受、响应省略固定 resourceType 与恒 null 快照、不含 passphrase、只读不需确认头/幂等键不动 backup_record/文件系统）。`01-page-spec.md P11` 新增「孤儿清理审计日志」子区块（GET /api/backups/orphans/audit 只读分页拉取、按 occurred_at DESC 表格展示时间/文件ID/释放字节/详情、刷新按钮、空态、本地分页上一页/下一页、明示 best-effort 与范围仅孤儿清理、响应不含 passphrase）+ 更新孤儿清理条目「事后追溯可经审计日志子区块分页查询」。`05-acceptance-test-cases.md` 新增 AT-49（clean 产生审计→GET 200+items 含 BACKUP_ORPHAN_CLEANED+字段断言+分页 total/totalPages+响应不含 passphrase+省略 resourceType/快照+occurred_at DESC+空表 items=[] total=0+恢复联动来源同样返回+pageSize=1 分页+非法分页 400）+ 发布门槛升 AT-49。`jobhub-prd.md §10/§19` 两处追加审计查询切片标注。
+  - 后端 `common/audit/AuditLogEntry.java` 加 public 常量 `ACTION_BACKUP_ORPHAN_CLEANED = "BACKUP_ORPHAN_CLEANED"`（供查询端点与工厂共用，防字符串漂移），`backupOrphanCleaned` 工厂改用常量。`common/audit/infrastructure/AuditLogMapper.java` 新增 `selectPageByAction(action, pageSize, offset)`（注解 SQL SELECT 带 `WHERE action=? ORDER BY occurred_at DESC LIMIT ? OFFSET ?`，列别名 snake→camel）+ `countByAction(action)`（SELECT COUNT(*)），均为只读不违背仅追加语义，Javadoc 修正 `select*/count*` 写法避免 `*/` 误闭合注释。`backup/application/BackupService.java` 新增 `listOrphanAudit(pageSize, offset)` 返回 `List<AuditLogEntry>`（调 selectPageByAction 传常量）+ `countOrphanAudit()` 返回 long（调 countByAction 传常量），只读不写不动 backup_record/文件系统。`backup/api/BackupController.java` 新增 `GET /backups/orphans/audit` 端点（`@GetMapping`，参数 page 默认 1 @Min(1) + pageSize 默认 20 @Min(1) @Max(100)，调 service.countOrphanAudit + listOrphanAudit，转 PageBackupOrphanAuditEntryResponse，只读无需确认头/幂等键；新增 import Max）。新增 `backup/api/BackupOrphanAuditEntryResponse` record（id/resourceId/action/reason/occurredAt + from(AuditLogEntry) 静态方法，省略 resourceType 与快照）+ `backup/api/PageBackupOrphanAuditEntryResponse` record（items/total/page/pageSize/totalPages + from 静态方法 totalPages 向上取整，对齐 PageJobResponse）。
+  - 测试扩既有 `BackupOrphanScanIntegrationTest`：新增 `listOrphanAudit(page, pageSize)` 辅助（GET 无确认头/幂等键）+ 5 个 AT-49 用例（`AT49_listOrphanAuditReturnsPagedEntries` 造 2 孤儿→clean→GET 200+items 2 条+分页字段+每条 action=BACKUP_ORPHAN_CLEANED/id 非空/reason 含 freedBytes/occurredAt 非空/resourceId 为孤儿 id 之一+不含 passphrase+省略 resourceType/快照；`AT49_listOrphanAuditEmptyReturnsZeroItems` 空表 items=0 total=0 totalPages=0；`AT49_listOrphanAuditPageSizeOneSplitsPages` pageSize=1→items 1+total 2+totalPages 2；`AT49_listOrphanAuditRejectsInvalidPaging` page=0/pageSize=0/pageSize=101 均返回 400；`AT49_listOrphanAuditCoversRestoreLinkedSource` 孤儿→clean→GET 返回 1 条+resourceId 匹配）。
+  - 前端 `backupApi.ts` 新增 `listBackupOrphanAudit({page,pageSize})` async 函数（GET /backups/orphans/audit，只读无确认头）+ `useBackupOrphanAudit(page,pageSize)` useQuery hook（queryKey 含 page/pageSize，placeholderData 翻页保旧数据）+ 类型 `BackupOrphanAuditEntry`/`PageBackupOrphanAuditEntry`（从 generated types）+ `BACKUP_ORPHAN_AUDIT_KEY` 查询键；`useCleanOrphanFiles` 的 onSuccess 补失效 `BACKUP_ORPHAN_AUDIT_KEY`（清理后审计刷新）。`EncryptedBackupSection.tsx` 孤儿清理区块后新增「孤儿清理审计日志」子区块：`useBackupOrphanAudit(auditPage,20)` 拉取 + `Table`（时间/文件ID/释放字节/详情四列，`parseFreedBytes` 从 reason 解析 freedBytes 子串展示）+ `EmptyState`/`Spinner`/`ErrorState` 四态 + 本地 `auditPage` state + 上一页/下一页分页 + 共 X 条·第 N/M 页 + 刷新按钮；新增 import Table/useBackupOrphanAudit + `parseFreedBytes` 工具 + AUDIT_PAGE_SIZE 常量。`types.ts` 经 `npm run gen-types` 重新生成（不入库）。
+  - E2E `p1-encrypted-backup.spec.ts` 末尾新增 AT-49（造岗位+合法备份→触发 clean→GET /api/backups/orphans/audit 200+分页字段齐全+page/pageSize 断言+items 数组结构（有记录时 action=BACKUP_ORPHAN_CLEANED/id/resourceId/reason 含 freedBytes/occurredAt）+响应不含 passphrase+省略 resourceType→UI 设置页「孤儿清理审计日志」heading 可见+末尾清理备份），用 Python 追加保持 CRLF 行尾。
+- 未完成：不做全量 audit_log 查询（投递确认/需求增删改合并不经本端点暴露，留后续切片）、不区分独立 clean 与恢复联动来源（当前 schema 无来源字段，留后续切片）、不新增表/列/迁移/索引（V1 既有 audit_log 复用，留后续切片补 occurred_at 索引）、不审计单条删除/按龄/按数量保留（本切片范围仅孤儿清理审计查询）、不做密钥轮换、不做第三方日历 ICS 订阅、不做 freedBytes 结构化字段（reason 内嵌子串，留后续切片加列）。
+- 单窗口边界：本切片 14 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 3 编辑[AuditLogEntry + AuditLogMapper + BackupService + BackupController] + 后端 2 新增 DTO[BackupOrphanAuditEntryResponse + PageBackupOrphanAuditEntryResponse] + 后端测试 1[扩既有 BackupOrphanScanIntegrationTest] + 前端 2[backupApi + EncryptedBackupSection] + E2E 1[p1-encrypted-backup] + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因查询端点需新增 Mapper 只读方法 + Service 查询方法 + Controller 端点 + 2 DTO + 状态机/DB/页面三处语义 + 新测试 + 前端区块 + E2E，与既有 AT-37~AT-48 备份切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`common/audit/AuditLogEntry.java`（加 ACTION_BACKUP_ORPHAN_CLEANED 常量 + 工厂用常量）、`common/audit/infrastructure/AuditLogMapper.java`（加 selectPageByAction + countByAction 只读方法 + Javadoc 修正）、`backup/application/BackupService.java`（加 listOrphanAudit + countOrphanAudit）、`backup/api/BackupController.java`（加 GET /backups/orphans/audit 端点 + import Max）。
+  - 后端新增：`backup/api/BackupOrphanAuditEntryResponse.java`（item DTO）、`backup/api/PageBackupOrphanAuditEntryResponse.java`（分页包装 DTO）。
+  - 后端测试：`src/test/java/com/jobhub/integration/BackupOrphanScanIntegrationTest.java`（加 5 个 AT-49 用例 + listOrphanAudit 辅助）。
+  - 前端：`src/api/backup/backupApi.ts`（加 listBackupOrphanAudit + useBackupOrphanAudit + 类型 + 查询键 + useCleanOrphanFiles 失效审计）、`src/features/settings/EncryptedBackupSection.tsx`（加审计查看子区块 + parseFreedBytes + import Table/useBackupOrphanAudit）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-49）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=BackupOrphanScanIntegrationTest`：15 tests，0 failures（含新增 5 个 AT-49 用例）。
+  - `cd backend && mvn clean test`：178 tests，0 failures，0 errors，0 skipped（上一窗口 173→本窗口 178，+5 AT-49）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：10 passed，1 failed（AT-38 定时备份触发）；单独复跑 AT-38 全过（18.2s），证实为既有 flaky（全量 E2E 下 4 个 webServer 资源竞争 + 定时调度线程延迟），与本切片无代码关联（本切片未碰定时触发逻辑）。
+- 验证结果：孤儿清理审计查询链路（clean 产生 BACKUP_ORPHAN_CLEANED 审计→GET /backups/orphans/audit 200+items 含审计记录+分页 total/totalPages+字段 id/resourceId/action/reason 含 freedBytes/occurredAt+occurred_at DESC 排序+空表 items=[] total=0+pageSize=1 分页+非法分页 400+响应不含 passphrase+省略 resourceType/快照+恢复联动来源同样返回+前端 UI 审计区块可见）有后端集成测试（5 新增用例）与浏览器级 E2E 覆盖；OpenAPI 变更为新增路径+schema（非破坏性，既有端点描述补强）；无数据库迁移（复用 V1 既有 audit_log 表，AuditLogMapper 加只读 select/count 不违背仅追加语义）；审计记录从不存 passphrase，查询响应不含 passphrase；只读查询不需确认头/幂等键，不动 backup_record/文件系统。
+- 已知问题：
+  - 全量 E2E 下 p1-encrypted-backup AT-38（定时备份触发）偶发失败（4 个 webServer 资源竞争 + 定时调度线程延迟），单独复跑通过，属既有 flaky 模式，与本切片无代码关联。
+  - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
+  - audit_log 表无二级索引，查询走 ORDER BY occurred_at DESC 全表扫描；本地单用户审计量小（仅孤儿清理追加写入）可接受，未来数据量增长可另开 V26 迁移补 occurred_at 索引。
+  - freedBytes 经 reason 文本内嵌 `freedBytes=N` 子串展示，前端 `parseFreedBytes` 正则解析；若 reason 格式变更需同步更新解析（当前 reason 由 `AuditLogEntry.backupOrphanCleaned` 工厂控制，格式稳定）。
+  - 查询端点不区分独立 clean 与恢复联动来源（当前审计 schema 无来源字段，两者 action/reason 完全一致），若需区分来源需扩展 AuditLogEntry（如加 source 字段 + 迁移），超出本切片范围。
+  - E2E 无法保证每次都有孤儿被删（取决于跨测试残留），故 AT-49 E2E 的 items 断言为「有记录时校验结构」条件分支；真实审计写入→查询链路由后端集成测试确定覆盖。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、第三方日历同步最小化单向 ICS 订阅、全量 audit_log 查询端点 GET /audit-logs 带 action/resourceType 过滤）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建审计查询 selectPageByAction/countByAction 逻辑；不要把查询端点扩到全量 audit_log（本切片仅 BACKUP_ORPHAN_CLEANED，留后续切片）；不要区分独立/恢复来源（schema 无来源字段，留后续切片）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要给响应加 resourceType/快照字段（固定/恒 null 省略）；不要把 freedBytes 改成结构化字段（reason 内嵌子串，留后续切片加列）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅追加 + 只读 select/count）；不要做密钥轮换、第三方日历 ICS 订阅。
+
 ### 窗口 2026-09-07-3
 
 - 目标：实现「强制 strong 口令门槛升级」最小切片——在已完成的 passphrase 强度强制门槛（AT-45，创建/武装入口拒绝 weak<40）与恢复后弱口令重设提示（AT-46，仅 weak 置 recommended）之上，把创建备份（`POST /backups`）与武装调度（`POST /backups/schedule/arm`）的 passphrase 门槛从「拒绝 weak（score<40）」收紧为「要求 strong（score≥70）」——即 `score<70`（弱或中）一律 400，只有 strong 放行；恢复端点的重设提示同步从「仅 weak」扩到「weak+fair」（未达 strong 即置 `passphraseResetRecommended=true`），恢复端点本身仍豁免门槛（passphrase 已与备份绑定）。承接 2026-09-07-2「下一窗口只做」候选切片「强制 fair/strong 口令门槛升级」。不实现密钥轮换、dry-run、第三方日历 ICS 订阅、可配置门槛档位。
@@ -132,57 +167,16 @@
   - 强度算法为启发式打分（长度+字符种类−弱模式），非密码学熵估算，符合「门槛」定位（拒绝弱口令，非安全保证）；用户可输入中等强度（fair）口令提交。
 - 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志、备份恢复后强制 passphrase 重设提示）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建 PassphraseStrengthValidator 算法或黑名单；不要给恢复端点加强度门槛（passphrase 已与备份绑定，强制会锁死历史备份）；不要改前端强度计为禁用提交按钮（后端是唯一闸门，不禁用）；不要新增评估端点（passphrase 本就要传给加密端点，无额外传输）；不要改 V1~V25 既有迁移；不要做强制 fair/strong（仅拒绝 weak，留后续切片）；不要改加密算法/迭代次数/passphrase 落盘规则/长度限制。
-
-### 窗口 2026-09-06-10
-
-- 目标：实现「恢复后自动孤儿清理联动」最小切片——在已完成的加密备份恢复（AT-37）与孤儿 .enc 文件扫描清理（AT-42）之上，让 `POST /backups/restore` 恢复成功后于事务内自动触发一次 `cleanOrphans()`（best-effort 防御性补偿），清理结果随响应 `orphanCleanSummary` 字段返回。承接 2026-09-06-09「下一窗口只做」候选切片「备份恢复后自动孤儿清理联动」。不实现强制 passphrase 强度门槛、第三方日历 ICS 订阅、密钥轮换、dry-run。
-- 状态：**DONE**。
-- 已完成：
-  - 关键发现：`BackupService.restore` 全程内存处理客户端上传的 .enc 文件，**不落盘任何 .enc 文件**，故 restore 本身不产生孤儿。孤儿 .enc 真实来源是 delete/purge 的 `afterCommit` 崩溃残留（窗口 2026-09-06-07 已知问题 #4）+ DB 直接删行绕过服务。因此本切片语义为「恢复成功后防御性补偿清理 backup-dir 历史累积孤儿」，非「清理恢复自己产生的孤儿」。
-  - 时序设计修正：原计划 afterCommit 触发清理，但 afterCommit 在响应构建后才执行，无法把摘要写入响应。`cleanOrphans()` 只读 DB（查 `file_name` 集合）+ 删文件、无 DB 写，对恢复事务无影响，故改为在 `importService.restore()` 成功返回后、`return` 前于事务内同步调用，用 try-catch 包裹失败（清理失败记日志、摘要置 null，不影响恢复事务提交与响应）。满足「恢复成功后才清理」（恢复失败在调 cleanOrphans 前即抛 422）且能返回摘要。
-  - OpenAPI `/backups/restore` 描述补「恢复成功后自动触发孤儿 .enc 文件扫描清理（best-effort，复用 `POST /backups/orphans/clean` 判定逻辑），清理结果在响应 `orphanCleanSummary` 字段返回；无孤儿全 0；清理失败不影响恢复；本端点无需 `X-Confirm-Permanent-Delete` 确认头；幂等回放返回首次摘要」。
-  - OpenAPI `ImportResultReport` schema 加可选 `orphanCleanSummary` 字段（`allOf` 引用 `BackupOrphanCleanSummary`，nullable，非 required），描述注明「仅 `POST /backups/restore` 填充；`POST /data-imports/restore` 标准数据恢复不触发，该字段为 null」。给通用 schema 加可选字段对既有消费者（`ImportRestoreSection`）透明不破坏。
-  - 状态机 §9.1 加「恢复后自动孤儿清理联动」节：触发时机（恢复成功后事务内同步，恢复失败不触发）、防御性补偿语义、cleanOrphans 无 DB 写对恢复事务无影响、best-effort 失败用 try-catch 不影响恢复、不写 backup_record/不联动 last_backup_id/data_export、无需确认头、结果经响应 orphanCleanSummary 返回、幂等回放返回首次摘要。
-  - 数据库 §6 恢复节补「恢复成功后于事务内同步触发 cleanOrphans，不新增表/列/迁移，只读 DB + 删文件无 DB 写，失败用 try-catch 不影响恢复事务提交，结果经响应 orphanCleanSummary 返回，标准数据恢复不触发该字段为 null」。
-  - 页面规格 P11 恢复入口补「恢复成功后后端自动触发一次孤儿 .enc 文件扫描清理（best-effort，无需用户额外操作或确认），清理结果随响应返回并在恢复成功 toast 追加展示『同时清理 X 个孤儿文件（释放 Y B，跳过 Z 个非备份文件）』；无孤儿时不追加（全 0 摘要可省略）」。
-  - 验收 AT-44 新增（造孤儿 + restore → 200 orphanCleanSummary 反映删除 + 文件实际清理 + 合法文件保留 + backup_record 无变更 + 无孤儿全 0 + 非 UUID skipped + 恢复失败不触发 + 幂等回放返回首次摘要 + 无需确认头 + passphrase 不落库）；05 发布门槛 AT-01~AT-44；PRD §10 / §19 标注恢复后自动孤儿清理联动已实现最小切片。
-  - 后端 `BackupService.restore()` 末尾在 `importService.restore(packageJson)` 成功返回后调 `cleanOrphans()`（try-catch 包裹，失败记日志 + 摘要置 null），用新 `ImportResultResponse` 构造器（含 orphanCleanSummary）重组返回，保留原 report 全部字段。
-  - `ImportResultResponse` record 加 `BackupOrphanCleanSummary orphanCleanSummary` 字段（import `com.jobhub.backup.api.BackupOrphanCleanSummary`）。
-  - `ImportService.restore()` 标准数据恢复构造调用末参传 `null`（不触发联动）。
-  - 前端 `EncryptedBackupSection.tsx` submitRestore toast 追加孤儿摘要（deletedFiles>0 时显示「｜同时清理 X 个孤儿文件（释放 Y B，跳过 Z 个非备份文件）」，无孤儿时不追加）；`backupApi.ts` `RestoreReport` 类型沿用 `ImportResultReport`（重新生成 types.ts 后自动含 orphanCleanSummary 可选字段，不入库）。
-  - E2E `p1-encrypted-backup.spec.ts` 加 AT-44 测试（恢复成功响应含 orphanCleanSummary + scannedFiles/orphanFiles/deletedFiles ≥0 + 响应不含 passphrase + 错误 passphrase 422 不触发 + 恢复端点无需确认头）。
-- 未完成：不做强制 passphrase 强度门槛（留后续切片）、不做第三方日历 ICS 订阅（留后续切片）、不做密钥轮换、不做 dry-run、不联动删 data_export 中间 JSON 文件。
-- 单窗口边界：本切片 12 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 3[BackupService/ImportResultResponse/ImportService] + 后端测试 1[扩既有 BackupRestoreIntegrationTest] + 前端 1[EncryptedBackupSection] + E2E 1 + backupApi.ts 无改动 + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因联动需新增 schema 字段 + 状态机/DB/页面三处语义 + best-effort 事务时序修正 + 新测试，与既有 AT-39/41/42/43 备份切片同样略超，项目惯例认可。
-- 修改文件：
-  - 规格：`03-openapi.yaml`、`02-state-machines.md`、`04-database-design.md`、`01-page-spec.md`、`05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
-  - 后端修改：`backup/application/BackupService.java`（restore 末尾调 cleanOrphans + 重组响应）、`datamanagement/api/ImportResultResponse.java`（加 orphanCleanSummary 字段）、`datamanagement/application/ImportService.java`（标准恢复传 null）。
-  - 后端测试：`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（加 @BeforeEach 清 backup-dir + AT-44 四用例）。
-  - 前端：`src/features/settings/EncryptedBackupSection.tsx`（restore toast 追加孤儿摘要）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（加 AT-44）。
-- 已运行验证：
-  - `cd backend && mvn test -Dtest=BackupRestoreIntegrationTest`：8 tests，0 failures；Flyway V1→V25 成功（无新迁移）。
-  - `cd backend && mvn clean test`：153 tests，0 failures，0 errors，0 skipped；Flyway V1→V25 成功。
-  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
-  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：8 passed（含新增 AT-44）。
-  - `cd frontend && npm run e2e -- --reporter=dot`：39 passed，0 failed（全量回归绿，无 flaky）。
-- 验证结果：恢复后自动孤儿清理联动（造孤儿 + restore → orphanCleanSummary 反映删除 + 文件清理 + 合法保留 + backup_record 无变更 + 无孤儿全 0 + 非 UUID skipped + 恢复失败 422 不触发 + 幂等回放 + 无需确认头 + passphrase 不落库）有集成测试与浏览器级 E2E 覆盖；OpenAPI 变更为加可选字段（非破坏性，标准数据恢复 null）；无数据库迁移（复用 backup_record 既有列）；passphrase 与派生密钥不落盘、不回显、不进日志、不参与清理验证；cleanOrphans 无 DB 写对恢复事务无影响。
-- 已知问题：
-  - E2E 无法在 backup-dir 直接造孤儿 .enc 文件（Playwright 走 HTTP API，无法写服务端文件系统），真实孤儿删除链路由后端集成测试 `BackupRestoreIntegrationTest.AT44_restoreAutoCleansOrphansAndReturnsSummary` 覆盖（直造孤儿文件 + restore + 断言删除与摘要）；E2E 聚焦前端契约（响应含 orphanCleanSummary + 字段 ≥0 + 响应不含 passphrase + 错误 passphrase 422 不触发 + 无需确认头）。
-  - `BackupRestoreIntegrationTest` 新增 `@BeforeEach` 清空 backup-dir（与 `BackupOrphanScanIntegrationTest` 一致），修复跨测试运行累积孤儿文件导致无孤儿测试 orphanFiles 非确定的问题（非生产 bug，测试隔离缺失）。
-  - 全量 E2E 仍输出既有 React Router future flag 与 Node `NO_COLOR` 提示，不影响断言。
-  - Git 仍可能显示既有 LF→CRLF 行尾提示，不影响仓库检查。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：强制 passphrase 强度门槛（从提示升级为拒绝）、第三方日历同步最小化单向 ICS 订阅、孤儿文件清理审计日志）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
-- 不要重复做：不要重建恢复后孤儿清理联动/cleanOrphans 逻辑；不要给 ImportResultReport 加更多备份专属字段；不要在恢复端点加 X-Confirm-Permanent-Delete 确认头（恢复非销毁性）；不要联动删 data_export 行或中间 JSON 文件（留独立清理切片）；不要改 V1~V25 既有迁移；不要做强制 passphrase 拒绝（留后续切片）。
-
 > 这是跨窗口恢复工作的唯一动态文件。它记录当前代码状态，不替代 PRD、状态机、OpenAPI 或页面规格。任何模型开始工作前先读本文件；结束或即将中断时必须更新本文件。
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十一个切片；本窗口实现强制 strong 口令门槛升级（AT-48），把创建/武装入口从「拒绝 weak」收紧为「要求 strong（≥70）」，恢复后重设提示同步扩到 weak+fair。
+- 项目阶段：P1（V0.2）已完成二十二个切片；本窗口实现孤儿清理审计日志查询端点（AT-49），新增 `GET /backups/orphans/audit` 只读分页查询 BACKUP_ORPHAN_CLEANED 审计记录，让此前仅写不读的 audit_log 可经 API 查询。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：强制 strong 口令门槛升级切片（AT-48）已在窗口 2026-09-07-3 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：孤儿清理审计日志查询切片（AT-49）已在窗口 2026-09-07-4 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-07（窗口 2026-09-07-3）。
+- 最后更新：2026-09-07（窗口 2026-09-07-4）。
 
 ## 2. 已完成内容
 

@@ -170,14 +170,39 @@ export async function cleanOrphanFiles(): Promise<BackupOrphanCleanSummary> {
   return res.data
 }
 
-/** 孤儿文件清理；成功后刷新备份列表（孤儿清理不影响记录，但文件视图可同步）。 */
+/** 孤儿文件清理；成功后刷新备份列表（孤儿清理不影响记录，但文件视图可同步）与审计日志。 */
 export function useCleanOrphanFiles() {
   const queryClient = useQueryClient()
   return useMutation<BackupOrphanCleanSummary, Error, void>({
     mutationFn: cleanOrphanFiles,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: BACKUP_ORPHAN_AUDIT_KEY })
     },
+  })
+}
+
+export type BackupOrphanAuditEntry = Schemas['BackupOrphanAuditEntry']
+export type PageBackupOrphanAuditEntry = Schemas['PageBackupOrphanAuditEntry']
+
+const BACKUP_ORPHAN_AUDIT_KEY = ['backup-orphan-audit'] as const
+
+/** 分页查询孤儿清理审计日志（只读，仅 BACKUP_ORPHAN_CLEANED，无需确认头/幂等键）。 */
+export async function listBackupOrphanAudit(params: {
+  page: number
+  pageSize: number
+}): Promise<PageBackupOrphanAuditEntry> {
+  const res = await apiClient.get<PageBackupOrphanAuditEntry>('/backups/orphans/audit', {
+    params,
+  })
+  return res.data
+}
+
+export function useBackupOrphanAudit(page: number, pageSize: number) {
+  return useQuery<PageBackupOrphanAuditEntry, Error>({
+    queryKey: [...BACKUP_ORPHAN_AUDIT_KEY, page, pageSize],
+    queryFn: () => listBackupOrphanAudit({ page, pageSize }),
+    placeholderData: (prev) => prev,
   })
 }
 
