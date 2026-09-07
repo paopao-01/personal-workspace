@@ -183,13 +183,13 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
 })
 
 /**
- * AT-46 恢复后弱口令重设提示：恢复成功后后端内存评估 passphrase，仅弱（score<40）置
- * passphraseResetRecommended=true 提示用户用强口令新建备份替换；强/中为 false。
- * 弱口令创建已被门槛拒绝（无法经 API 造弱口令备份），故 true 分支由后端集成测试覆盖；
- * E2E 聚焦契约：强口令恢复 → passphraseResetRecommended=false、toast 不追加弱口令提示、
+ * AT-46 恢复后弱/中口令重设提示：恢复成功后后端内存评估 passphrase，未达 strong（score<70，即弱或中）置
+ * passphraseResetRecommended=true 提示用户用强口令新建备份替换；强为 false。
+ * 弱/中口令创建已被门槛拒绝（无法经 API 造弱/中口令备份），故 true 分支由后端集成测试覆盖；
+ * E2E 聚焦契约：强口令恢复 → passphraseResetRecommended=false、toast 不追加重设提示、
  * 响应不回显 passphrase/score/level。
  */
-test('AT-46 restore with strong passphrase returns recommended=false and no weak hint', async ({ page, request }) => {
+test('AT-46 restore with strong passphrase returns recommended=false and no reset hint', async ({ page, request }) => {
   const suffix = Date.now()
   const passphrase = `StrongPass42!${suffix}` // 强口令（含大小写/数字/符号，长度 ≥16）
 
@@ -243,9 +243,10 @@ test('AT-46 restore with strong passphrase returns recommended=false and no weak
   })
   await restorePassphraseInput.fill(passphrase)
   await page.getByRole('button', { name: '恢复备份' }).click()
-  // 恢复成功 toast 出现，且不含「偏弱」字样
+  // 恢复成功 toast 出现，且不含重设提示字样
   const toast = page.locator('[role="status"], [role="alert"]').filter({ hasText: '恢复完成' })
   await expect(toast).toBeVisible()
+  await expect(toast).not.toContainText('未达强')
   await expect(toast).not.toContainText('偏弱')
   // 输入框清空
   await expect(restorePassphraseInput).toHaveValue('')
@@ -316,9 +317,9 @@ test('AT-39 backup delete removes record, file and clears lastBackupId', async (
 })
 
 /**
- * AT-40 passphrase 强度评估：纯前端提示，弱口令提交由后端拒绝。
- * 弱口令显示「弱」+建议（含「弱口令将无法提交」）；强口令升「强」且建议消失；
- * 弱口令提交被后端返 400 拒绝（不禁用按钮，后端是唯一闸门）。
+ * AT-40 passphrase 强度评估：纯前端提示，未达强口令提交由后端拒绝。
+ * 弱口令显示「弱」+建议（含「未达强口令将被拒绝」）；中口令显示「中」同样含拒绝提示；
+ * 强口令升「强」且建议消失；弱口令提交被后端返 400 拒绝（不禁用按钮，后端是唯一闸门）。
  */
 test('AT-40 passphrase strength meter shows level and weak rejected by backend', async ({ page, request }) => {
   const suffix = Date.now()
@@ -339,23 +340,28 @@ test('AT-40 passphrase strength meter shows level and weak rejected by backend',
 
   const passphraseInput = page.getByLabel('备份 passphrase')
 
-  // 1. 弱口令（纯重复字符）→ 显示「弱」并给出建议，含「弱口令将无法提交」提示
+  // 1. 弱口令（纯重复字符）→ 显示「弱」并给出建议，含「未达强口令将被拒绝」提示
   await passphraseInput.fill('aaaaaaaa')
   await expect(page.getByText('强度：弱')).toBeVisible()
   await expect(page.locator('.strength-suggestions li').first()).toBeVisible()
-  await expect(page.getByText('弱口令将无法提交')).toBeVisible()
+  await expect(page.getByText('未达强口令将被拒绝')).toBeVisible()
 
   // 2. 常见弱口令黑名单 → 仍为「弱」并提示
   await passphraseInput.fill('password123')
   await expect(page.getByText('强度：弱')).toBeVisible()
 
-  // 3. 强口令（长度≥12 + 大小写 + 数字 + 符号）→ 升「强」且建议列表消失
+  // 3. 中口令（无符号，score 40–69，未达 strong）→ 显示「中」，仍含拒绝提示
+  await passphraseInput.fill('CorrectHorse42')
+  await expect(page.getByText('强度：中')).toBeVisible()
+  await expect(page.getByText('未达强口令将被拒绝')).toBeVisible()
+
+  // 4. 强口令（长度≥12 + 大小写 + 数字 + 符号）→ 升「强」且建议列表消失
   const strongPw = 'CorrectHorse42!battery'
   await passphraseInput.fill(strongPw)
   await expect(page.getByText('强度：强')).toBeVisible()
   await expect(page.locator('.strength-suggestions')).toHaveCount(0)
 
-  // 4. 弱口令（满足 8–256 位但 score<40）提交被后端拒绝：按钮不禁用，点击后返回 400
+  // 5. 弱口令（满足 8–256 位但 score<70）提交被后端拒绝：按钮不禁用，点击后返回 400
   await passphraseInput.fill('aaaaaaaa')
   await expect(page.getByRole('button', { name: '立即加密备份' })).toBeEnabled()
   await page.getByRole('button', { name: '立即加密备份' }).click()
@@ -751,10 +757,10 @@ test('AT-43 backup keep last N retains newest and deletes the rest', async ({ pa
 })
 
 /**
- * AT-45 passphrase 强度强制门槛：创建与武装对弱口令返回 400（score<40）；
+ * AT-45 passphrase 强度强制门槛（要求 strong）：创建与武装对弱/中口令返回 400（score<70）；
  * 恢复端点豁免（passphrase 已与备份绑定，解密失败按 422，不触发强度门槛）。
  */
-test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ request }) => {
+test('AT-45 passphrase strength gate rejects weak and fair on create and arm', async ({ request }) => {
   const suffix = Date.now()
 
   // 造数：一个岗位
@@ -768,7 +774,7 @@ test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ r
   })
   expect(jobRes.ok()).toBe(true)
 
-  // 1. 弱口令（纯重复）创建备份 → 400，含 score 与 ≥40
+  // 1. 弱口令（纯重复）创建备份 → 400，含 score 与 ≥70
   const weakCreate = await request.post('/api/backups', {
     headers: { 'Idempotency-Key': `e2e-at45-weak-create-${crypto.randomUUID()}` },
     data: { passphrase: 'aaaaaaaa' },
@@ -777,7 +783,7 @@ test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ r
   const weakBody = await weakCreate.json()
   expect(weakBody.code).toBe('VALIDATION_ERROR')
   expect(JSON.stringify(weakBody)).toContain('score=')
-  expect(JSON.stringify(weakBody)).toContain('≥40')
+  expect(JSON.stringify(weakBody)).toContain('≥70')
 
   // 2. 弱口令武装 → 400
   const weakArm = await request.post('/api/backups/schedule/arm', {
@@ -788,33 +794,52 @@ test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ r
   const weakArmBody = await weakArm.json()
   expect(weakArmBody.code).toBe('VALIDATION_ERROR')
 
-  // 3. 中等 passphrase 创建 → 201
+  // 3. 中等 passphrase 创建 → 400（AT-48：中口令同样被拒，要求 strong）
   const fairCreate = await request.post('/api/backups', {
     headers: { 'Idempotency-Key': `e2e-at45-fair-create-${crypto.randomUUID()}` },
     data: { passphrase: 'CorrectHorse42' },
   })
-  expect(fairCreate.status()).toBe(201)
-  const fairCreated = await fairCreate.json()
-  expect(JSON.stringify(fairCreated)).not.toContain('CorrectHorse42')
+  expect(fairCreate.status()).toBe(400)
+  const fairCreateBody = await fairCreate.json()
+  expect(fairCreateBody.code).toBe('VALIDATION_ERROR')
+  expect(JSON.stringify(fairCreateBody)).toContain('≥70')
 
-  // 4. 中等 passphrase 武装 → 200 armed=true
+  // 4. 中等 passphrase 武装 → 400，armed 仍 false（未达 strong 一律拒）
   const fairArm = await request.post('/api/backups/schedule/arm', {
     headers: { 'Idempotency-Key': `e2e-at45-fair-arm-${crypto.randomUUID()}` },
     data: { passphrase: 'CorrectHorse42' },
   })
-  expect(fairArm.status()).toBe(200)
+  expect(fairArm.status()).toBe(400)
   const fairArmBody = await fairArm.json()
-  expect(fairArmBody.armed).toBe(true)
-  expect(JSON.stringify(fairArmBody)).not.toContain('CorrectHorse42')
+  expect(fairArmBody.code).toBe('VALIDATION_ERROR')
 
-  // 5. 恢复端点豁免门槛：弱口令恢复不返回 400（强度门槛），而是 422（解密失败）
-  const downloadRes = await request.get(`/api/backups/${fairCreated.id}/download`)
+  // 5. 强 passphrase 创建 → 201
+  const strongCreate = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at45-strong-create-${crypto.randomUUID()}` },
+    data: { passphrase: 'CorrectHorse42!battery' },
+  })
+  expect(strongCreate.status()).toBe(201)
+  const strongCreated = await strongCreate.json()
+  expect(JSON.stringify(strongCreated)).not.toContain('CorrectHorse42!battery')
+
+  // 6. 强 passphrase 武装 → 200 armed=true
+  const strongArm = await request.post('/api/backups/schedule/arm', {
+    headers: { 'Idempotency-Key': `e2e-at45-strong-arm-${crypto.randomUUID()}` },
+    data: { passphrase: 'CorrectHorse42!battery' },
+  })
+  expect(strongArm.status()).toBe(200)
+  const strongArmBody = await strongArm.json()
+  expect(strongArmBody.armed).toBe(true)
+  expect(JSON.stringify(strongArmBody)).not.toContain('CorrectHorse42!battery')
+
+  // 7. 恢复端点豁免门槛：弱口令恢复不返回 400（强度门槛），而是 422（解密失败）
+  const downloadRes = await request.get(`/api/backups/${strongCreated.id}/download`)
   expect(downloadRes.ok()).toBe(true)
   const encBuffer = await downloadRes.body()
   const weakRestore = await request.post('/api/backups/restore', {
     headers: { 'Idempotency-Key': `e2e-at45-weak-restore-${crypto.randomUUID()}` },
     multipart: {
-      file: { name: fairCreated.fileName, mimeType: 'application/octet-stream', buffer: encBuffer },
+      file: { name: strongCreated.fileName, mimeType: 'application/octet-stream', buffer: encBuffer },
       passphrase: 'aaaaaaaa',
     },
   })
@@ -823,8 +848,8 @@ test('AT-45 passphrase strength gate rejects weak on create and arm', async ({ r
   const weakRestoreBody = await weakRestore.json()
   expect(JSON.stringify(weakRestoreBody)).not.toContain('score=')
 
-  // 6. 清理本次生成的备份
-  await request.delete(`/api/backups/${fairCreated.id}`, {
+  // 8. 清理本次生成的备份
+  await request.delete(`/api/backups/${strongCreated.id}`, {
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })

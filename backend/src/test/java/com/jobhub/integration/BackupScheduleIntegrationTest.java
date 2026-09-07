@@ -32,7 +32,7 @@ class BackupScheduleIntegrationTest extends AbstractIntegrationTest {
 	@Autowired
 	private BackupScheduleMapper scheduleMapper;
 
-	private static final String PASSPHRASE = "TestPass1234";
+	private static final String PASSPHRASE = "TestPass1234!plus";
 
 	@BeforeEach
 	void disarmBeforeEach() {

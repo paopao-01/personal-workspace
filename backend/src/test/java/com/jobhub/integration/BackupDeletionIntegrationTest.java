@@ -73,7 +73,7 @@ class BackupDeletionIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void AT39_deleteRemovesRecordFileAndClearsLastBackupId() throws Exception {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 
 		// 将 last_backup_id 指向该备份，验证删除后软引用被置空
 		scheduleMapper.updateLastRun("2026-09-06T00:00:00Z", "SUCCESS", null, b.id);
@@ -116,7 +116,7 @@ class BackupDeletionIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void deleteWithoutConfirmHeaderReturns400() throws Exception {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		ResponseEntity<String> bad = delete(b.id, TestFixtures.newKey(), false);
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		// 记录与文件仍在（未删除）
@@ -127,7 +127,7 @@ class BackupDeletionIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void deleteIsIdempotentWithSameKey() throws Exception {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		String key = TestFixtures.newKey();
 
 		ResponseEntity<String> first = delete(b.id, key, true);

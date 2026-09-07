@@ -1,5 +1,36 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-07-3
+
+- 目标：实现「强制 strong 口令门槛升级」最小切片——在已完成的 passphrase 强度强制门槛（AT-45，创建/武装入口拒绝 weak<40）与恢复后弱口令重设提示（AT-46，仅 weak 置 recommended）之上，把创建备份（`POST /backups`）与武装调度（`POST /backups/schedule/arm`）的 passphrase 门槛从「拒绝 weak（score<40）」收紧为「要求 strong（score≥70）」——即 `score<70`（弱或中）一律 400，只有 strong 放行；恢复端点的重设提示同步从「仅 weak」扩到「weak+fair」（未达 strong 即置 `passphraseResetRecommended=true`），恢复端点本身仍豁免门槛（passphrase 已与备份绑定）。承接 2026-09-07-2「下一窗口只做」候选切片「强制 fair/strong 口令门槛升级」。不实现密钥轮换、dry-run、第三方日历 ICS 订阅、可配置门槛档位。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：门槛语义经用户拍板为「强制 strong（≥70）」（拒绝 weak + fair，只放行 strong，是与现状有实质行为差异的唯一收紧）；恢复端点的重设提示（AT-46）同步扩到 weak+fair（与创建端「要求 strong」一致，消除 fair 在创建端被拒、恢复端不提示 fair 的不对称）。恢复端点本身仍豁免门槛（passphrase 已与备份绑定，强制会锁死门槛升级前用弱/中口令创建的历史备份），只调整提示触发范围。不实现可配置门槛档位（reject-weak/reject-fair/reject-below-strong），超出最小切片边界。
+  - 规格（按权威顺序）：`02-state-machines.md §9` 门槛措辞从「`score<40`（弱）返回 400 … `≥40`」改为「**要求 strong**：`score<70`（即弱或中）返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥70` … 只有 `score≥70`（强）放行」；恢复后重设提示节从「**仅当评估为弱（`score<40`）** 时置 `passphraseResetRecommended=true` … 强/中口令为 `false`」改为「**当评估未达 strong（`score<70`，即弱或中）** 时置 `passphraseResetRecommended=true` … 强口令为 `false`」，「重设」语义从「用强口令新建备份替换旧弱口令备份」改为「替换旧弱/中口令备份」，新建时走强度门槛强制 `score≥70`。`03-openapi.yaml`：`POST /backups` summary 改「未达强口令拒绝」、description 改「score<70（即弱或中）返回 400 … 只有 score≥70（强）放行」；`POST /backups/schedule/arm` summary 改「未达强口令拒绝」、description 同改；`POST /backups/restore` description 的 recommended 触发从「**仅当评估为弱（score<40）**」改为「**当评估未达 strong（score<70，即弱或中）**」；`BackupCreateRequest`/`BackupArmRequest` passphrase 字段 description 改「强度门槛（强制，要求 strong）：score<70（弱或中）返回 400」。`04-database-design.md §6` 门槛条目改「强制，要求 strong … score<70（弱或中）返回 400 … 只有 score≥70（强）放行」；恢复后重设提示条目改「未达 strong（score<70，即弱或中）置 `passphraseResetRecommended=true` … 强为 false」。`01-page-spec.md P11` 强度评估段从「弱口令提交被后端拒绝」改为「未达强口令提交被后端拒绝」，门槛描述「创建备份与武装调度对 `score<70`（即弱或中）的口令返回 400」，前端文案从「弱口令将无法提交」改为「未达强口令将被拒绝（需 ≥70）」。`05-acceptance-test-cases.md`：AT-45 标题与正文修订（门槛从「拒绝弱口令」改为「拒绝弱/中口令，要求 strong」，中口令断言改 400+≥70、只强口令放行）；AT-46 标题与正文修订（从「仅弱置 recommended」改为「未达 strong 置 recommended」，新增中口令恢复→recommended=true 用例，强口令 false，toast 文案改「未达强」）；新增 AT-48（中口令创建 400+≥70+不落盘、中口令武装 400+armed false、强口令创建 201/武装 200、中口令恢复 recommended=true、恢复仍豁免、passphrase 不落盘/不回显）；发布门槛升 AT-48。`jobhub-prd.md §10/§19` 两处门槛与提示标注改为要求 strong + 扩 fair。
+  - 后端 `PassphraseStrengthValidator.java`：`requireAcceptable()` 把拒绝条件从 `r.level() == Level.WEAK` 改为 `r.level() != REQUIRED_LEVEL`（`REQUIRED_LEVEL = Level.STRONG`，弱与中均拒），message 阈值 `≥40`→`≥70`、补「（要求强口令）」；Javadoc 更新为「要求 strong」。`BackupService.create()` 注释 `score<40`→`score<70`；`BackupService.restore()` 的 `resetRecommended` 条件从 `== Level.WEAK` 改为 `!= Level.STRONG`（弱或中都置 true）。`BackupScheduleService.arm()` Javadoc `score<40`→`score<70`（逻辑不动，复用 `requireAcceptable`）。算法/阈值/黑名单不变（仍是长度分上限 35 + 字符种类分上限 45 − 弱模式扣分，阈值 weak<40/fair 40–69/strong≥70），只收紧入口拒绝级别。
+  - 前端 `passphraseStrength.ts` 头注释从「对 score<40 的弱口令返回 400」改为「要求 strong（score≥70），score<70（即弱或中）返回 400」；`PassphraseStrengthMeter.tsx` 拒绝警告行从仅 `level === 'weak'` 扩到 `level !== 'strong'`（fair 也显示），文案从「弱口令将无法提交（后端拒绝）」改为「未达强口令将被拒绝（后端要求 ≥70，需增强至强）」；`EncryptedBackupSection.tsx` 恢复 toast 追加文案从「此备份口令偏弱」改为「此备份口令未达强」。
+  - 测试扩既有：`BackupPassphraseStrengthIntegrationTest` 原有 `createAcceptsFairAndStrong`/`armAcceptsFairAndStrong` 拆为 `createAcceptsStrong`/`armAcceptsStrong`（只 strong 放行）+ 新增 `AT48_createRejectsFairPassphrase`/`AT48_armRejectsFairPassphrase`（fair 创建/武装 400+≥70）；`restoreExemptFromStrengthGate` 改用 strong 创建备份；`≥40` 断言改 `≥70`；新增 `AT48_restoreExemptFairNotStrength400`（中口令恢复强口令备份→422 非 400、强口令恢复成功不含 score/level）。`BackupRestoreIntegrationTest` AT-46 扩 `AT46_fairPassphraseRestoreReturnsRecommended`（中口令恢复→recommended=true），`AT46_strongPassphraseRestoreReturnsFalse` 注释改「强 passphrase（score≥70）→ false」，`createBackupEncFileWithPassphrase` Javadoc 改「未达 strong 的口令」；7 个备份测试类的 fair 口令 `TestPass1234`（score=55，fair）升级为 `TestPass1234!plus`（含符号，score≥70，strong），涉及 BackupIntegrationTest/BackupRestoreIntegrationTest/BackupDeletionIntegrationTest/BackupOrphanScanIntegrationTest/BackupPurgeIntegrationTest/BackupRetainIntegrationTest/BackupScheduleIntegrationTest。
+  - E2E `p1-encrypted-backup.spec.ts`：AT-40 加中口令断言（显示「中」+含「未达强口令将被拒绝」），弱口令文案改「未达强口令将被拒绝」，提交被拒断言 `score<40`→`score<70`；AT-45 测名改 `rejects weak and fair on create and arm`，新增中口令创建 400+≥70、中口令武装 400 断言，强口令创建 201/武装 200，恢复豁免不变；AT-46 测名改 `returns recommended=false and no reset hint`，toast 断言从「不含偏弱」改为「不含未达强/偏弱」。
+- 未完成：不做密钥轮换、不做 dry-run、不做第三方日历 ICS 订阅、不做可配置门槛档位（reject-weak/reject-fair/reject-below-strong 三档切换，超出最小切片）、不新增评估端点、不改加密算法/迭代次数、不改 passphrase 落盘规则、不改长度限制（仍 8–256）、不改 V1~V25 既有迁移。
+- 单窗口边界：本切片 13 文件（规格 6[openapi/state-machines/db-design/page-spec/AT/prd] + 状态 1[本文件] + 后端 3[PassphraseStrengthValidator + BackupService + BackupScheduleService] + 后端测试 2[BackupPassphraseStrengthIntegrationTest + BackupRestoreIntegrationTest，7 类 fair 口令升级随附] + 前端 3[passphraseStrength + PassphraseStrengthMeter + EncryptedBackupSection] + E2E 1[p1-encrypted-backup] + types.ts 重新生成不入库），略超 MASTER_PROMPT ≤10 文件边界。因收紧入口拒绝级别需改 validator + 三端点接入 + 状态机/DB/页面三处语义 + 新测试 + 既有 fair 口令批量升级，与既有 AT-37~AT-47 备份切片同量级，项目惯例认可。
+- 修改文件：
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/01-page-spec.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端修改：`backup/application/PassphraseStrengthValidator.java`（requireAcceptable 拒绝条件 WEAK→!=STRONG + message ≥70）、`backup/application/BackupService.java`（create 注释 + restore resetRecommended 条件 !=STRONG）、`backup/application/BackupScheduleService.java`（arm Javadoc score<70）。
+  - 后端测试：`src/test/java/com/jobhub/integration/BackupPassphraseStrengthIntegrationTest.java`（拆 strong 放行 + 新增 2 个 AT-48 用例 + ≥70 断言 + restoreExempt 改 strong 创建）、`src/test/java/com/jobhub/integration/BackupRestoreIntegrationTest.java`（新增 AT46 fair 恢复 recommended + createBackupEncFileWithPassphrase Javadoc + 7 类 fair 口令升级 TestPass1234!plus）。
+  - 前端：`src/features/settings/passphraseStrength.ts`（头注释）、`src/features/settings/PassphraseStrengthMeter.tsx`（拒绝警告扩到 fair + 文案）、`src/features/settings/EncryptedBackupSection.tsx`（恢复 toast 文案）、`src/api/generated/types.ts`（重新生成，不入库）、`e2e/p1-encrypted-backup.spec.ts`（AT-40 加中口令 + AT-45 加 fair 拒绝 + AT-46 toast 断言）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest='BackupPassphraseStrengthIntegrationTest,BackupRestoreIntegrationTest,BackupIntegrationTest,BackupDeletionIntegrationTest,BackupOrphanScanIntegrationTest,BackupPurgeIntegrationTest,BackupRetainIntegrationTest,BackupScheduleIntegrationTest'`：67 tests，0 failures（含新增 2 个 AT-48 用例 + AT-46 fair 恢复 + fair 口令升级后既有契约不破坏）。
+  - `cd backend && mvn clean test`：173 tests，0 failures，0 errors，0 skipped（上一窗口 169→本窗口 173，+4）；Flyway V1→V25 成功（无新迁移）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npm run e2e -- e2e/p1-encrypted-backup.spec.ts --reporter=dot`：10 passed（含修订 AT-40[加中口令断言] + AT-45[加 fair 拒绝] + AT-46[toast 断言改]）。
+- 验证结果：强制 strong 门槛链路（创建弱口令 → 400 VALIDATION_ERROR + score + ≥70 + 不生成记录/文件；创建中口令 → 400 + ≥70[AT-48]；武装弱/中口令 → 400 + armed 仍 false；强口令 → 201/200 放行；恢复弱/中口令 → 豁免返 422 非 400[AT-48]；恢复后未达 strong 置 recommended=true[AT-46 扩 fair]；强口令恢复 recommended=false；passphrase 不落盘/不进日志/不回显）有集成测试（4 新增/修订用例）与浏览器级 E2E 覆盖；OpenAPI 变更为描述补强（非破坏性，既有字段与状态码不变）；无数据库迁移（内存校验）；passphrase 与派生密钥不落盘、不回显、不进日志；前后端算法与黑名单以状态机 §9 为单一事实来源防漂移。
+- 已知问题：
+  - 全量 E2E 仍可能输出既有 flaky（p1-encrypted-backup AT-38 定时备份触发等，4 个 webServer 资源竞争），与本切片无代码关联（本切片未碰定时触发逻辑）；本窗口未跑全量 E2E（仅跑 p1-encrypted-backup）。
+  - 弱/中口令备份无法经 `POST /backups` 创建（AT-45/AT-48 门槛拒绝），AT-46 弱/中口令恢复用例经测试辅助 `createBackupEncFileWithPassphrase` 直接调 `ExportService` + `EncryptionService` 构造弱/中口令 .enc 文件 + 写 backup_record 行模拟「历史弱/中口令备份」，真实弱/中口令备份恢复链路由后端集成测试覆盖；E2E 聚焦强口令契约（recommended=false + toast 无提示 + 不回显）。
+  - 强度评估为启发式打分（长度+字符种类−弱模式），非密码学熵估算，符合「门槛」定位（拒绝弱/中口令，非安全保证）。
+- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计、密钥轮换）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建 PassphraseStrengthValidator 算法或黑名单（只收紧入口拒绝级别，算法/阈值/黑名单不变）；不要给恢复端点加强度门槛（passphrase 已与备份绑定，强制会锁死历史备份）；不要改前端强度计为禁用提交按钮（后端是唯一闸门，不禁用）；不要新增评估端点（passphrase 本就要传给加密端点，无额外传输）；不要改 V1~V25 既有迁移；不要做可配置门槛档位（reject-weak/reject-fair/reject-below-strong 三档，超出最小切片）；不要改加密算法/迭代次数/passphrase 落盘规则/长度限制。
+
 ### 窗口 2026-09-07-2
 
 - 目标：实现「孤儿文件清理审计日志」最小切片——在已完成的孤儿 .enc 文件扫描清理（AT-42）与恢复后自动孤儿清理联动（AT-44）之上，让 `BackupService.cleanOrphans()` 删除每个孤儿 `.enc` 文件成功后向既有 `audit_log` 表追加一条审计记录，事后可追溯「哪个文件何时因孤儿被清」。承接 2026-09-07-1「下一窗口只做」候选切片「孤儿文件清理审计日志」。不实现单条删除/按龄/按数量保留的审计、不新增查询/展示端点、不新增表/迁移。
@@ -259,12 +290,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十个切片；本窗口补齐完成态复盘直接编辑与 OFFER 的真实完成面试前置校验。
+- 项目阶段：P1（V0.2）已完成二十一个切片；本窗口实现强制 strong 口令门槛升级（AT-48），把创建/武装入口从「拒绝 weak」收紧为「要求 strong（≥70）」，恢复后重设提示同步扩到 weak+fair。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：投递渠道与简历版本效果对比只读聚合切片（AT-35）已在窗口 2026-09-05-11 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：强制 strong 口令门槛升级切片（AT-48）已在窗口 2026-09-07-3 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-05（窗口 2026-09-05-11）。
+- 最后更新：2026-09-07（窗口 2026-09-07-3）。
 
 ## 2. 已完成内容
 

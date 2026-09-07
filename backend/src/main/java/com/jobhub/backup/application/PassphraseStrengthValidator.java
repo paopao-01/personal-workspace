@@ -12,17 +12,20 @@ import java.util.Set;
  * <a href="../../../../../../../docs/jobhub/02-state-machines.md">02-state-machines.md §9</a>）。
  *
  * <p>维度：长度分（上限 35）+ 字符种类分（上限 45）− 弱模式扣分（纯重复/常见弱口令/连续重复段）。
- * 阈值：弱 &lt; 40 / 中 40–69 / 强 ≥ 70。{@code score < 40}（弱）抛
+ * 阈值：弱 &lt; 40 / 中 40–69 / 强 ≥ 70。{@code score < 70}（即弱或中，未达 strong）抛
  * {@link BusinessRuleException}（{@link ErrorCode#VALIDATION_ERROR}，400），message 含 score 与失败规则。
+ * 要求 strong：只有 {@code score ≥ 70} 放行，弱与中一律拒绝。
  *
  * <p>评估仅在调用栈内进行，passphrase 不落盘、不进日志、不回显，不新增评估端点。
  * 创建备份与武装调度入口调用本校验器；恢复端点豁免（passphrase 已与备份绑定）。
  */
 public final class PassphraseStrengthValidator {
 
-	/** 弱口令阈值下限：score < 40 即弱，拒绝。 */
+	/** 弱口令阈值下限：score < 40 即弱。 */
 	static final int WEAK_THRESHOLD = 40;
 	static final int STRONG_THRESHOLD = 70;
+	/** 强制门槛要求等级：未达此等级一律拒绝（创建/武装入口）。 */
+	private static final Level REQUIRED_LEVEL = Level.STRONG;
 
 	/** 与前端一致的常见弱口令黑名单（小写前缀/整体匹配）。 */
 	private static final List<String> COMMON_WEAK = List.of(
@@ -132,15 +135,16 @@ public final class PassphraseStrengthValidator {
 	}
 
 	/**
-	 * 强制门槛校验：{@code score < 40}（弱）抛 {@link BusinessRuleException}（400 VALIDATION_ERROR），
-	 * message 含 {@code score=X/100，需 ≥40} 与失败规则，不进行后续加密/落盘/武装。
+	 * 强制门槛校验（要求 strong）：{@code level != STRONG}（即弱或中，{@code score < 70}）抛
+	 * {@link BusinessRuleException}（400 VALIDATION_ERROR），message 含 {@code score=X/100，需 ≥70}
+	 * 与失败规则，不进行后续加密/落盘/武装。只有 {@code score ≥ 70}（强）放行。
 	 */
 	public static void requireAcceptable(String passphrase) {
 		Result r = evaluate(passphrase);
-		if (r.level() == Level.WEAK) {
+		if (r.level() != REQUIRED_LEVEL) {
 			throw new BusinessRuleException(ErrorCode.VALIDATION_ERROR,
-				"passphrase 强度不足：score=" + r.score() + "/100，需 ≥" + WEAK_THRESHOLD
-					+ "；失败规则：" + (r.reasons().isEmpty() ? "无" : String.join("、", r.reasons())));
+				"passphrase 强度不足：score=" + r.score() + "/100，需 ≥" + STRONG_THRESHOLD
+					+ "（要求强口令）；失败规则：" + (r.reasons().isEmpty() ? "无" : String.join("、", r.reasons())));
 		}
 	}
 

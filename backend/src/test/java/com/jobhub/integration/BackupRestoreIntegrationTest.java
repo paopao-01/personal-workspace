@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 
-	private static final String PASSPHRASE = "TestPass1234";
+	private static final String PASSPHRASE = "TestPass1234!plus";
 
 	private static final Path BACKUP_DIR = Paths.get("./target/backups");
 
@@ -279,9 +279,9 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 
 	/**
 	 * 构造一份用指定 passphrase 加密的合法 .enc 备份文件字节数组。
-	 * 不经 POST /backups（那样会被强度门槛拦弱口令），而是直接调 ExportService + EncryptionService，
+	 * 不经 POST /backups（那样会被强度门槛拦未达 strong 的口令），而是直接调 ExportService + EncryptionService，
 	 * 把密文按 salt(16)||iv(12)||ciphertext 布局拼成 .enc 字节，并以 <uuid>.enc 落盘 + 写 backup_record，
-	 * 使其能被恢复端点识别为合法备份。用于 AT-46 弱口令备份恢复（弱口令创建已被门槛拒，只能这样造历史弱口令备份）。
+	 * 使其能被恢复端点识别为合法备份。用于 AT-46 弱/中口令备份恢复（门槛上线前用弱/中口令创建的历史备份，只能这样造）。
 	 */
 	private byte[] createBackupEncFileWithPassphrase(String passphrase) throws Exception {
 		// 先造一个岗位，保证导出有可导出数据
@@ -318,8 +318,8 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * AT-46 恢复后弱口令重设提示：恢复成功后对本次 passphrase 内存评估，仅弱（score<40）置
-	 * passphraseResetRecommended=true；强/中为 false；恢复端点仍豁免门槛（仅提示不阻塞）；
+	 * AT-46 恢复后弱/中口令重设提示：恢复成功后对本次 passphrase 内存评估，未达 strong（score<70，即弱或中）置
+	 * passphraseResetRecommended=true；强为 false；恢复端点仍豁免门槛（仅提示不阻塞）；
 	 * 错误 passphrase 422 不评估；幂等回放返回首次值；响应不回显 passphrase/score/level。
 	 */
 	@Test
@@ -347,9 +347,31 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		assertThat(body).doesNotContain("\"level\"");
 	}
 
+	/** 中 passphrase（score 40–69，未达 strong）恢复 → passphraseResetRecommended=true（AT-46 扩 fair）。 */
+	@Test
+	void AT46_fairPassphraseRestoreReturnsRecommended() throws Exception {
+		// 中 passphrase（"CorrectHorse42"，无符号，score 40–69，fair，未达 strong）
+		String fairPassphrase = "CorrectHorse42";
+		byte[] enc = createBackupEncFileWithPassphrase(fairPassphrase);
+
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, fairPassphrase);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(body).doesNotContain(fairPassphrase);
+		// 中口令未达 strong → passphraseResetRecommended=true（AT-46 扩 fair）
+		assertThat(JsonProbe.bool(body, "passphraseResetRecommended")).isTrue();
+		assertThat(body).doesNotContain("\"score\"");
+		assertThat(body).doesNotContain("\"level\"");
+	}
+
 	@Test
 	void AT46_strongPassphraseRestoreReturnsFalse() throws Exception {
-		// 强/中 passphrase（score≥40）→ passphraseResetRecommended=false
+		// 强 passphrase（score≥70）→ passphraseResetRecommended=false
 		String strongPassphrase = "CorrectHorse42!battery";
 		byte[] enc = createBackupEncFileWithPassphrase(strongPassphrase);
 

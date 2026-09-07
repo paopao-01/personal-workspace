@@ -878,14 +878,14 @@ paths:
         '200': { description: 备份记录列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BackupRecord' } } } } }
     post:
       tags: [Backups]
-      summary: 生成加密备份（复用标准数据包，AES-256-GCM 加密；passphrase 仅写入不回显；弱口令拒绝）
+      summary: 生成加密备份（复用标准数据包，AES-256-GCM 加密；passphrase 仅写入不回显；未达强口令拒绝）
       description: |
         复用标准数据包导出生成 JSON 数据包，用 PBKDF2（随机 16B salt、10 万次迭代）从 passphrase 派生
         AES-256-GCM 密钥加密，密文写入 backup-dir；salt 与 iv 随记录落库以供未来恢复派生密钥，
         passphrase 与派生密钥永不持久化。备份为追加型只读历史，本端点不实现恢复。
-        passphrase 强度门槛（强制）：入口按与前端同一算法评估（维度：长度/字符种类/弱模式扣分，阈值
-        弱<40/中40–69/强≥70，见 02-state-machines.md §9）；score<40（弱）返回 400 VALIDATION_ERROR，
-        含 score 与失败规则，不进行加密与落盘。强度评估在内存进行，passphrase 不落盘/不进日志/不回显，
+        passphrase 强度门槛（强制，要求 strong）：入口按与前端同一算法评估（维度：长度/字符种类/弱模式扣分，阈值
+        弱<40/中40–69/强≥70，见 02-state-machines.md §9）；score<70（即弱或中）返回 400 VALIDATION_ERROR，
+        含 score 与失败规则，不进行加密与落盘；只有 score≥70（强）放行。强度评估在内存进行，passphrase 不落盘/不进日志/不回显，
         不新增评估端点（passphrase 本就要传给本端点派生密钥，无额外传输）。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
@@ -968,13 +968,13 @@ paths:
   /backups/schedule/arm:
     post:
       tags: [Backups]
-      summary: 武装调度器（注入内存 passphrase；弱口令拒绝）
+      summary: 武装调度器（注入内存 passphrase；未达强口令拒绝）
       description: |
         将 passphrase 写入进程内存武装调度器（volatile），供定时触发时加密生成备份。
         passphrase 仅存内存，不落盘、不回显、不进日志；应用重启后自动解除武装。
         武装状态可通过 GET /backups/schedule 的 armed 字段查询，但不回显 passphrase。
-        passphrase 强度门槛（强制）：入口按与前端同一算法评估（阈值弱<40，见 02-state-machines.md §9）；
-        score<40（弱）返回 400 VALIDATION_ERROR，含 score 与失败规则，不写入内存武装。
+        passphrase 强度门槛（强制，要求 strong）：入口按与前端同一算法评估（阈值弱<40/中40–69/强≥70，见 02-state-machines.md §9）；
+        score<70（即弱或中）返回 400 VALIDATION_ERROR，含 score 与失败规则，不写入内存武装；只有 score≥70（强）放行。
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -1040,7 +1040,7 @@ paths:
         `orphanCleanSummary`，不重新执行恢复与清理）。恢复联动 `cleanOrphans` 删除的孤儿文件同样按独立孤儿端点语义向
         `audit_log` 追加审计记录（每删一个一条，best-effort，见 `POST /backups/orphans/clean` 描述）。
         恢复成功后对本次提交的 passphrase 在内存做一次强度评估（与创建/武装入口同一算法、同一阈值，详见 §9 强度门槛），
-        **仅当评估为弱（score<40）** 时置响应 `passphraseResetRecommended=true`（非阻塞提示，建议用户用强口令新建备份替换；
+        **当评估未达 strong（score<70，即弱或中）** 时置响应 `passphraseResetRecommended=true`（非阻塞提示，建议用户用强口令新建备份替换；
         系统 无全局 passphrase 可重设，详见状态机）。恢复端点仍豁免强度门槛——评估仅为提示，不拒绝恢复、不返回强度 400
         （passphrase 已与既有备份绑定）。评估在内存进行，passphrase 不落盘、不进日志、不回显；响应仅返回布尔
         `passphraseResetRecommended`，不回显 passphrase 或 score/level 等派生信息；不新增评估端点。
@@ -2368,12 +2368,12 @@ components:
       type: object
       required: [passphrase]
       properties:
-        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储。强度门槛（强制）：score<40（弱）返回 400，详见 POST /backups 描述与 02-state-machines.md §9 }
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于 PBKDF2 派生 AES-256-GCM 密钥，永不回显或存储。强度门槛（强制，要求 strong）：score<70（弱或中）返回 400，详见 POST /backups 描述与 02-state-machines.md §9 }
     BackupArmRequest:
       type: object
       required: [passphrase]
       properties:
-        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储。强度门槛（强制）：score<40（弱）返回 400 }
+        passphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入内存武装调度器（volatile）；应用重启后清空，永不回显或存储。强度门槛（强制，要求 strong）：score<70（弱或中）返回 400 }
     BackupScheduleUpdateRequest:
       type: object
       required: [cronExpression, enabled, version]

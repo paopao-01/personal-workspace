@@ -96,7 +96,7 @@ export function EncryptedBackupSection() {
             + '）'
           : ''
       const weakSuffix = report.passphraseResetRecommended
-        ? '｜此备份口令偏弱，建议重新创建备份时设置更强口令'
+        ? '｜此备份口令未达强，建议重新创建备份时设置更强口令'
         : ''
       pushToast(
         `恢复完成：插入 ${report.inserted} 行，重复跳过 ${report.skippedIdentical}，`

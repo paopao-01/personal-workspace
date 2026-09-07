@@ -258,7 +258,7 @@ ABANDONED ──restore──> TODO
 - passphrase 经 PBKDF2（随机 16B salt、10 万次迭代）派生 AES-256-GCM 密钥加密标准数据包；passphrase 与派生密钥永不落盘、不回显、不进日志。
 - `salt` 与 `iv` 随记录持久化，以供未来恢复切片从用户 passphrase 重新派生密钥；`data_export_id` 软引用导出记录，不加外键。
 - 备份生成失败不得产生部分 `backup_record` 记录或残留密文文件。
-- **passphrase 强度门槛（强制，V1.0 最小切片）**：创建备份（`POST /backups`）与武装调度器（`POST /backups/schedule/arm`）在入口按与前端纯函数同一算法评估 passphrase 强度，阈值弱<40/中40–69/强≥70（维度：长度分上限 35、字符种类分上限 45、弱模式扣分；常见弱口令黑名单 20 条）。`score<40`（弱）返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥40` 与失败规则（长度不足/缺字符种类/命中弱模式），不进行后续加密/落盘/武装。强度评估在内存进行，passphrase 不落盘、不进日志、不回显；不新增评估端点（passphrase 本就要传给加密端点派生密钥，无额外传输；与 AT-40 纯前端提示算法一致、阈值对齐）。算法维度与黑名单以本节为单一事实来源，前后端实现以此为准防漂移。
+- **passphrase 强度门槛（强制，V1.0 最小切片）**：创建备份（`POST /backups`）与武装调度器（`POST /backups/schedule/arm`）在入口按与前端纯函数同一算法评估 passphrase 强度，阈值弱<40/中40–69/强≥70（维度：长度分上限 35、字符种类分上限 45、弱模式扣分；常见弱口令黑名单 20 条）。**要求 strong**：`score<70`（即弱或中）返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥70` 与失败规则（长度不足/缺字符种类/命中弱模式），不进行后续加密/落盘/武装；只有 `score≥70`（强）放行。强度评估在内存进行，passphrase 不落盘、不进日志、不回显；不新增评估端点（passphrase 本就要传给加密端点派生密钥，无额外传输；与 AT-40 纯前端提示算法一致、阈值对齐）。算法维度与黑名单以本节为单一事实来源，前后端实现以此为准防漂移。
 - 恢复端点（`POST /backups/restore`）**不**强制强度门槛：passphrase 已与既有备份绑定（用于解密历史密文），强制无意义且会锁死门槛上线前用弱口令创建的历史备份；解密失败仍按 422（GCM 认证失败）处理，与强度无关。
 - 恢复端点接收上传的 .enc 文件（密文布局 `salt(16) || iv(12) || ciphertext+gcmTag`）+ passphrase，从文件头拆出 salt/iv，按生成端相同 PBKDF2 参数派生密钥并 AES-256-GCM 解密；GCM 认证失败即 passphrase 错误或文件损坏，返回 422，不进行任何恢复。
 - 解密得到的明文须为标准 JSON 数据包（`{format, exportedAt, tables}`）；恢复语义与标准数据恢复一致：只插入缺失行，重复/冲突/缺父级行跳过并列出，不覆盖、不修改已有行（用户事实优先），重复恢复同一备份天然幂等。
@@ -318,12 +318,12 @@ ABANDONED ──restore──> TODO
 - 幂等性：独立孤儿端点由其 `Idempotency-Key` 保证（重复回放返回首次缓存摘要不重新执行 → 不重复写审计）；恢复联动由恢复的 `Idempotency-Key` 保证（重复回放不重新执行恢复与清理 → 不重复写审计）。无需额外去重。
 - `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
 
-**恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**仅当评估为弱（`score<40`）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令偏弱、建议用强口令新建备份替换；强/中口令为 `false`。
+**恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。
 - 恢复端点**仍豁免强度门槛**：评估仅为提示，不阻塞、不拒绝恢复、不返回强度 400（passphrase 已与既有备份绑定，强制无意义且会锁死历史备份，详见 §9 恢复端点豁免条目）。
 - 评估在内存进行，passphrase 不落盘、不进日志、不回显；响应仅返回布尔 `passphraseResetRecommended`，**不**回显 passphrase 或 `score`/`level` 等派生信息（避免经响应侧信道泄露 passphrase 特征）；不新增评估端点。
-- 「重设」语义：系统无全局 passphrase 可重设（passphrase 每条备份绑定、从不持久化，仅武装时存内存），故「重设」即建议用户用强口令**新建一条备份**替换旧弱口令备份（新建时走强度门槛强制 `score≥40`），用户可随后删除旧弱口令备份。本端点不实现密钥轮换、不自动新建/删除备份、不阻塞后续操作。
+- 「重设」语义：系统无全局 passphrase 可重设（passphrase 每条备份绑定、从不持久化，仅武装时存内存），故「重设」即建议用户用强口令**新建一条备份**替换旧弱/中口令备份（新建时走强度门槛强制 `score≥70`），用户可随后删除旧备份。本端点不实现密钥轮换、不自动新建/删除备份、不阻塞后续操作。
 - 结果通过恢复响应的 `passphraseResetRecommended` 字段返回（`ImportResultReport` 可选字段，nullable boolean）；`POST /data-imports/restore` 标准数据恢复不触发此评估，该字段为 null。
 - 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `passphraseResetRecommended` 首次值），不重新执行评估。
 
