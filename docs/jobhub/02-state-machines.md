@@ -307,6 +307,15 @@ ABANDONED ──restore──> TODO
 - 清理结果通过恢复响应的 `orphanCleanSummary` 字段返回（`ImportResultReport` 可选字段）；`POST /data-imports/restore` 标准数据恢复不触发此联动，该字段缺省。
 - 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `orphanCleanSummary`），不重新执行恢复与清理。
 
+**恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**仅当评估为弱（`score<40`）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令偏弱、建议用强口令新建备份替换；强/中口令为 `false`。
+
+- 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。
+- 恢复端点**仍豁免强度门槛**：评估仅为提示，不阻塞、不拒绝恢复、不返回强度 400（passphrase 已与既有备份绑定，强制无意义且会锁死历史备份，详见 §9 恢复端点豁免条目）。
+- 评估在内存进行，passphrase 不落盘、不进日志、不回显；响应仅返回布尔 `passphraseResetRecommended`，**不**回显 passphrase 或 `score`/`level` 等派生信息（避免经响应侧信道泄露 passphrase 特征）；不新增评估端点。
+- 「重设」语义：系统无全局 passphrase 可重设（passphrase 每条备份绑定、从不持久化，仅武装时存内存），故「重设」即建议用户用强口令**新建一条备份**替换旧弱口令备份（新建时走强度门槛强制 `score≥40`），用户可随后删除旧弱口令备份。本端点不实现密钥轮换、不自动新建/删除备份、不阻塞后续操作。
+- 结果通过恢复响应的 `passphraseResetRecommended` 字段返回（`ImportResultReport` 可选字段，nullable boolean）；`POST /data-imports/restore` 标准数据恢复不触发此评估，该字段为 null。
+- 幂等性由恢复的 `Idempotency-Key` 保证：重复回放命中幂等记录返回首次缓存的完整响应（含 `passphraseResetRecommended` 首次值），不重新执行评估。
+
 ## 8. 能力、证据与删除状态
 
 ### 8.1 技能维度

@@ -1,10 +1,14 @@
 package com.jobhub.integration;
 
+import com.jobhub.backup.application.EncryptionService;
+import com.jobhub.datamanagement.application.ExportService;
+import com.jobhub.datamanagement.domain.DataExport;
 import com.jobhub.integration.support.AbstractIntegrationTest;
 import com.jobhub.integration.support.JsonProbe;
 import com.jobhub.integration.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.util.LinkedMultiValueMap;
@@ -27,6 +31,12 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 	private static final String PASSPHRASE = "TestPass1234";
 
 	private static final Path BACKUP_DIR = Paths.get("./target/backups");
+
+	@Autowired
+	private ExportService exportService;
+
+	@Autowired
+	private EncryptionService encryption;
 
 	@BeforeEach
 	void disarmAndCleanBackupDir() {
@@ -103,7 +113,7 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
 		String body = restored.getBody();
 		assertThat(body).isNotNull();
-		assertThat(body).doesNotContain("passphrase");
+		assertThat(body).doesNotContain(PASSPHRASE);
 		assertThat(JsonProbe.str(body, "status")).isNotNull();
 		int inserted = JsonProbe.intVal(body, "inserted");
 		assertThat(inserted).isPositive();
@@ -190,7 +200,7 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
 		String body = restored.getBody();
 		assertThat(body).isNotNull();
-		assertThat(body).doesNotContain("passphrase");
+		assertThat(body).doesNotContain(PASSPHRASE);
 		// orphanCleanSummary 反映孤儿已被删
 		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.deletedFiles")).isGreaterThan(0);
 		assertThat(JsonProbe.intVal(body, "orphanCleanSummary.orphanFiles")).isGreaterThan(0);
@@ -256,5 +266,190 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 		ResponseEntity<String> bad = restore(enc, "wrong-passphrase");
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
 		assertThat(Files.exists(orphanFile)).isTrue();
+	}
+
+	/**
+	 * 构造一份用指定 passphrase 加密的合法 .enc 备份文件字节数组。
+	 * 不经 POST /backups（那样会被强度门槛拦弱口令），而是直接调 ExportService + EncryptionService，
+	 * 把密文按 salt(16)||iv(12)||ciphertext 布局拼成 .enc 字节，并以 <uuid>.enc 落盘 + 写 backup_record，
+	 * 使其能被恢复端点识别为合法备份。用于 AT-46 弱口令备份恢复（弱口令创建已被门槛拒，只能这样造历史弱口令备份）。
+	 */
+	private byte[] createBackupEncFileWithPassphrase(String passphrase) throws Exception {
+		// 先造一个岗位，保证导出有可导出数据
+		String jobBody = TestFixtures.createJobBody("恢复示例", "Java 后端");
+		restTemplate.postForEntity(url("/jobs"), TestFixtures.httpJson(jobBody), String.class);
+
+		DataExport export = exportService.create("JSON");
+		if (!"SUCCEEDED".equals(export.getStatus())) {
+			throw new IllegalStateException("数据包生成失败：" + export.getFailureReason());
+		}
+		byte[] plaintext = exportService.readExportFile(export);
+		EncryptionService.EncryptedPayload payload = encryption.encrypt(plaintext, passphrase);
+
+		String id = java.util.UUID.randomUUID().toString();
+		String fileName = id + ".enc";
+		Files.createDirectories(BACKUP_DIR);
+		Path file = BACKUP_DIR.resolve(fileName);
+		byte[] salt = payload.salt();
+		byte[] iv = payload.iv();
+		byte[] ct = payload.ciphertext();
+		byte[] out = new byte[salt.length + iv.length + ct.length];
+		System.arraycopy(salt, 0, out, 0, salt.length);
+		System.arraycopy(iv, 0, out, salt.length, iv.length);
+		System.arraycopy(ct, 0, out, salt.length + iv.length, ct.length);
+		Files.write(file, out);
+
+		// 写 backup_record 行（合法备份记录），使恢复端点能识别
+		String now = java.time.Instant.now().toString();
+		jdbc.update("INSERT INTO backup_record(id, created_at, algorithm, pbkdf2_iterations, salt, iv, "
+				+ "data_export_id, file_path, file_name, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			id, now, "AES_256_GCM_PBKDF2", 100_000,
+			payload.salt(), payload.iv(), export.getId(), file.toString(), fileName, (long) out.length);
+		return out;
+	}
+
+	/**
+	 * AT-46 恢复后弱口令重设提示：恢复成功后对本次 passphrase 内存评估，仅弱（score<40）置
+	 * passphraseResetRecommended=true；强/中为 false；恢复端点仍豁免门槛（仅提示不阻塞）；
+	 * 错误 passphrase 422 不评估；幂等回放返回首次值；响应不回显 passphrase/score/level。
+	 */
+	@Test
+	void AT46_weakPassphraseRestoreReturnsRecommended() throws Exception {
+		// 弱 passphrase（"aaaaaaaa"，score<40，纯重复字符扣分）
+		String weakPassphrase = "aaaaaaaa";
+		byte[] enc = createBackupEncFileWithPassphrase(weakPassphrase);
+
+		// 清空业务数据使恢复能插入缺失行
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, weakPassphrase);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(body).isNotNull();
+		// 恢复本身不拒绝（端点豁免门槛，仅提示）
+		assertThat(body).doesNotContain(weakPassphrase);
+		// 弱口令 → passphraseResetRecommended=true
+		assertThat(JsonProbe.bool(body, "passphraseResetRecommended")).isTrue();
+		// 响应不回显 score/level（避免经响应侧信道泄露 passphrase 特征）
+		assertThat(body).doesNotContain("\"score\"");
+		assertThat(body).doesNotContain("\"level\"");
+	}
+
+	@Test
+	void AT46_strongPassphraseRestoreReturnsFalse() throws Exception {
+		// 强/中 passphrase（score≥40）→ passphraseResetRecommended=false
+		String strongPassphrase = "CorrectHorse42!battery";
+		byte[] enc = createBackupEncFileWithPassphrase(strongPassphrase);
+
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, strongPassphrase);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = restored.getBody();
+		assertThat(body).doesNotContain(strongPassphrase);
+		assertThat(JsonProbe.bool(body, "passphraseResetRecommended")).isFalse();
+	}
+
+	@Test
+	void AT46_failedRestoreDoesNotEvaluate() throws Exception {
+		String weakPassphrase = "aaaaaaaa";
+		byte[] enc = createBackupEncFileWithPassphrase(weakPassphrase);
+
+		// 错误 passphrase → 422，不进行强度评估（响应不含 passphraseResetRecommended，不产生提示副作用）
+		ResponseEntity<String> bad = restore(enc, "wrong-passphrase");
+		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		String body = bad.getBody();
+		// 错误响应体不含 passphraseResetRecommended 字段（评估未发生）
+		if (body != null) {
+			assertThat(body).doesNotContain("passphraseResetRecommended");
+		}
+	}
+
+	@Test
+	void AT46_repeatRestoreIsDeterministicAndIdempotent() throws Exception {
+		// 恢复为行级幂等：重复恢复不重复插入；passphraseResetRecommended 两次结果一致（确定性）。
+		// 注：multipart 请求不缓存幂等响应（IdempotencyBodyCachingFilter 设计跳过 multipart），
+		// 故此处验证自然幂等性而非 HTTP 缓存回放——弱口令两次恢复均返回 recommended=true。
+		String weakPassphrase = "aaaaaaaa";
+		byte[] enc = createBackupEncFileWithPassphrase(weakPassphrase);
+
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		// 第一次恢复：插入缺失行，recommended=true
+		ResponseEntity<String> first = restore(enc, weakPassphrase);
+		assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.bool(first.getBody(), "passphraseResetRecommended")).isTrue();
+		Integer jobsAfterFirst = jdbc.queryForObject("SELECT COUNT(*) FROM job_posting", Integer.class);
+		assertThat(jobsAfterFirst).isEqualTo(1);
+
+		// 第二次恢复：行级幂等，不重复插入；recommended 仍为 true（确定性，与首次一致）
+		ResponseEntity<String> second = restore(enc, weakPassphrase);
+		assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.bool(second.getBody(), "passphraseResetRecommended")).isTrue();
+		assertThat(JsonProbe.intVal(second.getBody(), "inserted")).isZero();
+		Integer jobsAfterSecond = jdbc.queryForObject("SELECT COUNT(*) FROM job_posting", Integer.class);
+		assertThat(jobsAfterSecond).isEqualTo(1);
+	}
+
+	@Test
+	void AT46_standardDataImportRestoreReturnsNull() throws Exception {
+		// 标准数据恢复 POST /data-imports/restore 不评估 passphrase → passphraseResetRecommended 为 null
+		// 先造数据并导出标准 JSON 包
+		String jobBody = TestFixtures.createJobBody("标准恢复示例", "Java 后端");
+		restTemplate.postForEntity(url("/jobs"), TestFixtures.httpJson(jobBody), String.class);
+		DataExport export = exportService.create("JSON");
+		assertThat(export.getStatus()).isEqualTo("SUCCEEDED");
+		byte[] packageBytes = exportService.readExportFile(export);
+
+		// 清空业务数据
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		// 调标准数据恢复（不带 passphrase，无 multipart）
+		RestClient client = RestClient.builder().build();
+		ResponseEntity<String> restored = client.post()
+			.uri(url("/data-imports/restore"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(packageBytes)
+			.exchange((req, res) -> new ResponseEntity<>(res.bodyTo(String.class), res.getStatusCode()));
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		// 标准恢复不评估 → 字段缺省（JSON 中无 passphraseResetRecommended，或为 null）
+		String body = restored.getBody();
+		// 字段应缺省或 null（JsonProbe.bool 对缺省/null 返回 null）
+		assertThat(JsonProbe.bool(body, "passphraseResetRecommended")).isNull();
+		// 标准恢复响应也不含 passphrase/score/level
+		assertThat(body).doesNotContain("\"score\"");
+		assertThat(body).doesNotContain("\"level\"");
+	}
+
+	@Test
+	void AT46_passphraseNeverPersistedOrEchoed() throws Exception {
+		String weakPassphrase = "aaaaaaaa";
+		byte[] enc = createBackupEncFileWithPassphrase(weakPassphrase);
+
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+
+		ResponseEntity<String> restored = restore(enc, weakPassphrase);
+		assertThat(restored.getStatusCode()).isEqualTo(HttpStatus.OK);
+		// passphrase 不回显
+		assertThat(restored.getBody()).doesNotContain(weakPassphrase);
+		// passphrase 不落库（backup_record 无 passphrase 列）
+		Integer passCol = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM pragma_table_info('backup_record') WHERE name = 'passphrase'", Integer.class);
+		assertThat(passCol).isZero();
 	}
 }
