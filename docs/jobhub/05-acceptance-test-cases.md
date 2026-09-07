@@ -566,16 +566,18 @@ And passphrase 不进行加密/落盘/武装，passphrase 在提交后立即清�
 And 任何时刻 passphrase 永不落盘、不进日志、不被评估 API 传输（无评估端点）
 ```
 
-### AT-45 passphrase 强度强制门槛（创建/武装拒绝弱口令；恢复豁免）
+### AT-45 passphrase 强度强制门槛（创建/武装拒绝弱/中口令，要求 strong；恢复豁免）
 
 ```gherkin
 Given 服务已启动
 When 以弱 passphrase（如 "aaaaaaaa"，score<40）调用 POST /api/backups（创建）
-Then 返回 400，错误码 VALIDATION_ERROR，message 含 "score=" 与 "≥40"
+Then 返回 400，错误码 VALIDATION_ERROR，message 含 "score=" 与 "≥70"
 And 不生成 backup_record，不写 .enc 文件（强度评估在加密前拦截）
 When 以弱 passphrase 调用 POST /api/backups/schedule/arm（武装）
 Then 返回 400 VALIDATION_ERROR，armed 仍为 false（未写入内存武装）
-When 以中/强 passphrase（如 "CorrectHorse42!battery"，score≥40）调用创建与武装
+When 以中 passphrase（如 "CorrectHorse42"，score 40–69）调用创建与武装
+Then 创建返回 400（中口令同样被拒）且武装返回 400 armed 仍为 false（未达 strong 一律拒绝）
+When 以强 passphrase（如 "CorrectHorse42!battery"，score≥70）调用创建与武装
 Then 创建返回 201 且武装返回 200 armed=true
 When 以弱 passphrase 调用 POST /api/backups/restore（恢复，上传合法 .enc + 弱 passphrase）
 Then 不返回强度 400——恢复端点不强制门槛（passphrase 已与备份绑定），解密失败按 422 处理
@@ -682,15 +684,18 @@ And 恢复端点无需 X-Confirm-Permanent-Delete 确认头（恢复非销毁性
 And 任何时刻数据库不存储 passphrase 或派生密钥
 ```
 
-### AT-46 恢复后弱口令重设提示（恢复成功后内存评估弱口令置 recommended；恢复仍豁免门槛）
+### AT-46 恢复后弱/中口令重设提示（恢复成功后内存评估未达 strong 置 recommended；恢复仍豁免门槛）
 
 ```gherkin
 Given 用户持有一份用弱 passphrase（如 "aaaaaaaa"，score<40）创建的合法加密备份 .enc 文件与正确 passphrase
 When 用户在设置页恢复入口上传该 .enc 文件并输入弱 passphrase，点击「恢复备份」（POST /api/backups/restore）
 Then 返回 200 且响应含 passphraseResetRecommended=true（恢复本身不拒绝，端点仍豁免强度门槛，仅提示）
-And 恢复成功 toast 追加展示「此备份口令偏弱，建议重新创建备份时设置更强口令」
-When 用户用强/中 passphrase（如 "CorrectHorse42!battery"，score≥40）创建的备份恢复
-Then 返回 200 且响应 passphraseResetRecommended=false（或非 true），恢复成功 toast 不追加弱口令提示
+And 恢复成功 toast 追加展示「此备份口令未达强，建议重新创建备份时设置更强口令」
+Given 用户持有一份用中 passphrase（如 "CorrectHorse42"，score 40–69）创建的合法加密备份 .enc 文件与正确 passphrase
+When 用户上传该 .enc 文件并输入中 passphrase 恢复
+Then 返回 200 且响应含 passphraseResetRecommended=true（中口令同样建议重设为强）
+When 用户用强 passphrase（如 "CorrectHorse42!battery"，score≥70）创建的备份恢复
+Then 返回 200 且响应 passphraseResetRecommended=false，恢复成功 toast 不追加重设提示
 When 用户上传错误的 passphrase 或损坏的 .enc 文件（GCM 认证失败）
 Then 返回 422 且不进行强度评估（响应不含 passphraseResetRecommended，不产生提示副作用）
 When 用户以相同 Idempotency-Key 重复恢复（幂等回放）
@@ -720,8 +725,28 @@ When 用户以相同 Idempotency-Key 重复调用孤儿清理或恢复（幂等�
 Then 返回首次缓存的摘要，audit_log 不新增重复记录（幂等回放不重新执行清理、不重复写审计）
 ```
 
+### AT-48 强制 strong 口令门槛升级（创建/武装要求 score≥70；恢复提示扩到 weak+fair）
+
+```gherkin
+Given 服务已启动，且 backup-dir 与 backup_record 已清空
+When 以中 passphrase（如 "CorrectHorse42"，score 40–69）调用 POST /api/backups（创建）
+Then 返回 400，错误码 VALIDATION_ERROR，message 含 "score=" 与 "≥70"（中口令不再放行，要求 strong）
+And 不生成 backup_record，不写 .enc 文件（加密前拦截）
+And backup_record 行数为 0，backup-dir 下无 .enc 文件
+When 以中 passphrase 调用 POST /api/backups/schedule/arm（武装）
+Then 返回 400 VALIDATION_ERROR，message 含 "≥70"，armed 仍为 false（未写入内存武装）
+When 以强 passphrase（如 "CorrectHorse42!battery"，score≥70）调用创建与武装
+Then 创建返回 201 且武装返回 200 armed=true
+When 用户持有一份用中 passphrase（score 40–69）创建的合法加密备份 .enc 文件与正确中 passphrase
+And 上传该 .enc 文件并以中 passphrase 调用 POST /api/backups/restore（恢复）
+Then 返回 200 且响应 passphraseResetRecommended=true（中口令同样建议重设为强，恢复端点豁免门槛仅提示）
+And 恢复端点不返回强度 400（豁免门槛，passphrase 已与备份绑定），解密成功即恢复
+And 任意端点的响应与日志均不含 passphrase，passphrase 永不落盘/不回显/不进日志
+And 响应不回显 score 或 level 等派生信息（恢复端点仅返回布尔 passphraseResetRecommended）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-47 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-48 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

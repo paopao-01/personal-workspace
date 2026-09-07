@@ -25,7 +25,7 @@ class BackupIntegrationTest extends AbstractIntegrationTest {
 		restTemplate.postForEntity(url("/jobs"), TestFixtures.httpJson(jobBody), String.class);
 
 		// 生成加密备份
-		String reqBody = "{\"passphrase\":\"TestPass1234\"}";
+		String reqBody = "{\"passphrase\":\"TestPass1234!plus\"}";
 		ResponseEntity<String> created = restTemplate.exchange(url("/backups"), HttpMethod.POST,
 			TestFixtures.httpWithHeaders(reqBody, "Idempotency-Key", TestFixtures.newKey()), String.class);
 		assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);

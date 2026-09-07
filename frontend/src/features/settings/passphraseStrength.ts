@@ -3,8 +3,8 @@
  *
  * 在浏览器本地对 passphrase 打分，返回等级与改进建议；不调用任何 API，
  * passphrase 不离开浏览器。评估仅为提示，不禁用提交——后端是唯一强制闸门：
- * 创建备份（POST /backups）与武装调度（POST /backups/schedule/arm）对 score<40 的弱口令
- * 返回 400（与后端 PassphraseStrengthValidator 同一算法/阈值），恢复端点豁免（passphrase 已与备份绑定）。
+ * 创建备份（POST /backups）与武装调度（POST /backups/schedule/arm）要求 strong（score≥70），
+ * score<70（即弱或中）返回 400（与后端 PassphraseStrengthValidator 同一算法/阈值），恢复端点豁免（passphrase 已与备份绑定）。
  *
  * 维度：长度、字符种类（小写/大写/数字/符号）、弱模式扣分（纯重复字符、常见弱口令黑名单、连续重复段）。
  * 阈值：弱 < 40 / 中 40–69 / 强 ≥ 70。达到「强」时不返回改进建议。

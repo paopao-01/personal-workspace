@@ -92,8 +92,8 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void AT42_cleanOrphansDeletesOrphansKeepsLegitAndNonUuid() {
 		// 造 2 份合法备份（文件与记录都在），再放 1 个非 UUID .enc
-		CreatedBackup legit1 = createBackup("TestPass1234");
-		CreatedBackup legit2 = createBackup("TestPass1234");
+		CreatedBackup legit1 = createBackup("TestPass1234!plus");
+		CreatedBackup legit2 = createBackup("TestPass1234!plus");
 		placeNonUuidEncFile();
 
 		// 制造孤儿：删除 legit1 的 backup_record 行但保留其 .enc 文件（模拟 afterCommit 崩溃残留）
@@ -129,7 +129,7 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void cleanOrphansWithoutConfirmHeaderReturns400() {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", b.id);
 		ResponseEntity<String> bad = cleanOrphans(TestFixtures.newKey(), false);
 		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -139,7 +139,7 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void cleanOrphansNoOrphansReturns200AllZero() {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		// 无孤儿：文件与记录都在
 		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
 		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -169,7 +169,7 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void cleanOrphansIsIdempotentWithSameKey() {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", b.id);
 		String key = TestFixtures.newKey();
 
@@ -188,11 +188,11 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void cleanOrphansDoesNotModifyBackupRecordOrLastBackupId() {
-		CreatedBackup b = createBackup("TestPass1234");
+		CreatedBackup b = createBackup("TestPass1234!plus");
 		// 将 last_backup_id 指向合法备份，验证清理孤儿不联动该软引用
 		jdbc.update("UPDATE backup_schedule SET last_backup_id = ? WHERE id = 'singleton'", b.id);
 		// 制造一个孤儿（删另一份记录留文件）
-		CreatedBackup orphan = createBackup("TestPass1234");
+		CreatedBackup orphan = createBackup("TestPass1234!plus");
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan.id);
 
 		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
@@ -211,8 +211,8 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void AT47_cleanOrphansWritesAuditLogPerDeletedOrphan() {
 		// 造 2 份合法备份，删除两份的 backup_record 行但保留 .enc 文件 → 2 个孤儿
-		CreatedBackup orphan1 = createBackup("TestPass1234");
-		CreatedBackup orphan2 = createBackup("TestPass1234");
+		CreatedBackup orphan1 = createBackup("TestPass1234!plus");
+		CreatedBackup orphan2 = createBackup("TestPass1234!plus");
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan1.id);
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan2.id);
 
@@ -256,7 +256,7 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void AT47_noOrphansWritesNoAuditLog() {
 		// 无孤儿：文件与记录都在
-		createBackup("TestPass1234");
+		createBackup("TestPass1234!plus");
 		ResponseEntity<String> res = cleanOrphans(TestFixtures.newKey(), true);
 		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(JsonProbe.intVal(res.getBody(), "deletedFiles")).isZero();
@@ -282,7 +282,7 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 
 	@Test
 	void AT47_idempotentReplayWritesNoDuplicateAuditLog() {
-		CreatedBackup orphan = createBackup("TestPass1234");
+		CreatedBackup orphan = createBackup("TestPass1234!plus");
 		jdbc.update("DELETE FROM backup_record WHERE id = ?", orphan.id);
 		String key = TestFixtures.newKey();
 
