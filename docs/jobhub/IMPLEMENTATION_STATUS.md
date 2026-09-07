@@ -26,7 +26,7 @@
   - audit_log 表无二级索引，from/to 过滤走 `WHERE occurred_at >= ? AND occurred_at <= ?` 全表扫描；本地单用户审计量小可接受，未来数据量增长可另开迁移补 occurred_at 索引。
   - 前端 datetime-local 用浏览器本地时区，前端转 UTC ISO 提交（`Date.toISOString`），后端统一按 UTC ISO 字符串比较；若用户浏览器时区设置异常可能影响输入值的 UTC 转换，但比较逻辑本身不受影响。
   - 全量 E2E 未跑（本切片前端加日期输入属 UI 行为，真实 from/to 过滤链路由后端集成测试覆盖；前端 build 通过确认编译无误）。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：审计日志导出 CSV/JSON、密钥轮换、第三方日历同步最小化单向 ICS 订阅、audit_log occurred_at 二级索引迁移、单条删除/按龄/按数量保留清理审计的 from/to 查询验证）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：审计日志导出 CSV/JSON、密钥轮换、audit_log occurred_at 二级索引迁移、单条删除/按龄/按数量保留清理审计的 from/to 查询验证）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建 from/to 过滤逻辑；不要给 GET /audit-logs 加新端点（复用既有）；不要给 from/to 加时区下拉（前端用浏览器本地时区，后端统一 UTC ISO）；不要给 from>to 报 400（合法但无匹配，返回空结果）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅 insert + 只读 select/count）；不要改响应 schema（PageAuditLogEntry 不变，from/to 仅过滤输入不回显）；不要做审计导出（留后续切片）。
 
 ### 窗口 2026-09-07-6
@@ -55,7 +55,7 @@
   - 审计写入在事务内 best-effort：try-catch 吞掉 audit insert 异常，事务继续提交删行。若 audit insert 抛异常（如表约束冲突，概率极低），try-catch 吞掉后事务仍提交删行成功（audit 缺失但删除生效）。语义为 best-effort 追溯（同 AT-47），符合「审计是附加观测、不阻塞删除」定位。与 AT-47 的区别：本节审计与删行同事务（删行回滚则审计回滚，强一致），AT-47 审计在事务外 auto-commit（可能删后审计缺失）。
   - 全量 E2E 未跑（本切片前端仅改常量数组，schema 未变，无新 UI 行为；真实清理→审计→查询链路由后端集成测试覆盖）。
   - audit_log 表无二级索引，查询走 ORDER BY occurred_at DESC 全表扫描；本地单用户审计量小可接受，未来数据量增长可另开迁移补 occurred_at 索引。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：审计日志时间范围过滤 from/to、审计日志导出 CSV/JSON、密钥轮换、第三方日历同步最小化单向 ICS 订阅、audit_log occurred_at 二级索引迁移）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：审计日志时间范围过滤 from/to、审计日志导出 CSV/JSON、密钥轮换、audit_log occurred_at 二级索引迁移）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建三个清理操作的审计写入逻辑；不要给审计加新端点（复用 GET /audit-logs 全量查询）；不要给 BackupPurgeSummary/删除响应加审计字段（审计是内部行为不回显）；不要改审计写入时机（事务内删行后写，强一致，不改为 afterCommit）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅 insert + 只读 select/count）；不要做审计导出、时间范围过滤（留后续切片）；不要做密钥轮换、第三方日历 ICS 订阅。
 
 ### 窗口 2026-09-07-5
@@ -88,7 +88,7 @@
   - 测试用 jdbc 直接插 audit_log 行模拟既有写入值（不走真实业务流程），聚焦查询端点行为；真实多 action 写入链路（二次投递确认/需求合并变更/孤儿清理）由各业务模块既有集成测试覆盖，本切片测试不重复验证写入端。
   - E2E 无法保证每次都有审计记录（取决于 clean 是否删到孤儿），故 AT-50 E2E 的 items 结构断言为「有记录时校验结构」条件分支；真实查询链路由后端集成测试确定覆盖。
   - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、第三方日历同步最小化单向 ICS 订阅、审计日志时间范围过滤 from/to、审计日志导出 CSV/JSON）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、审计日志时间范围过滤 from/to、审计日志导出 CSV/JSON）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建 selectPage/count 动态查询逻辑；不要废弃 GET /backups/orphans/audit（AT-49 备份域便捷入口保留）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要给响应加 before/afterSnapshotJson（恒 null 省略）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅追加 + 只读 select/count）；不要做密钥轮换、第三方日历 ICS 订阅；不要增加 resourceId 过滤（留后续切片）；不要做审计导出、时间范围过滤（留后续切片）。
 
 ### 窗口 2026-09-07-4
@@ -123,7 +123,7 @@
   - freedBytes 经 reason 文本内嵌 `freedBytes=N` 子串展示，前端 `parseFreedBytes` 正则解析；若 reason 格式变更需同步更新解析（当前 reason 由 `AuditLogEntry.backupOrphanCleaned` 工厂控制，格式稳定）。
   - 查询端点不区分独立 clean 与恢复联动来源（当前审计 schema 无来源字段，两者 action/reason 完全一致），若需区分来源需扩展 AuditLogEntry（如加 source 字段 + 迁移），超出本切片范围。
   - E2E 无法保证每次都有孤儿被删（取决于跨测试残留），故 AT-49 E2E 的 items 断言为「有记录时校验结构」条件分支；真实审计写入→查询链路由后端集成测试确定覆盖。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、第三方日历同步最小化单向 ICS 订阅、全量 audit_log 查询端点 GET /audit-logs 带 action/resourceType 过滤）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：单条删除/按龄/按数量保留清理补审计、密钥轮换、全量 audit_log 查询端点 GET /audit-logs 带 action/resourceType 过滤）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建审计查询 selectPageByAction/countByAction 逻辑；不要把查询端点扩到全量 audit_log（本切片仅 BACKUP_ORPHAN_CLEANED，留后续切片）；不要区分独立/恢复来源（schema 无来源字段，留后续切片）；不要给 audit_log 加二级索引迁移（本地量小，留后续切片）；不要给响应加 resourceType/快照字段（固定/恒 null 省略）；不要把 freedBytes 改成结构化字段（reason 内嵌子串，留后续切片加列）；不要改 V1~V25 既有迁移；不要给 AuditLogMapper 加 update/delete（仅追加 + 只读 select/count）；不要做密钥轮换、第三方日历 ICS 订阅。
 
 ### 窗口 2026-09-07-3
@@ -154,7 +154,7 @@
   - 全量 E2E 仍可能输出既有 flaky（p1-encrypted-backup AT-38 定时备份触发等，4 个 webServer 资源竞争），与本切片无代码关联（本切片未碰定时触发逻辑）；本窗口未跑全量 E2E（仅跑 p1-encrypted-backup）。
   - 弱/中口令备份无法经 `POST /backups` 创建（AT-45/AT-48 门槛拒绝），AT-46 弱/中口令恢复用例经测试辅助 `createBackupEncFileWithPassphrase` 直接调 `ExportService` + `EncryptionService` 构造弱/中口令 .enc 文件 + 写 backup_record 行模拟「历史弱/中口令备份」，真实弱/中口令备份恢复链路由后端集成测试覆盖；E2E 聚焦强口令契约（recommended=false + toast 无提示 + 不回显）。
   - 强度评估为启发式打分（长度+字符种类−弱模式），非密码学熵估算，符合「门槛」定位（拒绝弱/中口令，非安全保证）。
-- 下一窗口只做：由用户指定下一个 V1.0/高级趋势最小切片（候选：第三方日历同步最小化单向 ICS 订阅、审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计、密钥轮换）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：审计日志查询/展示端点 GET /backups/orphans/audit、单条删除/按龄/按数量保留清理补审计、密钥轮换）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
 - 不要重复做：不要重建 PassphraseStrengthValidator 算法或黑名单（只收紧入口拒绝级别，算法/阈值/黑名单不变）；不要给恢复端点加强度门槛（passphrase 已与备份绑定，强制会锁死历史备份）；不要改前端强度计为禁用提交按钮（后端是唯一闸门，不禁用）；不要新增评估端点（passphrase 本就要传给加密端点，无额外传输）；不要改 V1~V25 既有迁移；不要做可配置门槛档位（reject-weak/reject-fair/reject-below-strong 三档，超出最小切片）；不要改加密算法/迭代次数/passphrase 落盘规则/长度限制。
 
 > 这是跨窗口恢复工作的唯一动态文件。它记录当前代码状态，不替代 PRD、状态机、OpenAPI 或页面规格。任何模型开始工作前先读本文件；结束或即将中断时必须更新本文件。
@@ -164,7 +164,7 @@
 - 项目阶段：P1（V0.2）已完成二十五个切片；本窗口实现审计日志时间范围过滤（AT-52），在 `GET /audit-logs` 新增可选 `from`/`to`（ISO-8601 UTC，含边界）query 参数，与既有 `action`/`resourceType` 可任意组合，事后可按时间范围追溯审计记录。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：审计时间范围过滤切片（AT-52）已在窗口 2026-09-07-7 完成并发布；除 V0.3/V1 外无待实现的已定义 P0/P1 契约需求。
+- 当前任务：审计时间范围过滤切片（AT-52）已在窗口 2026-09-07-7 完成并发布；除 V0.3 外无待实现的已定义 P0/P1 契约需求；V1.0 跨端完整体验需求（第三方日历同步、飞书/钉钉/企业微信专有签名、跨设备同步、移动端深度优化）已从规格移除，不再作为后续切片。
 - 当前负责人窗口：Codex。
 - 最后更新：2026-09-07（窗口 2026-09-07-7）。
 
