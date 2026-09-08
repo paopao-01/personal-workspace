@@ -1,5 +1,32 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-08-3
+
+- 目标：实现「修复加密备份 E2E flaky（升级弱口令 + 选择器歧义）」最小切片——p1-encrypted-backup.spec.ts 全量 14 用例此前在 AT-36/AT-38/AT-39/AT-41/AT-42/AT-43/44 等 7 个用例持续 flaky 失败。根因经 systematic-debugging 实证定位（非交接记录的笼统判断）：AT-48（强制 strong 门槛，score≥70）切片在 2026-09-07-3 窗口收紧创建/武装门槛时，只同步升级了**后端集成测试**的 fair 口令（`TestPass1234`→`TestPass1234!plus`，后端基线全绿），**漏改 E2E spec 的 7 处弱口令**。`secret-${suffix}`（suffix=Date.now()，13 位数字）缺大写字母，基础分 70（lower+digit+symbol 凑 35+10+10+15），但 timestamp 数值大概率含连续 3 相同数字（如 `888`）触发 `hasRun` 扣 10 → 60（fair）被强门槛拒，创建/武装返回 400 而非 201/200，后续断言全垮。flaky 性来自 timestamp 数值随机性（是否含连续 3 相同数字），非环境资源竞争（此前多窗口交接记录的归因不准确）。本切片把 7 处提交口令统一加 `!Strong` 后缀（含大写+符号，基础分 80，hasRun 后仍 70 strong），与已通过的 AT-46/49/50/53 风格一致；并修一个被口令失败掩盖至今的独立确定性缺陷：AT-50/AT-54 的 `getByRole('heading', { name: '审计日志' })` 在 strict mode 下子串匹配到「孤儿清理审计日志」h3（含子串「审计日志」）+「审计日志」h2 两个元素触发 strict mode violation，单跑因渲染时序侥幸通过、全量跑稳定失败，加 `exact: true` 根除歧义。不改任何后端代码/规格契约/行为语义，纯测试基础设施修复。
+- 状态：**DONE**。
+- 已完成：
+  - 根因调查（systematic-debugging Phase 1-4）：(1) 单独复现 AT-49 拿真实错误信息 `Expected: 201, Received: 400`（`secret-${suffix}` 创建被拒）；(2) 用 node 复刻前端 `evaluatePassphraseStrength` 算分逻辑，实证 `secret-1788869753064` score=60（fair）——timestamp `788869753064` 含 `888` 触发 `hasRun` 扣 10，缺大写字母无 +10 兜底，70→60 被强门槛拒；(3) 对比通过用例（AT-46/49/50/53 均含大写字母+符号，基础 80，hasRun 后 70 strong）定位差异=缺大写字母；(4) 升级口令后全量 E2E 14 passed 证实假设。同时确认后端测试无 `secret-` 弱口令残留（grep backend/src/test 无匹配，AT-48 窗口已升级），根因范围仅限 E2E 层。
+  - E2E spec `frontend/e2e/p1-encrypted-backup.spec.ts` 升级 7 处提交口令为强口令：`secret-${suffix}`→`secret-${suffix}!Strong`（AT-36 创建/恢复 UI 输入 ×3、AT-36 restore multipart ×2、AT-39 create、AT-42 create、AT-44 create/restore）、`arm-secret-${suffix}`→`arm-secret-${suffix}!Strong`（AT-38 武装 UI 输入 + armSecret 常量 + not.toContain 断言）、`secret-${suffix}-${i}`→`secret-${suffix}-${i}!Strong`（AT-41 create ×3、AT-43 create ×2）。两处 `not.toContain(\`secret-${suffix}\`)` 回显断言同步升级为 `!Strong`（保持精确匹配完整口令值）。node 算分验证 4 种口令模板均稳定 score=70 strong（即使 timestamp 含连续 3 相同数字 hasRun 扣 10 后仍 70）。
+  - E2E spec `frontend/e2e/p1-encrypted-backup.spec.ts` 修选择器歧义：AT-50（line 1015）与 AT-54（line 1226）的 `getByRole('heading', { name: '审计日志' })` 加 `exact: true`，消除与「孤儿清理审计日志」h3 的子串歧义（Playwright `getByRole(name)` 默认子串匹配，「孤儿清理审计日志」含「审计日志」）。
+- 未完成：不改后端代码（根因在 E2E 测试数据，后端 PassphraseStrengthValidator 门槛正确）、不改规格契约文档（02-state-machines §9 门槛规则、03-openapi、04-database-design、01-page-spec、05-acceptance-test-cases 均描述行为契约不变，passphrase 门槛要求 strong 的规则本身正确，仅 E2E 测试数据未跟上门槛升级）、不做密钥轮换批量操作、不做第三方日历 ICS 订阅、不做 audit_log 复合索引（occurred_at 单列 V26 已建）。
+- 单窗口边界：本切片 3 文件（E2E spec 1 + 状态 1[本文件] + PRD §10 标注 1），在 MASTER_PROMPT ≤10 文件边界内。纯测试基础设施修复（升级测试口令 + 修选择器歧义），无新端点/表/列/迁移/语义变更，最小切片。
+- 修改文件：
+  - E2E：`frontend/e2e/p1-encrypted-backup.spec.ts`（7 处提交口令升级为 `!Strong` 强口令 + 2 处回显断言同步 + 2 处 heading 选择器加 `exact: true`）。
+  - 状态：`docs/jobhub/IMPLEMENTATION_STATUS.md`（本文件，新增窗口 2026-09-08-3 记录）。
+  - PRD：`jobhub-prd.md` §10 追加 E2E flaky 修复标注。
+- 已运行验证：
+  - `cd frontend && npm run typecheck && npm run lint`：全部通过（0 警告/0 错误，exit 0）。
+  - `cd frontend && npx playwright test e2e/p1-encrypted-backup.spec.ts --reporter=dot --workers=1`：**14 passed (45.2s)**，0 failed（此前 7 个 flaky 用例 AT-36/38/39/41/42/43/44 全部转绿，AT-50 选择器歧义修复后稳定通过；仅既有 React Router future flag 提示不影响断言）。
+  - `cd backend && mvn clean test`：229 tests，0 failures，0 errors，0 skipped（本切片未碰后端，基线不破坏）；Flyway V1→V26 成功。
+- 验证结果：加密备份 E2E 全量链路（AT-36 创建/列表/下载/恢复、AT-38 定时备份武装/cron 触发/恢复、AT-39 删除联动、AT-41 按龄清理、AT-42 孤儿扫描、AT-43 按数量保留、AT-44 恢复联动孤儿清理、AT-45 门槛、AT-46 重设提示、AT-49 孤儿审计查询、AT-50 全量审计查询、AT-53 密钥轮换、AT-54 审计导出）14 用例全绿；修复为纯测试数据/选择器修正，后端门槛规则与规格契约不变，passphrase 仍强制 strong、恢复仍豁免、passphrase 不落盘/不回显。
+- 已知问题：
+  - 升级后的口令 score=70（恰好 strong 阈值），依赖四类字符齐全（大写+小写+数字+符号）+长度≥16 达基础 80、hasRun 扣 10 后 70；若未来算法调整阈值或新增扣分项需同步复核。这是算法上限内的最优解（35+45=80，hasRun -10=70），与已通过的 AT-46/49/50/53 同量级稳定性。
+  - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
+  - `getByRole('heading', { name: '审计日志' })` 的子串歧义根因是 Playwright 默认子串匹配 + 两个含「审计日志」的标题共存；`exact: true` 根除歧义，不依赖渲染时序。
+  - 此前多个窗口交接记录把 flaky 归因为「弱口令 score<70 被 AT-48 门槛拒绝」方向正确但归因为「环境资源竞争/定时调度线程延迟」不准确——真实根因是 timestamp 数值随机性导致 hasRun 概率扣分，本切片实证确认。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：备份密钥轮换批量操作、其他用户指定切片）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。（第三方日历 ICS 订阅已随 V1.0 跨端需求从规格移除，不再作为候选。）
+- 不要重复做：不要把 E2E 口令改回弱口令（`secret-${suffix}` 被 AT-48 强门槛拒）；不要给 AT-50/AT-54 的 heading 选择器去掉 `exact: true`（会与「孤儿清理审计日志」h3 子串歧义）；不要改后端 PassphraseStrengthValidator 门槛（规则正确，是 E2E 测试数据当时未跟上门槛升级）；不要改规格契约文档（行为契约不变）；不要给 audit_log 加复合索引（occurred_at 单列 V26 已建）；不要做密钥轮换批量操作、第三方日历 ICS 订阅。
+
 ### 窗口 2026-09-08-2
 
 - 目标：实现「audit_log occurred_at 二级索引迁移」最小切片——新增 Flyway V26 迁移 `CREATE INDEX idx_audit_log_occurred_at ON audit_log(occurred_at)`，优化审计日志查询（`GET /audit-logs`、`GET /backups/orphans/audit`）与导出（`GET /audit-logs/export`）的 `ORDER BY occurred_at DESC` 排序与 `occurred_at >= ?`/`<= ?` 时间范围过滤性能。承接 2026-09-08-1「下一窗口只做」候选切片「audit_log occurred_at 二级索引迁移」（经用户从 3 候选中拍板）。`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（SQLite 支持反向扫描）与范围过滤。V1 建表时无二级索引此前走全表扫描（本地单用户量小可接受），本切片补索引面向未来数据增长。不新增表/列、不改 V1~V25 既有迁移、不改任何查询/导出语义结果（索引为纯性能优化，行为不变）。
@@ -255,12 +282,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十八个切片；本窗口新增 audit_log occurred_at 二级索引迁移（V26，AT-55），优化审计日志查询/导出排序与时间范围过滤性能，纯性能优化不改语义。
+- 项目阶段：P1（V0.2）已完成二十九个切片；本窗口修复加密备份 E2E flaky（升级弱口令 + heading 选择器歧义），p1-encrypted-backup.spec.ts 全量 14 用例转绿。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：audit_log occurred_at 二级索引切片（V26/AT-55）已在窗口 2026-09-08-2 完成并发布；除 V0.3 外无待实现的已定义 P0/P1 契约需求；V1.0 跨端完整体验需求（第三方日历同步、飞书/钉钉/企业微信专有签名、跨设备同步、移动端深度优化）已从规格移除，不再作为后续切片。
+- 当前任务：E2E flaky 修复切片（窗口 2026-09-08-3）已完成并发布；除 V0.3 外无待实现的已定义 P0/P1 契约需求；V1.0 跨端完整体验需求（第三方日历同步、飞书/钉钉/企业微信专有签名、跨设备同步、移动端深度优化）已从规格移除，不再作为后续切片。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-08（窗口 2026-09-08-2）。
+- 最后更新：2026-09-08（窗口 2026-09-08-3）。
 
 ## 2. 已完成内容
 
