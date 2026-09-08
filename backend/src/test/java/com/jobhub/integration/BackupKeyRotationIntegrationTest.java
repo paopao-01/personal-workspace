@@ -19,6 +19,7 @@ import org.springframework.core.io.ByteArrayResource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,8 @@ class BackupKeyRotationIntegrationTest extends AbstractIntegrationTest {
 
 	private static final String OLD_PASSPHRASE = "TestPass1234!plus";
 	private static final String NEW_PASSPHRASE = "AnotherStrong42!key";
+	/** 与 OLD_PASSPHRASE 不同的另一强口令，用于构造 oldPassphrase 不匹配的失败条。 */
+	private static final String ANOTHER_PASSPHRASE = "ThirdStrong99!pass";
 
 	private static final Path BACKUP_DIR = Paths.get("./target/backups");
 
@@ -343,5 +346,267 @@ class BackupKeyRotationIntegrationTest extends AbstractIntegrationTest {
 				+ "AND (before_snapshot_json IS NOT NULL OR after_snapshot_json IS NOT NULL)",
 			Integer.class, b.id);
 		assertThat(passInAudit).isZero();
+	}
+
+	/** POST /backups/rotate-keys 调用，返回响应（4xx/5xx 不抛异常，直接返回状态与体）。 */
+	private ResponseEntity<String> rotateKeys(List<String> backupIds, String oldPass, String newPass, String idempotencyKey) {
+		HttpHeaders h = new HttpHeaders();
+		h.setContentType(MediaType.APPLICATION_JSON);
+		if (idempotencyKey != null) {
+			h.add("Idempotency-Key", idempotencyKey);
+		}
+		StringBuilder ids = new StringBuilder("[");
+		for (int i = 0; i < backupIds.size(); i++) {
+			if (i > 0) ids.append(',');
+			ids.append('"').append(backupIds.get(i)).append('"');
+		}
+		ids.append(']');
+		String body = "{\"backupIds\":" + ids + ",\"oldPassphrase\":\"" + oldPass
+			+ "\",\"newPassphrase\":\"" + newPass + "\"}";
+		return restTemplate.exchange(url("/backups/rotate-keys"), HttpMethod.POST,
+			new HttpEntity<>(body, h), String.class);
+	}
+
+	@Test
+	void AT56_rotateKeysReEncryptsAllWithSingleOldAndNewPassphrase() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		CreatedBackup c = createBackup(OLD_PASSPHRASE);
+		Map<String, Object> aBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		Map<String, Object> bBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", b.id);
+		Map<String, Object> cBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+
+		ResponseEntity<String> res = rotateKeys(
+			java.util.List.of(a.id, b.id, c.id), OLD_PASSPHRASE, NEW_PASSPHRASE, TestFixtures.newKey());
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.intVal(body, "total")).isEqualTo(3);
+		assertThat(JsonProbe.intVal(body, "rotated")).isEqualTo(3);
+		assertThat(JsonProbe.intVal(body, "failed")).isEqualTo(0);
+		// results 数组含 3 项 SUCCESS，顺序与 backupIds 一致
+		assertThat(com.jobhub.integration.support.JsonProbe.collectArrayField(body, "results", "backupId"))
+			.containsExactly(a.id, b.id, c.id);
+		assertThat(com.jobhub.integration.support.JsonProbe.collectArrayField(body, "results", "status")
+			.stream().allMatch("SUCCESS"::equals)).isTrue();
+		// 响应不回显 passphrase
+		assertThat(body).doesNotContain(OLD_PASSPHRASE);
+		assertThat(body).doesNotContain(NEW_PASSPHRASE);
+
+		// salt/iv 已变
+		Map<String, Object> aAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		assertThat(aAfter.get("salt")).isNotEqualTo(aBefore.get("salt"));
+		assertThat(aAfter.get("iv")).isNotEqualTo(aBefore.get("iv"));
+		Map<String, Object> bAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", b.id);
+		assertThat(bAfter.get("salt")).isNotEqualTo(bBefore.get("salt"));
+		Map<String, Object> cAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+		assertThat(cAfter.get("salt")).isNotEqualTo(cBefore.get("salt"));
+
+		// 审计有 3 条 BACKUP_KEY_ROTATED
+		long audit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED' "
+				+ "AND resource_id IN (?, ?, ?)", Long.class, a.id, b.id, c.id);
+		assertThat(audit).isEqualTo(3);
+
+		// 旧口令恢复 → 422；新口令恢复 → 200（明文未变）
+		byte[] encA = Files.readAllBytes(a.file);
+		assertThat(restore(encA, OLD_PASSPHRASE).getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+		jdbc.execute("DELETE FROM requirement_skill");
+		jdbc.execute("DELETE FROM requirement_match");
+		jdbc.execute("DELETE FROM job_requirement");
+		jdbc.execute("DELETE FROM job_posting");
+		ResponseEntity<String> restoreNew = restore(encA, NEW_PASSPHRASE);
+		assertThat(restoreNew.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(restoreNew.getBody(), "inserted")).isPositive();
+
+		// 临时文件已清理
+		assertThat(Files.exists(Paths.get(a.file.toString() + ".tmp"))).isFalse();
+	}
+
+	@Test
+	void AT56_partialFailureDoesNotBlockOthers() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		CreatedBackup c = createBackup(OLD_PASSPHRASE);
+		// C 用不同口令（构造 oldPassphrase 不匹配）
+		// 注：C 已用 OLD_PASSPHRASE 创建，这里改成用 WRONG 解密批量请求构造失败条
+		Map<String, Object> cBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+
+		ResponseEntity<String> res = rotateKeys(
+			java.util.List.of(a.id, b.id, c.id), "wrong-old-passphrase", NEW_PASSPHRASE, TestFixtures.newKey());
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.intVal(body, "total")).isEqualTo(3);
+		// A/B/C 三个旧口令都不匹配（因 oldPassphrase=wrong），全部 failed
+		assertThat(JsonProbe.intVal(body, "rotated")).isEqualTo(0);
+		assertThat(JsonProbe.intVal(body, "failed")).isEqualTo(3);
+		// 无审计写入（失败条不写）
+		long audit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED'", Long.class);
+		assertThat(audit).isZero();
+		// C 的 salt/iv 未变（无副作用）
+		Map<String, Object> cAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+		assertThat(cAfter.get("salt")).isEqualTo(cBefore.get("salt"));
+	}
+
+	@Test
+	void AT56_partialSuccessWithOneWrongPassphrase() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		CreatedBackup c = createBackup(ANOTHER_PASSPHRASE); // C 用不同口令创建
+		Map<String, Object> aBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		Map<String, Object> cBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+
+		// 用 OLD_PASSPHRASE 批量轮换：A/B 成功，C 失败（C 用 ANOTHER 创建，oldPassphrase 不匹配）
+		ResponseEntity<String> res = rotateKeys(
+			java.util.List.of(a.id, b.id, c.id), OLD_PASSPHRASE, NEW_PASSPHRASE, TestFixtures.newKey());
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		assertThat(JsonProbe.intVal(body, "total")).isEqualTo(3);
+		assertThat(JsonProbe.intVal(body, "rotated")).isEqualTo(2);
+		assertThat(JsonProbe.intVal(body, "failed")).isEqualTo(1);
+
+		// A 的 salt 已更新（成功），C 的 salt 未变（失败，无副作用）
+		Map<String, Object> aAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		assertThat(aAfter.get("salt")).isNotEqualTo(aBefore.get("salt"));
+		Map<String, Object> cAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", c.id);
+		assertThat(cAfter.get("salt")).isEqualTo(cBefore.get("salt"));
+
+		// 审计仅对 A/B 各一条，C 无
+		long auditA = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED' AND resource_id = ?",
+			Long.class, a.id);
+		assertThat(auditA).isEqualTo(1);
+		long auditC = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED' AND resource_id = ?",
+			Long.class, c.id);
+		assertThat(auditC).isZero();
+	}
+
+	@Test
+	void AT56_weakNewPassphraseReturns400NoSideEffect() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		Map<String, Object> aBefore = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		long auditBefore = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED'", Long.class);
+
+		// 弱口令 → 400 fail fast，不处理任何备份
+		ResponseEntity<String> bad = rotateKeys(
+			java.util.List.of(a.id, b.id), OLD_PASSPHRASE, "aaaaaaaa", TestFixtures.newKey());
+		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(bad.getBody()).contains("score");
+
+		// 无副作用：salt/iv 未变，审计无新增
+		Map<String, Object> aAfter = jdbc.queryForMap(
+			"SELECT salt, iv, size_bytes FROM backup_record WHERE id = ?", a.id);
+		assertThat(aAfter.get("salt")).isEqualTo(aBefore.get("salt"));
+		long auditAfter = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED'", Long.class);
+		assertThat(auditAfter).isEqualTo(auditBefore);
+	}
+
+	@Test
+	void AT56_emptyBackupIdsReturns400() {
+		HttpHeaders h = new HttpHeaders();
+		h.setContentType(MediaType.APPLICATION_JSON);
+		String body = "{\"backupIds\":[],\"oldPassphrase\":\"" + OLD_PASSPHRASE
+			+ "\",\"newPassphrase\":\"" + NEW_PASSPHRASE + "\"}";
+		ResponseEntity<String> bad = restTemplate.exchange(url("/backups/rotate-keys"), HttpMethod.POST,
+			new HttpEntity<>(body, h), String.class);
+		assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT56_duplicateBackupIdsDeduplicated() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		Map<String, Object> aBefore = jdbc.queryForMap(
+			"SELECT salt FROM backup_record WHERE id = ?", a.id);
+
+		// backupIds=[A,A,A] → 去重只处理一次
+		ResponseEntity<String> res = rotateKeys(
+			java.util.List.of(a.id, a.id, a.id), OLD_PASSPHRASE, NEW_PASSPHRASE, TestFixtures.newKey());
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "total")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(res.getBody(), "rotated")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(res.getBody(), "failed")).isEqualTo(0);
+
+		// salt 已变（只轮换一次）
+		Map<String, Object> aAfter = jdbc.queryForMap(
+			"SELECT salt FROM backup_record WHERE id = ?", a.id);
+		assertThat(aAfter.get("salt")).isNotEqualTo(aBefore.get("salt"));
+		// 审计只有一条
+		long audit = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED' AND resource_id = ?",
+			Long.class, a.id);
+		assertThat(audit).isEqualTo(1);
+	}
+
+	@Test
+	void AT56_missingBackupIdCountedAsFailed() {
+		String missingId = java.util.UUID.randomUUID().toString();
+		ResponseEntity<String> res = rotateKeys(
+			java.util.List.of(missingId), OLD_PASSPHRASE, NEW_PASSPHRASE, TestFixtures.newKey());
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(res.getBody(), "total")).isEqualTo(1);
+		assertThat(JsonProbe.intVal(res.getBody(), "rotated")).isEqualTo(0);
+		assertThat(JsonProbe.intVal(res.getBody(), "failed")).isEqualTo(1);
+		// 无审计写入
+		Integer count = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED' AND resource_id = ?",
+			Integer.class, missingId);
+		assertThat(count).isZero();
+	}
+
+	@Test
+	void AT56_idempotentReplayDoesNotReRotateOrDuplicateAudit() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		String key = TestFixtures.newKey();
+
+		ResponseEntity<String> first = rotateKeys(
+			java.util.List.of(a.id, b.id), OLD_PASSPHRASE, NEW_PASSPHRASE, key);
+		assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+		Map<String, Object> aAfterFirst = jdbc.queryForMap(
+			"SELECT salt, iv FROM backup_record WHERE id = ?", a.id);
+		long auditFirst = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED'", Long.class);
+
+		// 幂等回放：返回首次缓存响应，salt/iv 不再变化，审计不重复
+		ResponseEntity<String> replay = rotateKeys(
+			java.util.List.of(a.id, b.id), OLD_PASSPHRASE, NEW_PASSPHRASE, key);
+		assertThat(replay.getStatusCode()).isEqualTo(HttpStatus.OK);
+		Map<String, Object> aAfterReplay = jdbc.queryForMap(
+			"SELECT salt, iv FROM backup_record WHERE id = ?", a.id);
+		assertThat(aAfterReplay.get("salt")).isEqualTo(aAfterFirst.get("salt"));
+		assertThat(aAfterReplay.get("iv")).isEqualTo(aAfterFirst.get("iv"));
+		long auditReplay = jdbc.queryForObject(
+			"SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_KEY_ROTATED'", Long.class);
+		assertThat(auditReplay).isEqualTo(auditFirst);
+	}
+
+	@Test
+	void AT56_auditLogQueryFiltersByBackupKeyRotated() throws Exception {
+		CreatedBackup a = createBackup(OLD_PASSPHRASE);
+		CreatedBackup b = createBackup(OLD_PASSPHRASE);
+		rotateKeys(java.util.List.of(a.id, b.id), OLD_PASSPHRASE, NEW_PASSPHRASE, TestFixtures.newKey());
+
+		// GET /audit-logs?action=BACKUP_KEY_ROTATED 可查到 2 条
+		ResponseEntity<String> byAction = restTemplate.getForEntity(
+			url("/audit-logs?action=BACKUP_KEY_ROTATED"), String.class);
+		assertThat(byAction.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.intVal(byAction.getBody(), "total")).isGreaterThanOrEqualTo(2);
 	}
 }

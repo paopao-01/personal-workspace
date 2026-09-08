@@ -70,6 +70,28 @@ export async function rotateBackupKey(
   return res.data
 }
 
+/**
+ * 批量密钥轮换（逐条就地重加密）：对一组 backup_record 用同一 oldPassphrase 解密、同一 newPassphrase
+ * 重新加密。逐条独立事务，部分成功不阻塞其他；非销毁性操作，无 X-Confirm-Permanent-Delete（oldPassphrase
+ * 解密成功即授权）；携带 Idempotency-Key。HTTP 200 即使部分或全部失败也 200，摘要反映结果；仅 newPassphrase
+ * 弱返回 400、backupIds 非法返回 400。两个 passphrase 仅写入不回显。
+ */
+export async function rotateBackupKeys(
+  backupIds: string[],
+  oldPassphrase: string,
+  newPassphrase: string,
+): Promise<RotateKeysSummary> {
+  const res = await apiClient.post<RotateKeysSummary>(
+    '/backups/rotate-keys',
+    { backupIds, oldPassphrase, newPassphrase },
+    { headers: { 'Idempotency-Key': newIdempotencyKey() } },
+  )
+  return res.data
+}
+
+export type RotateKeysSummary = Schemas['RotateKeysSummary']
+export type RotateKeyResult = Schemas['RotateKeyResult']
+
 export function useBackups() {
   return useQuery<BackupRecord[], Error>({
     queryKey: BACKUPS_KEY,
@@ -105,6 +127,19 @@ export function useRotateBackupKey() {
   return useMutation<BackupRecord, Error, { id: string; oldPassphrase: string; newPassphrase: string }>({
     mutationFn: ({ id, oldPassphrase, newPassphrase }) =>
       rotateBackupKey(id, oldPassphrase, newPassphrase),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
+      void queryClient.invalidateQueries({ queryKey: AUDIT_LOG_KEY })
+    },
+  })
+}
+
+/** 批量密钥轮换；成功后刷新备份列表（成功条 sizeBytes 可变）与审计日志。 */
+export function useRotateBackupKeys() {
+  const queryClient = useQueryClient()
+  return useMutation<RotateKeysSummary, Error, { backupIds: string[]; oldPassphrase: string; newPassphrase: string }>({
+    mutationFn: ({ backupIds, oldPassphrase, newPassphrase }) =>
+      rotateBackupKeys(backupIds, oldPassphrase, newPassphrase),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: BACKUPS_KEY })
       void queryClient.invalidateQueries({ queryKey: AUDIT_LOG_KEY })

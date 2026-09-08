@@ -396,6 +396,17 @@ ABANDONED ──restore──> TODO
 - 幂等性：由轮换端点的 `Idempotency-Key` 保证（重复回放不重新执行 → 不重复写审计）。无需额外去重。
 - `audit_log` 表在 V1 初始迁移已存在，**不新增表/列/迁移**；审计记录仅追加，不提供更新或删除接口（同既有 `AuditLogMapper` 仅 `insert`）。
 
+**批量密钥轮换（逐条就地重加密）**：`POST /backups/rotate-keys`（复数，区别于单条 `/backups/{backupId}/rotate-key`）在不新建备份、不改备份 id 与明文数据的前提下，对一组 `backup_record` 用**同一** `oldPassphrase` 解密、**同一** `newPassphrase` + 各自新随机 `salt`/`iv` 重新加密同一明文。逐条独立事务（每条 `@Transactional` 独立提交/回滚），复用单条 `rotateKey` 的全部逻辑与一致性保证，适用于「多个备份共享同一旧口令」的批量换口令场景。
+
+- 批量前置：body 含 `backupIds`（非空字符串数组、去重、每项为 UUID）+ `oldPassphrase` + `newPassphrase`（均 8–256 字符）。**无** `X-Confirm-Permanent-Delete` 确认头（轮换非销毁性，`oldPassphrase` 解密成功即授权，同逐条）。携带 `Idempotency-Key`（写操作）。
+- `newPassphrase` 强度门槛（强制，要求 strong）：**先于任何单条轮换**校验（fail fast：`score<70` 返回 400 `VALIDATION_ERROR`，message 含 `score=X/100，需 ≥70`，**不处理任何备份**——不解密、不落盘、不写审计，无任何副作用）。`oldPassphrase` 豁免强度门槛（同逐条语义）。
+- 逐条独立·部分成功：循环对每个 `backupId` 调用单条 `rotateKey`（经 self-injection 确保独立事务边界，避免 Spring 自调用事务失效）。每条成功 → `rotated++` + 事务内写一条 `BACKUP_KEY_ROTATED` 审计（随该条事务提交/回滚强一致，复用 AT-53 审计范式）；每条失败（422 `oldPassphrase` 错/文件损坏、404 不存在、其他）→ `failed++` + 记 `{backupId, status=FAILED, reason}`，**不阻塞其他条**，失败条不写审计（未改写任何记录）。与批量清理 `purge` 的逐条独立范式一致。
+- 响应 `RotateKeysSummary { total, rotated, failed, results: [{backupId, status: SUCCESS|FAILED, reason?}] }`，HTTP **200**（即使部分或全部失败也 200，摘要反映结果；仅 `newPassphrase` 弱返回 400、`backupIds` 非法返回 400）。`status=SUCCESS` 的 `reason` 省略，`status=FAILED` 的 `reason` 含可读失败原因（如「passphrase 错误或备份文件损坏」「备份记录不存在」）。
+- 一致性：每条独立事务 + `afterCommit` 原子文件覆盖，单条回滚不影响其他；与批量清理 `purge` 的逐条独立范式一致。`newPassphrase` 与 `oldPassphrase` 相同不拒绝（仍刷新各 `salt`/`iv`，合法重加密）。`last_backup_id`/`data_export_id`/`armed` 不受影响（同逐条）。passphrase 与派生密钥永不持久化、不进日志、不回显。
+- 幂等性：由端点 `Idempotency-Key` 保证（重复回放命中幂等记录返回首次缓存响应，不重新解密/重加密/更新/写审计）。
+- 审计：每个成功轮换写一条 `BACKUP_KEY_ROTATED`（复用 `AuditLogEntry.backupKeyRotated`，事务内强一致，同逐条；失败条不写审计）。事后经 `GET /audit-logs?action=BACKUP_KEY_ROTATED` 或 `resourceType=BACKUP_RECORD` 查询。
+- **不新增表/列/迁移/索引**（复用 V1 `backup_record` + `audit_log` + `updateSaltIvSize`），不改加密算法/迭代次数/passphrase 落盘规则，不审计失败的轮换条。
+
 ## 8. 能力、证据与删除状态
 
 ### 8.1 技能维度

@@ -1063,6 +1063,43 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /backups/rotate-keys:
+    post:
+      tags: [Backups]
+      summary: 批量密钥轮换（逐条就地重加密：同一 oldPassphrase 解密 → 同一 newPassphrase 重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
+      description: |
+        在不新建备份、不改备份 id 与明文数据的前提下，对一组 `backup_record` 用**同一** `oldPassphrase` 解密、**同一**
+        `newPassphrase` + 各自新随机 `salt`/`iv` 重新加密同一明文。适用于「多个备份共享同一旧口令」的批量换口令场景。
+
+        处理流程：(1) **先**校验 `newPassphrase` 强度门槛（强制，要求 strong：`score<70` 返回 400，fail fast——
+        不处理任何备份，无副作用）；(2) `backupIds` 非空、去重；(3) 逐条循环调用单条 `rotateKey`（经 self-injection
+        确保每条独立事务边界，避免 Spring 自调用事务失效）：每条成功 → `rotated++` + 事务内写一条
+        `action=BACKUP_KEY_ROTATED`、`resourceType=BACKUP_RECORD` 审计（随该条事务提交/回滚强一致，复用 AT-53 范式）；
+        每条失败（422 `oldPassphrase` 错/文件损坏、404 不存在、其他）→ `failed++` + 记 `{backupId, status=FAILED, reason}`，
+        **不阻塞其他条**，失败条不写审计。
+
+        逐条独立·部分成功（与批量清理 `purge` 的逐条独立范式一致）：HTTP **200** 即使部分或全部失败也 200，
+        摘要 `RotateKeysSummary` 反映结果；仅 `newPassphrase` 弱返回 400、`backupIds` 非法返回 400。`newPassphrase` 与
+        `oldPassphrase` 相同不拒绝（仍刷新各 `salt`/`iv`，合法重加密）。`oldPassphrase` **豁免**强度门槛（同逐条语义）。
+        `last_backup_id`/`data_export_id`/`armed` 不受影响（同逐条）。
+
+        非销毁性操作，**无** `X-Confirm-Permanent-Delete`（`oldPassphrase` 解密成功即授权，同逐条）。passphrase 与派生
+        密钥永不持久化、不进日志、不回显。幂等性由 `Idempotency-Key` 保证（重复回放返回首次缓存响应，不重新执行）。
+        不新增表/列/迁移/索引（复用 V1 `backup_record` + `audit_log` + `updateSaltIvSize`），不改加密算法/迭代次数/
+        passphrase 落盘规则。事后追溯经 `GET /audit-logs?action=BACKUP_KEY_ROTATED` 查询。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateKeysRequest' }
+      responses:
+        '200':
+          description: 批量轮换摘要（即使部分或全部失败也 200，摘要反映结果）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateKeysSummary' }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /backups/restore:
     post:
       tags: [Backups]
@@ -2585,6 +2622,35 @@ components:
       properties:
         oldPassphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于解密既有 .enc 密文以证明持有当前保护口令（解密成功即授权），豁免强度门槛（同恢复端点）。永不回显或存储 }
         newPassphrase: { type: string, minLength: 8, maxLength: 256, description: "仅写入；用于 PBKDF2 派生新 AES-256-GCM 密钥重新加密明文，永不回显或存储。强度门槛（强制，要求 strong）：score<70（弱或中）返回 400，详见 POST /backups/{backupId}/rotate-key 描述与 02-state-machines.md §9" }
+    RotateKeysRequest:
+      type: object
+      required: [backupIds, oldPassphrase, newPassphrase]
+      properties:
+        backupIds:
+          type: array
+          minItems: 1
+          items: { type: string, format: uuid }
+          description: 待轮换的 backup_record id 列表，非空、去重；每项为 UUID。批量轮换对全部条目用同一 oldPassphrase/newPassphrase
+        oldPassphrase: { type: string, minLength: 8, maxLength: 256, description: 仅写入；用于解密全部待轮换备份的既有 .enc 密文（同一旧口令），解密成功即授权，豁免强度门槛。永不回显或存储 }
+        newPassphrase: { type: string, minLength: 8, maxLength: 256, description: "仅写入；用于 PBKDF2 派生新 AES-256-GCM 密钥重新加密全部待轮换备份（同一新口令），永不回显或存储。强度门槛（强制，要求 strong）：score<70 返回 400 fail fast 不处理任何备份，详见 POST /backups/rotate-keys 描述与 02-state-machines.md §9" }
+    RotateKeysSummary:
+      type: object
+      required: [total, rotated, failed, results]
+      properties:
+        total: { type: integer, description: 处理的备份总数（去重后 backupIds 长度） }
+        rotated: { type: integer, description: 成功轮换的备份数（每条写一条 BACKUP_KEY_ROTATED 审计） }
+        failed: { type: integer, description: 轮换失败的备份数（oldPassphrase 错/文件损坏/记录不存在等，不阻塞其他） }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/RotateKeyResult' }
+          description: 每个待轮换备份的处理结果，顺序与去重后 backupIds 一致
+    RotateKeyResult:
+      type: object
+      required: [backupId, status]
+      properties:
+        backupId: { type: string, format: uuid, description: 待轮换的 backup_record id }
+        status: { type: string, enum: [SUCCESS, FAILED], description: 该条轮换结果 }
+        reason: { type: string, description: 仅 FAILED 时有；可读失败原因（如 passphrase 错误或备份文件损坏、备份记录不存在）。SUCCESS 时省略 }
     BackupScheduleUpdateRequest:
       type: object
       required: [cronExpression, enabled, version]

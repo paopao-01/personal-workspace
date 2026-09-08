@@ -122,6 +122,17 @@ public class BackupController {
 		return BackupRecordResponse.from(record);
 	}
 
+	/**
+	 * 批量密钥轮换（逐条就地重加密）：对一组 backup_record 用同一 oldPassphrase 解密、同一 newPassphrase
+	 * 重新加密。逐条独立事务，部分成功不阻塞其他；非销毁性操作，无 X-Confirm-Permanent-Delete（oldPassphrase
+	 * 解密成功即授权）；携带 Idempotency-Key。HTTP 200 即使部分或全部失败也 200，摘要反映结果；仅 newPassphrase
+	 * 弱返回 400、backupIds 非法返回 400。
+	 */
+	@PostMapping("/backups/rotate-keys")
+	public RotateKeysSummary rotateKeys(@Valid @RequestBody RotateKeysRequest request) {
+		return service.rotateKeys(request.getBackupIds(), request.getOldPassphrase(), request.getNewPassphrase());
+	}
+
 	@DeleteMapping("/backups/{backupId}")
 	public ResponseEntity<Void> delete(@PathVariable String backupId,
 			@RequestHeader(value = "X-Confirm-Permanent-Delete", required = false) Boolean confirm) {

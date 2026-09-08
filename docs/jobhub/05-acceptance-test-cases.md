@@ -946,8 +946,48 @@ Then 返回 200 且每行 occurredAt 列 >= from（范围过滤行为不变）
 And 全程查询与导出结果与加索引前完全一致（索引为性能优化，不改变语义结果）
 ```
 
+### AT-56 批量密钥轮换（POST /backups/rotate-keys 逐条就地重加密：同一旧口令解密 → 同一新口令重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
+
+```gherkin
+Given 用户已用强口令（score>=70）创建三条加密备份（id=A/B/C，均用同一 OLD_PASSPHRASE 加密），记各 salt_old/iv_old/size_old
+When 用户调用 POST /api/backups/rotate-keys（携带 Idempotency-Key，body {backupIds=[A,B,C], oldPassphrase=OLD_PASSPHRASE, newPassphrase=另一强口令 NEW_PASSPHRASE}）
+Then 返回 200 且响应为 RotateKeysSummary，total=3、rotated=3、failed=0
+And results 数组含 3 项，每项 {backupId, status=SUCCESS}（reason 省略），顺序与去重后 backupIds 一致
+And backup_record A/B/C 的 salt != salt_old、iv != iv_old、size_bytes 反映新密文大小
+And 落盘 .enc 文件均已用 NEW_PASSPHRASE + 各自新 salt/iv 重新加密（旧密文被覆盖），临时文件已清理
+And 审计日志有三条 action=BACKUP_KEY_ROTATED、resourceType=BACKUP_RECORD、resourceId 分别为 A/B/C、reason 含轮换说明、occurredAt 非空（每成功条一条）
+When 用 OLD_PASSPHRASE 经 POST /api/backups/restore 恢复 A 的 .enc 文件
+Then 返回 422（旧口令已不可解密）
+When 用 NEW_PASSPHRASE 经 POST /api/backups/restore 恢复 A 的 .enc 文件
+Then 返回 200 且恢复成功（明文数据未变）
+And last_backup_id 不受影响（A/B/C id 不变）
+And 任何时刻 DB 不存储 passphrase 或派生密钥，响应不含 passphrase/salt/iv/score/level
+Given 用户已用强口令创建三条备份（id=A/B/C，A/B 用 OLD_PASSPHRASE，C 用另一口令 WRONG）
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[A,B,C], oldPassphrase=OLD_PASSPHRASE, newPassphrase=NEW_PASSPHRASE}）
+Then 返回 200 且 RotateKeysSummary total=3、rotated=2、failed=1
+And results 含 A/B 的 status=SUCCESS、C 的 status=FAILED 且 reason 含 passphrase 错误或备份文件损坏
+And A/B 的 salt/iv 已更新为新值，C 的 salt/iv/size_bytes 未变（无副作用，逐条独立事务）
+And 审计日志仅对 A/B 各写一条 BACKUP_KEY_ROTATED，C 无审计（失败条不写）
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[X,Y,Z 均用错误旧口令], oldPassphrase=OLD_PASSPHRASE, newPassphrase=NEW_PASSPHRASE}）
+Then 返回 200 且 total=3、rotated=0、failed=3（全部失败也 200，摘要反映结果）
+And 三条备份的 salt/iv/size_bytes 均未变，审计无新增
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[A,B,C], oldPassphrase=OLD_PASSPHRASE, newPassphrase=弱口令 score<70}）
+Then 返回 400 VALIDATION_ERROR，message 含 score 与 >=70（fail fast：newPassphrase 弱不处理任何备份）
+And A/B/C 的 salt/iv/size_bytes 均未变，.enc 文件未变，审计无新增（不解密不落盘不写审计）
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[不存在ID], oldPassphrase=任意, newPassphrase=强口令}）
+Then 返回 200 且 total=1、rotated=0、failed=1，该条 status=FAILED reason 含记录不存在
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[], oldPassphrase=OLD, newPassphrase=NEW}）
+Then 返回 400（backupIds 空数组非法）
+When 用户调用 POST /api/backups/rotate-keys（body {backupIds=[A,A,A], oldPassphrase=OLD, newPassphrase=NEW}）
+Then 返回 200 且 total=1（去重后只处理一次 A）、rotated=1、failed=0
+When 用户携带同一 Idempotency-Key 重复调用 POST /api/backups/rotate-keys
+Then 返回首次缓存的相同摘要，salt/iv 不再变化，审计不重复写入（幂等回放不重新执行）
+When GET /api/audit-logs?action=BACKUP_KEY_ROTATED
+Then 返回 200 且 items 含上述批量轮换审计记录
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-55 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-56 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
