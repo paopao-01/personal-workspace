@@ -29,13 +29,6 @@ import { PassphraseStrengthMeter } from './PassphraseStrengthMeter'
 
 const AUDIT_PAGE_SIZE = 20
 
-/** 从审计 reason 文本（含 freedBytes=N 子串）解析释放字节数，失败回退到 null。 */
-function parseFreedBytes(reason: string | undefined): number | null {
-  if (!reason) return null
-  const match = reason.match(/freedBytes=(\d+)/)
-  return match ? Number(match[1]) : null
-}
-
 const LAST_RUN_STATUS_LABEL: Record<string, string> = {
   SUCCESS: '成功',
   FAILED: '失败',
@@ -726,7 +719,7 @@ export function EncryptedBackupSection() {
             <>
               <Table headers={['时间', '文件 ID', '释放字节', '详情']}>
                 {(auditQuery.data?.items ?? []).map((entry) => {
-                  const freed = parseFreedBytes(entry.reason)
+                  const freed = entry.freedBytes
                   return (
                     <tr key={entry.id}>
                       <td>{formatDateTime(entry.occurredAt)}</td>

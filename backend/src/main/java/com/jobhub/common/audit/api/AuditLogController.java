@@ -115,7 +115,7 @@ public class AuditLogController {
 
 	private static final byte[] CRLF = {'\r', '\n'};
 	private static final byte[] UTF8_BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
-	private static final String[] CSV_COLUMNS = {"id", "resourceType", "resourceId", "action", "reason", "occurredAt"};
+	private static final String[] CSV_COLUMNS = {"id", "resourceType", "resourceId", "action", "reason", "freedBytes", "occurredAt"};
 
 	/** 把审计条目列表序列化为 JSON 数组（与查询端点 items 元素结构对齐，省略恒 null 的快照字段）。 */
 	private static byte[] toJson(List<AuditLogEntry> entries) {
@@ -130,6 +130,7 @@ public class AuditLogController {
 					.append(",\"resourceId\":").append(jsonString(e.getResourceId()))
 					.append(",\"action\":").append(jsonString(e.getAction()))
 					.append(",\"reason\":").append(jsonString(e.getReason()))
+					.append(",\"freedBytes\":").append(e.getFreedBytes() == null ? "null" : e.getFreedBytes())
 					.append(",\"occurredAt\":").append(jsonString(e.getOccurredAt()))
 					.append('}');
 		}
@@ -146,7 +147,9 @@ public class AuditLogController {
 			out.write(CRLF);
 			for (AuditLogEntry e : entries) {
 				String[] values = {e.getId(), e.getResourceType(), e.getResourceId(),
-						e.getAction(), e.getReason(), e.getOccurredAt()};
+						e.getAction(), e.getReason(),
+						e.getFreedBytes() == null ? "" : e.getFreedBytes().toString(),
+						e.getOccurredAt()};
 				out.write(csvRow(values).getBytes(StandardCharsets.UTF_8));
 				out.write(CRLF);
 			}

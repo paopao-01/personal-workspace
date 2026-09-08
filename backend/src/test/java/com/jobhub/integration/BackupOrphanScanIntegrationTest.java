@@ -223,15 +223,16 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.lng(body, "freedBytes")).isGreaterThan(0L);
 
 		// audit_log 为每个被删孤儿追加一条：resource_type=BACKUP_FILE、resource_id=被删文件 UUID、
-		// action=BACKUP_ORPHAN_CLEANED、before/after 快照为 null、reason 含 freedBytes、occurred_at 非空
+		// action=BACKUP_ORPHAN_CLEANED、before/after 快照为 null、reason 不含 freedBytes 子串、freed_bytes 列有值、occurred_at 非空
 		Map<String, Object> row1 = jdbc.queryForMap(
-			"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, occurred_at "
+			"SELECT resource_type, resource_id, action, before_snapshot_json, after_snapshot_json, reason, freed_bytes, occurred_at "
 				+ "FROM audit_log WHERE action = 'BACKUP_ORPHAN_CLEANED' AND resource_id = ?", orphan1.id);
 		assertThat(row1.get("resource_type")).isEqualTo("BACKUP_FILE");
 		assertThat(row1.get("action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
 		assertThat(row1.get("before_snapshot_json")).isNull();
 		assertThat(row1.get("after_snapshot_json")).isNull();
-		assertThat(String.valueOf(row1.get("reason"))).contains("freedBytes=");
+		assertThat(String.valueOf(row1.get("reason"))).doesNotContain("freedBytes=");
+		assertThat(((Number) row1.get("freed_bytes")).longValue()).isGreaterThan(0L);
 		assertThat(row1.get("occurred_at")).asString().isNotEmpty();
 		assertThat(row1.get("resource_id")).isEqualTo(orphan1.id);
 
@@ -323,11 +324,12 @@ class BackupOrphanScanIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
 		assertThat(JsonProbe.intVal(body, "totalPages")).isEqualTo(1);
 		assertThat(JsonProbe.arraySize(body, "items")).isEqualTo(2);
-		// 每条字段：id 非空 UUID、resourceId 为被删文件 UUID、action 固定、reason 含 freedBytes、occurredAt 非空
+		// 每条字段：id 非空 UUID、resourceId 为被删文件 UUID、action 固定、reason 不含 freedBytes 子串、freedBytes 结构化字段>0、occurredAt 非空
 		String a0 = JsonProbe.arrStr(body, "items", 0, "action");
 		assertThat(a0).isEqualTo("BACKUP_ORPHAN_CLEANED");
 		assertThat(JsonProbe.arrStr(body, "items", 0, "id")).isNotBlank();
-		assertThat(JsonProbe.arrStr(body, "items", 0, "reason")).contains("freedBytes=");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "reason")).doesNotContain("freedBytes=");
+		assertThat(JsonProbe.arrLng(body, "items", 0, "freedBytes")).isGreaterThan(0L);
 		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isNotBlank();
 		// resourceId 必为两个孤儿 id 之一（排序后首条是最新删除的那个）
 		String r0 = JsonProbe.arrStr(body, "items", 0, "resourceId");

@@ -712,7 +712,7 @@ And 响应不回显 passphrase 的 score 或 level 等派生信息（仅返回�
 Given backup-dir 下存在 2 个无 backup_record 对应的合法 UUID 命名孤儿 .enc 文件，且 backup_record 有一条合法记录对应一个 .enc 文件
 When 用户在设置页孤儿清理入口二次确认后点击「清理孤儿文件」（POST /api/backups/orphans/clean，携带 X-Confirm-Permanent-Delete: true）
 Then 返回 200 且 BackupOrphanCleanSummary 的 deletedFiles=2、freedBytes>0、skippedFiles=0（合法文件保留）
-And audit_log 表新增 2 条记录，每条 resource_type=BACKUP_FILE、resource_id=被删文件名去 .enc 的 UUID、action=BACKUP_ORPHAN_CLEANED、before/after_snapshot_json 为 null、reason 含 freedBytes、occurred_at 为非空 UTC ISO
+And audit_log 表新增 2 条记录，每条 resource_type=BACKUP_FILE、resource_id=被删文件名去 .enc 的 UUID、action=BACKUP_ORPHAN_CLEANED、before/after_snapshot_json 为 null、reason 不含 freedBytes 子串、freed_bytes 为被删文件字节数（>0）、occurred_at 为非空 UTC ISO
 And 响应不回显审计信息（BackupOrphanCleanSummary 不含审计字段），passphrase 不落库/不回显/不进日志
 When backup-dir 下无孤儿（仅有合法 .enc 文件或目录不存在）
 Then 返回 200 且 deletedFiles=0，audit_log 未新增任何记录（空操作无可追溯）
@@ -752,7 +752,7 @@ Given backup-dir 下存在 2 个无 backup_record 对应的合法 UUID 命名孤
 When 用户在设置页孤儿清理入口二次确认后点击「清理孤儿文件」（POST /api/backups/orphans/clean，携带 X-Confirm-Permanent-Delete: true）
 Then 返回 200 且 deletedFiles=2，audit_log 表新增 2 条 BACKUP_ORPHAN_CLEANED 记录
 When 用户调用 GET /api/backups/orphans/audit?page=1&pageSize=20（只读，不携带确认头与幂等键）
-Then 返回 200 且 items 含 2 条记录，每条 id 为非空 UUID、resourceId 为被删文件名去 .enc 的 UUID、action 为 BACKUP_ORPHAN_CLEANED、reason 含 freedBytes、occurredAt 为非空 UTC ISO
+Then 返回 200 且 items 含 2 条记录，每条 id 为非空 UUID、resourceId 为被删文件名去 .enc 的 UUID、action 为 BACKUP_ORPHAN_CLEANED、reason 不含 freedBytes 子串、freedBytes 为被删文件字节数（>0）、occurredAt 为非空 UTC ISO
 And total=2、page=1、pageSize=20、totalPages=1
 And 响应不含 passphrase、不含 resourceType（固定省略）、不含 before/afterSnapshotJson（恒 null 省略）
 And 记录按 occurred_at DESC 排序（最新优先）
@@ -894,12 +894,13 @@ Then 返回 200 且 items 含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_
 Given audit_log 表有多条不同 action/resourceType/occurred_at 的记录（覆盖至少 BACKUP_ORPHAN_CLEANED、REQUIREMENT_MERGED、BACKUP_DELETED 三类）
 When 用户调用 GET /api/audit-logs/export?format=json（无过滤参数）
 Then 返回 200 且 Content-Type 为 application/json，Content-Disposition 含 attachment 与 audit-logs- 且 .json
-And 响应体为 JSON 数组，每元素含 id/resourceType/resourceId/action/reason/occurredAt，省略 beforeSnapshotJson/afterSnapshotJson
+And 响应体为 JSON 数组，每元素含 id/resourceType/resourceId/action/reason/freedBytes/occurredAt，省略 beforeSnapshotJson/afterSnapshotJson
 And 响应不含 passphrase
 And 数组按 occurredAt DESC 排序（最新优先），长度等于 GET /api/audit-logs（逐页累加）的全量记录数
+And BACKUP_ORPHAN_CLEANED 条目的 freedBytes 为正数，REQUIREMENT_MERGED/BACKUP_DELETED 条目的 freedBytes 为 null
 When 用户调用 GET /api/audit-logs/export?format=csv（无过滤参数）
 Then 返回 200 且 Content-Type 为 text/csv，Content-Disposition 含 attachment 与 .csv
-And 响应体以 UTF-8 BOM 开头，首行为表头 id,resourceType,resourceId,action,reason,occurredAt
+And 响应体以 UTF-8 BOM 开头，首行为表头 id,resourceType,resourceId,action,reason,freedBytes,occurredAt
 And 每条记录一行，行尾为 CRLF，字段用 RFC 4180 转义（含逗号/引号/换行的字段用双引号包裹，内部双引号转义为两个双引号）
 And 行数（不含表头）等于 JSON 导出的数组长度
 When 用户调用 GET /api/audit-logs/export?format=json&action=BACKUP_ORPHAN_CLEANED
@@ -986,8 +987,30 @@ When GET /api/audit-logs?action=BACKUP_KEY_ROTATED
 Then 返回 200 且 items 含上述批量轮换审计记录
 ```
 
+### AT-57 freedBytes 结构化字段（audit_log.freed_bytes 列：V27 迁移，孤儿清理释放字节数从 reason 子串提升为结构化列，查询/导出/前端走结构化字段，reason 去掉子串）
+
+```gherkin
+Given Flyway 已执行 V27 迁移（V1→V27 成功，schema_version=27）
+When 检查 audit_log 表结构（PRAGMA table_info('audit_log')）
+Then 存在名为 freed_bytes 的列，类型为 INTEGER，可空（non-NotNull）
+Given backup-dir 下存在 1 个无 backup_record 对应的合法 UUID 命名孤儿 .enc 文件（大小为 N 字节）
+When 用户调用 POST /api/backups/orphans/clean（携带 X-Confirm-Permanent-Delete: true）
+Then 返回 200 且 audit_log 表新增 1 条 BACKUP_ORPHAN_CLEANED 记录，其 freed_bytes 列值 = N
+And 该记录 reason 文本不含 freedBytes= 子串（字节数只走结构化列）
+When 用户调用 GET /api/backups/orphans/audit?page=1&pageSize=20（只读）
+Then 返回 200 且 items 含 1 条记录，freedBytes 字段值 = N（结构化字段）
+And reason 文本不含 freedBytes= 子串
+Given audit_log 表存在一条非孤儿清理审计行（如 BACKUP_DELETED，resourceType=BACKUP_RECORD）
+When 用户调用 GET /api/audit-logs?page=1&pageSize=20（无过滤）
+Then 返回 200 且该 BACKUP_DELETED 条目 freedBytes 字段为 null（非孤儿清理无释放字节数）
+When 用户调用 GET /api/audit-logs/export?format=json（无过滤）
+Then 返回 200 且 JSON 数组中 BACKUP_ORPHAN_CLEANED 元素的 freedBytes 为 N，BACKUP_DELETED 元素的 freedBytes 为 null
+When 用户调用 GET /api/audit-logs/export?format=csv（无过滤）
+Then 返回 200 且首行表头含 freedBytes 列，BACKUP_ORPHAN_CLEANED 数据行该列为 N，BACKUP_DELETED 数据行该列为空
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-56 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-57 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

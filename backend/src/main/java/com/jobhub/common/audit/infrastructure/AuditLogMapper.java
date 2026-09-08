@@ -17,15 +17,15 @@ import java.util.List;
 public interface AuditLogMapper {
 
 	@Insert("INSERT INTO audit_log (id, resource_type, resource_id, action, before_snapshot_json, " +
-			"after_snapshot_json, reason, occurred_at) VALUES (" +
+			"after_snapshot_json, reason, freed_bytes, occurred_at) VALUES (" +
 			"#{entry.id}, #{entry.resourceType}, #{entry.resourceId}, #{entry.action}, " +
 			"#{entry.beforeSnapshotJson, jdbcType=VARCHAR}, #{entry.afterSnapshotJson, jdbcType=VARCHAR}, " +
-			"#{entry.reason, jdbcType=VARCHAR}, #{entry.occurredAt})")
+			"#{entry.reason, jdbcType=VARCHAR}, #{entry.freedBytes, jdbcType=BIGINT}, #{entry.occurredAt})")
 	int insert(@Param("entry") AuditLogEntry entry);
 
 	@Select("SELECT id, resource_type AS resourceType, resource_id AS resourceId, action, " +
 			"before_snapshot_json AS beforeSnapshotJson, after_snapshot_json AS afterSnapshotJson, " +
-			"reason, occurred_at AS occurredAt " +
+			"reason, freed_bytes AS freedBytes, occurred_at AS occurredAt " +
 			"FROM audit_log WHERE action = #{action} " +
 			"ORDER BY occurred_at DESC LIMIT #{pageSize} OFFSET #{offset}")
 	List<AuditLogEntry> selectPageByAction(@Param("action") String action,
@@ -42,7 +42,7 @@ public interface AuditLogMapper {
 	@Select("<script>" +
 			"SELECT id, resource_type AS resourceType, resource_id AS resourceId, action, " +
 			"before_snapshot_json AS beforeSnapshotJson, after_snapshot_json AS afterSnapshotJson, " +
-			"reason, occurred_at AS occurredAt FROM audit_log " +
+			"reason, freed_bytes AS freedBytes, occurred_at AS occurredAt FROM audit_log " +
 			"<where>" +
 			"<if test='action != null and action != \"\"'>AND action = #{action}</if>" +
 			"<if test='resourceType != null and resourceType != \"\"'>AND resource_type = #{resourceType}</if>" +
@@ -77,7 +77,7 @@ public interface AuditLogMapper {
 	@Select("<script>" +
 			"SELECT id, resource_type AS resourceType, resource_id AS resourceId, action, " +
 			"before_snapshot_json AS beforeSnapshotJson, after_snapshot_json AS afterSnapshotJson, " +
-			"reason, occurred_at AS occurredAt FROM audit_log " +
+			"reason, freed_bytes AS freedBytes, occurred_at AS occurredAt FROM audit_log " +
 			"<where>" +
 			"<if test='action != null and action != \"\"'>AND action = #{action}</if>" +
 			"<if test='resourceType != null and resourceType != \"\"'>AND resource_type = #{resourceType}</if>" +

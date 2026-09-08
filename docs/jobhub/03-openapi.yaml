@@ -1189,7 +1189,8 @@ paths:
         范围仅孤儿清理审计（独立 `POST /backups/orphans/clean` 与恢复联动的 `cleanOrphans` 两类来源均写
         `BACKUP_ORPHAN_CLEANED`，本端点不区分来源；投递确认/需求增删改合并等其他 action 不经本端点暴露）。
         每条审计记录对应一个被删孤儿 `.enc` 文件：`resourceId` 为文件名去 `.enc` 的 UUID，
-        `reason` 内嵌 `freedBytes=N`（非结构化字段，展示时原样呈现或前端解析），`occurredAt` 为 UTC ISO。
+        `reason` 为可读说明（不含字节数），`freedBytes` 为被删文件释放的字节数（结构化字段），
+        `occurredAt` 为 UTC ISO。
         按 `occurred_at DESC` 排序（最新优先）。只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete`
         确认头、不需 `Idempotency-Key`、不动 `backup_record`/文件系统。响应不含 passphrase（审计记录本身不含）。
         分页参数复用 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）；空表返回 `items=[]`、`total=0`。
@@ -1221,7 +1222,8 @@ paths:
         `BACKUP_PURGED_BY_COUNT`（`resourceType=BACKUP_RECORD`，按数量保留清理备份记录）、
         `BACKUP_KEY_ROTATED`（`resourceType=BACKUP_RECORD`，密钥轮换就地重加密）。
         每条记录返回 `id`（审计记录 UUID）、`resourceType`（资源类型，全量查询不固定故返回）、`resourceId`（关联资源 id）、
-        `action`（动作类型）、`reason`（可读说明，原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`
+        `action`（动作类型）、`reason`（可读说明，原样呈现）、`freedBytes`（被释放字节数，仅 `BACKUP_ORPHAN_CLEANED` 行有值，其余 action 为 null）、
+        `occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`
         （当前所有审计记录快照恒为 null，无展示价值，与 `GET /backups/orphans/audit` 一致）；响应不含 passphrase
         （审计记录本身从不存 passphrase）。
         时间范围过滤：`from`（起始时间，含边界，`occurred_at >= from`）与 `to`（结束时间，含边界，
@@ -1280,10 +1282,10 @@ paths:
         `BACKUP_ORPHAN_CLEANED`、`BACKUP_DELETED`、`BACKUP_PURGED_BY_AGE`、`BACKUP_PURGED_BY_COUNT`、
         `BACKUP_KEY_ROTATED`。
         每条记录字段同 `AuditLogEntry`：`id`（审计记录 UUID）、`resourceType`（全量查询不固定故返回）、`resourceId`、
-        `action`、`reason`（原样呈现）、`occurredAt`（UTC ISO）。省略 `before/afterSnapshotJson`（恒为 null）；
-        响应与审计记录均不含 passphrase。
+        `action`、`reason`（原样呈现）、`freedBytes`（仅 `BACKUP_ORPHAN_CLEANED` 行有值，其余为 null）、`occurredAt`（UTC ISO）。
+        省略 `before/afterSnapshotJson`（恒为 null）；响应与审计记录均不含 passphrase。
         CSV：UTF-8 BOM（便于 Excel 识别编码）+ RFC 4180 转义（含逗号/引号/换行的字段用双引号包裹、内部双引号
-        转义为两个双引号）+ CRLF 行尾；首行为表头 `id,resourceType,resourceId,action,reason,occurredAt`；
+        转义为两个双引号）+ CRLF 行尾；首行为表头 `id,resourceType,resourceId,action,reason,freedBytes,occurredAt`；
         无记录时仅返回表头（与 `GET /audit-logs` 空结果语义一致）。JSON：以审计条目数组为根（对齐查询端点
         `items` 元素结构），空结果为 `[]`。
         即时下载不落盘：与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，内容在内存生成
@@ -3059,13 +3061,14 @@ components:
       properties: { items: { type: array, items: { $ref: '#/components/schemas/LearningTask' } }, page: { type: integer }, pageSize: { type: integer }, total: { type: integer } }
     BackupOrphanAuditEntry:
       type: object
-      required: [id, resourceId, action, reason, occurredAt]
+      required: [id, resourceId, action, reason, freedBytes, occurredAt]
       description: 孤儿清理审计日志单条记录（audit_log 行，action=BACKUP_ORPHAN_CLEANED 的只读视图）
       properties:
         id: { type: string, description: 审计记录 id（UUID） }
         resourceId: { type: string, description: 被删孤儿文件名去 .enc 的 UUID }
         action: { type: string, description: 固定 BACKUP_ORPHAN_CLEANED }
-        reason: { type: string, description: 含 freedBytes=N 的可读说明，原样呈现 }
+        reason: { type: string, description: 可读说明，原样呈现（不含字节数，字节数见 freedBytes 结构化字段） }
+        freedBytes: { type: integer, format: int64, description: 被删孤儿文件释放的字节数（结构化字段，孤儿清理恒有值） }
         occurredAt: { type: string, description: 删除发生的 UTC ISO-8601 时间 }
     PageBackupOrphanAuditEntry:
       type: object
@@ -3081,7 +3084,8 @@ components:
         resourceType: { type: string, description: 资源类型，如 BACKUP_FILE/APPLICATION/JOB_REQUIREMENT }
         resourceId: { type: string, description: 关联资源 id（如被删文件 UUID、投递 id、需求 id） }
         action: { type: string, description: 动作类型，如 BACKUP_ORPHAN_CLEANED/SECONDARY_APPLICATION_CONFIRMED/REQUIREMENT_MERGED/REQUIREMENT_UPDATED/REQUIREMENT_DELETED }
-        reason: { type: string, description: 可读说明，原样呈现（如含 freedBytes=N 子串） }
+        reason: { type: string, description: 可读说明，原样呈现 }
+        freedBytes: { type: integer, format: int64, nullable: true, description: 被释放字节数（结构化字段，仅 BACKUP_ORPHAN_CLEANED 行有值，其余 action 为 null） }
         occurredAt: { type: string, description: 操作发生的 UTC ISO-8601 时间 }
     PageAuditLogEntry:
       type: object
