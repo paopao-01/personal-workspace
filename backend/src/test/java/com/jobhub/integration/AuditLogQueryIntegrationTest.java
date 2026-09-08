@@ -3,9 +3,12 @@ package com.jobhub.integration;
 import com.jobhub.integration.support.AbstractIntegrationTest;
 import com.jobhub.integration.support.JsonProbe;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,6 +36,11 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 	/** GET /api/audit-logs 只读分页查询（query 形如 "?page=1&pageSize=20&action=X&resourceType=Y"）。 */
 	private ResponseEntity<String> listAuditLogs(String query) {
 		return restTemplate.getForEntity(url("/audit-logs" + query), String.class);
+	}
+
+	/** GET /api/audit-logs/export 只读即时下载（query 形如 "?format=json&action=X"）。 */
+	private ResponseEntity<byte[]> exportAuditLogs(String query) {
+		return restTemplate.getForEntity(url("/audit-logs/export" + query), byte[].class);
 	}
 
 	@Test
@@ -357,5 +365,177 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
 		assertThat(JsonProbe.arrStr(body, "items", 0, "resourceType")).isEqualTo("BACKUP_RECORD");
 		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isEqualTo("2026-09-05T12:00:00Z");
+	}
+
+	// ==================== AT-54 审计日志导出（GET /audit-logs/export 即时下载 CSV/JSON） ====================
+
+	/** 造覆盖多 action/resourceType/occurred_at 的审计行，供导出用例复用。 */
+	private void seedExportRows() {
+		insertAuditRow("SECONDARY_APPLICATION_CONFIRMED", "APPLICATION", UUID.randomUUID().toString(),
+				"User confirmed a secondary active application.", "2026-09-07T10:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"Merged into requirement " + UUID.randomUUID() + ".", "2026-09-07T11:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted by single delete.", "2026-09-07T12:00:00Z");
+		insertAuditRow("BACKUP_ORPHAN_CLEANED", "BACKUP_FILE", UUID.randomUUID().toString(),
+				"Orphan .enc file removed (freedBytes=1024).", "2026-09-07T13:00:00Z");
+	}
+
+	@Test
+	void AT54_exportJsonReturnsArrayWithFieldsAndDescOrder() {
+		seedExportRows();
+		ResponseEntity<byte[]> res = exportAuditLogs("?format=json");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(res.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+		String disposition = res.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
+		assertThat(disposition).contains("attachment").contains("audit-logs-").contains(".json");
+		String body = new String(res.getBody(), StandardCharsets.UTF_8);
+		// JSON 数组根
+		assertThat(body).startsWith("[").endsWith("]");
+		int size = JsonProbe.arraySize(body, "");
+		assertThat(size).isEqualTo(4);
+		// 每元素含 6 字段，省略快照，不含 passphrase
+		for (int i = 0; i < size; i++) {
+			assertThat(JsonProbe.arrStr(body, "", i, "id")).isNotBlank();
+			assertThat(JsonProbe.arrStr(body, "", i, "resourceType")).isNotBlank();
+			assertThat(JsonProbe.arrStr(body, "", i, "resourceId")).isNotBlank();
+			assertThat(JsonProbe.arrStr(body, "", i, "action")).isNotBlank();
+			assertThat(JsonProbe.arrStr(body, "", i, "reason")).isNotBlank();
+			assertThat(JsonProbe.arrStr(body, "", i, "occurredAt")).isNotBlank();
+		}
+		assertThat(body).doesNotContain("passphrase")
+				.doesNotContain("beforeSnapshotJson").doesNotContain("afterSnapshotJson");
+		// DESC 排序：首条最新（13:00）
+		assertThat(JsonProbe.arrStr(body, "", 0, "occurredAt")).isEqualTo("2026-09-07T13:00:00Z");
+		assertThat(JsonProbe.arrStr(body, "", size - 1, "occurredAt")).isEqualTo("2026-09-07T10:00:00Z");
+	}
+
+	/** 把 CSV 响应体解码为字符串并剥掉开头的 UTF-8 BOM（U+FEFF），便于断言正文。 */
+	private static String csvText(byte[] body) {
+		String text = new String(body, StandardCharsets.UTF_8);
+		if (text.startsWith("﻿")) {
+			text = text.substring(1);
+		}
+		return text;
+	}
+
+	@Test
+	void AT54_exportCsvReturnsBomHeaderAndRows() {
+		seedExportRows();
+		ResponseEntity<byte[]> res = exportAuditLogs("?format=csv");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(res.getHeaders().getContentType()).isNotNull();
+		assertThat(res.getHeaders().getContentType().toString()).contains("text/csv");
+		String disposition = res.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
+		assertThat(disposition).contains("attachment").contains("audit-logs-").contains(".csv");
+		byte[] body = res.getBody();
+		// UTF-8 BOM（原始字节）
+		assertThat(body[0]).isEqualTo((byte) 0xEF);
+		assertThat(body[1]).isEqualTo((byte) 0xBB);
+		assertThat(body[2]).isEqualTo((byte) 0xBF);
+		String text = csvText(body);
+		// 首行为表头
+		assertThat(text).startsWith("id,resourceType,resourceId,action,reason,occurredAt");
+		// CRLF 行尾
+		assertThat(text).contains("\r\n");
+		// 数据行（除表头外非空行）= 4
+		String[] lines = text.replace("\r\n", "\n").split("\n", -1);
+		long dataRows = java.util.Arrays.stream(lines)
+				.filter(l -> !l.isEmpty() && !l.startsWith("id,")).count();
+		assertThat(dataRows).isEqualTo(4);
+		// 不含 passphrase
+		assertThat(text).doesNotContain("passphrase");
+	}
+
+	@Test
+	void AT54_exportJsonFiltersByAction() {
+		seedExportRows();
+		String body = new String(exportAuditLogs("?format=json&action=BACKUP_ORPHAN_CLEANED").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(body, "", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+	}
+
+	@Test
+	void AT54_exportCsvFiltersByResourceType() {
+		seedExportRows();
+		byte[] body = exportAuditLogs("?format=csv&resourceType=BACKUP_RECORD").getBody();
+		String text = new String(body, StandardCharsets.UTF_8);
+		// 仅 BACKUP_DELETED 一条是 BACKUP_RECORD
+		assertThat(text).contains("BACKUP_RECORD").contains("BACKUP_DELETED");
+		assertThat(text).doesNotContain("APPLICATION").doesNotContain("JOB_REQUIREMENT").doesNotContain("BACKUP_FILE");
+	}
+
+	@Test
+	void AT54_exportJsonFiltersByFromToRange() {
+		seedExportRows();
+		String body = new String(exportAuditLogs(
+				"?format=json&from=2026-09-07T11:00:00Z&to=2026-09-07T12:00:00Z").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(2);
+		List<String> occurredAts = JsonProbe.collectArrayField(body, "", "occurredAt");
+		assertThat(occurredAts).containsExactlyInAnyOrder("2026-09-07T11:00:00Z", "2026-09-07T12:00:00Z");
+	}
+
+	@Test
+	void AT54_exportJsonEmptyMatchReturnsEmptyArray() {
+		seedExportRows();
+		String body = new String(exportAuditLogs("?format=json&action=NONEXISTENT").getBody(), StandardCharsets.UTF_8);
+		assertThat(body).isEqualTo("[]");
+	}
+
+	@Test
+	void AT54_exportCsvEmptyMatchReturnsHeaderOnly() {
+		seedExportRows();
+		byte[] body = exportAuditLogs("?format=csv&action=NONEXISTENT").getBody();
+		assertThat(body[0]).isEqualTo((byte) 0xEF);
+		String text = csvText(body);
+		assertThat(text).startsWith("id,resourceType,resourceId,action,reason,occurredAt");
+		// 仅表头 + CRLF，无数据行
+		assertThat(text.trim()).isEqualTo("id,resourceType,resourceId,action,reason,occurredAt");
+	}
+
+	@Test
+	void AT54_exportEmptyTableJsonReturnsEmptyArray() {
+		// audit_log 空表（@BeforeEach 已清表）
+		String body = new String(exportAuditLogs("?format=json").getBody(), StandardCharsets.UTF_8);
+		assertThat(body).isEqualTo("[]");
+	}
+
+	@Test
+	void AT54_exportEmptyTableCsvReturnsHeaderOnly() {
+		byte[] body = exportAuditLogs("?format=csv").getBody();
+		assertThat(body[0]).isEqualTo((byte) 0xEF);
+		String text = csvText(body);
+		assertThat(text.trim()).isEqualTo("id,resourceType,resourceId,action,reason,occurredAt");
+	}
+
+	@Test
+	void AT54_exportRejectsInvalidFormat() {
+		assertThat(exportAuditLogs("?format=xml").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT54_exportRejectsInvalidFromTo() {
+		assertThat(exportAuditLogs("?from=not-a-date").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(exportAuditLogs("?to=2026/09/05").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT54_exportFromGreaterThanToReturnsEmptyNot400() {
+		seedExportRows();
+		ResponseEntity<byte[]> res = exportAuditLogs("?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = new String(res.getBody(), StandardCharsets.UTF_8);
+		assertThat(body).isEqualTo("[]");
+	}
+
+	@Test
+	void AT54_exportDefaultsToJsonWhenFormatOmitted() {
+		seedExportRows();
+		ResponseEntity<byte[]> res = exportAuditLogs("");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(res.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+		String body = new String(res.getBody(), StandardCharsets.UTF_8);
+		assertThat(body).startsWith("[").endsWith("]");
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(4);
 	}
 }

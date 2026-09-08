@@ -1153,3 +1153,77 @@ test('AT-53 rotate-key re-encrypts in place keeping id unchanged', async ({ page
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造数：一个岗位 + 二次投递确认触发审计（SECONDARY_APPLICATION_CONFIRMED），再加一个备份造 BACKUP_DELETED 审计
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at54-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `导出验证-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+  const jobId = (await jobRes.json()).id
+
+  // 导出 JSON（无过滤）→ 200，JSON 数组，含字段，不含 passphrase/快照字段
+  const jsonRes = await request.get('/api/audit-logs/export?format=json')
+  expect(jsonRes.status()).toBe(200)
+  const jsonBody = await jsonRes.json()
+  expect(Array.isArray(jsonBody)).toBe(true)
+  if (jsonBody.length > 0) {
+    const entry = jsonBody[0]
+    expect(entry).toHaveProperty('id')
+    expect(entry).toHaveProperty('resourceType')
+    expect(entry).toHaveProperty('resourceId')
+    expect(entry).toHaveProperty('action')
+    expect(entry).toHaveProperty('reason')
+    expect(entry).toHaveProperty('occurredAt')
+    // 不含 passphrase 字段与快照字段（reason 文本可能合法地提到 "passphrase" 一词，这里校验字段名而非字面词）
+    expect(entry).not.toHaveProperty('passphrase')
+    expect(entry).not.toHaveProperty('beforeSnapshotJson')
+    expect(entry).not.toHaveProperty('afterSnapshotJson')
+  }
+  for (const item of jsonBody as Record<string, unknown>[]) {
+    expect(item).not.toHaveProperty('passphrase')
+    expect(item).not.toHaveProperty('beforeSnapshotJson')
+    expect(item).not.toHaveProperty('afterSnapshotJson')
+  }
+  // Content-Disposition 含 .json
+  expect(String(jsonRes.headers()['content-disposition'] ?? '')).toContain('attachment')
+  expect(String(jsonRes.headers()['content-disposition'] ?? '')).toContain('.json')
+
+  // 导出 CSV（无过滤）→ 200，BOM + 表头，不含 passphrase 字段列
+  const csvRes = await request.get('/api/audit-logs/export?format=csv')
+  expect(csvRes.status()).toBe(200)
+  const csvText = await csvRes.text()
+  // UTF-8 BOM
+  expect(csvText.charCodeAt(0)).toBe(0xFEFF)
+  const csvNoBom = csvText.slice(1)
+  expect(csvNoBom.startsWith('id,resourceType,resourceId,action,reason,occurredAt')).toBe(true)
+  // 表头无 passphrase 列
+  const csvHeader = csvNoBom.split(/\r?\n/, 1)[0]
+  expect(csvHeader).not.toContain('passphrase')
+
+  // 过滤导出 JSON（action=NONEXISTENT）→ 200 空数组
+  const emptyRes = await request.get('/api/audit-logs/export?format=json&action=NONEXISTENT')
+  expect(emptyRes.status()).toBe(200)
+  const emptyBody = await emptyRes.json()
+  expect(emptyBody).toEqual([])
+
+  // 非法 format → 400
+  const badFmt = await request.get('/api/audit-logs/export?format=xml')
+  expect(badFmt.status()).toBe(400)
+
+  // 非法 from → 400
+  const badFrom = await request.get('/api/audit-logs/export?from=not-a-date')
+  expect(badFrom.status()).toBe(400)
+
+  // UI：设置页审计日志区块有「导出 CSV」「导出 JSON」按钮
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出 CSV' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出 JSON' })).toBeVisible()
+})

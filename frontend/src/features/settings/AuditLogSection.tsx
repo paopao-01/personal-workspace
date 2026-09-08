@@ -5,10 +5,12 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Field, Select } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { Table } from '@/components/ui/Table'
+import { pushToast } from '@/components/feedback/toastStore'
 import { formatDateTime } from '@/features/jobs/statusLabels'
 import {
   AUDIT_ACTIONS,
   AUDIT_RESOURCE_TYPES,
+  exportAuditLogs,
   useAuditLogs,
 } from '@/api/audit/auditLogApi'
 
@@ -34,6 +36,7 @@ export function AuditLogSection() {
   const [resourceType, setResourceType] = useState('')
   const [fromLocal, setFromLocal] = useState('')  // datetime-local 本地时间值
   const [toLocal, setToLocal] = useState('')      // datetime-local 本地时间值
+  const [exporting, setExporting] = useState<'' | 'csv' | 'json'>('')
 
   const query = useAuditLogs({
     page,
@@ -43,6 +46,25 @@ export function AuditLogSection() {
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
     to: toLocal ? toUtcIso(toLocal) : undefined,
   })
+
+  // 当前生效的过滤条件（供导出复用，与查询一致）
+  const exportFilters = {
+    action: action || undefined,
+    resourceType: resourceType || undefined,
+    from: fromLocal ? toUtcIso(fromLocal) : undefined,
+    to: toLocal ? toUtcIso(toLocal) : undefined,
+  }
+
+  const onExport = async (format: 'csv' | 'json') => {
+    setExporting(format)
+    try {
+      await exportAuditLogs(format, exportFilters)
+    } catch (err) {
+      pushToast(`导出失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    } finally {
+      setExporting('')
+    }
+  }
 
   const onFilterChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLSelectElement>) => {
     setter(event.target.value)
@@ -121,6 +143,22 @@ export function AuditLogSection() {
               disabled={query.isFetching}
             >
               {query.isFetching ? '刷新中…' : '刷新'}
+            </Button>
+            <Button
+              variant="default"
+              type="button"
+              onClick={() => onExport('csv')}
+              disabled={exporting !== ''}
+            >
+              {exporting === 'csv' ? '导出中…' : '导出 CSV'}
+            </Button>
+            <Button
+              variant="default"
+              type="button"
+              onClick={() => onExport('json')}
+              disabled={exporting !== ''}
+            >
+              {exporting === 'json' ? '导出中…' : '导出 JSON'}
             </Button>
           </div>
         </div>
