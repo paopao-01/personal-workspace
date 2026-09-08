@@ -901,14 +901,16 @@ test('AT-49 orphan clean audit log query returns paged entries', async ({ page, 
   expect(auditBody).toHaveProperty('totalPages')
   expect(auditBody.page).toBe(1)
   expect(auditBody.pageSize).toBe(20)
-  // items 为数组，每条结构含 id/resourceId/action/reason/occurredAt
+  // items 为数组，每条结构含 id/resourceId/action/reason/freedBytes/occurredAt
   expect(Array.isArray(auditBody.items)).toBe(true)
   if (auditBody.items.length > 0) {
     const first = auditBody.items[0]
     expect(first.action).toBe('BACKUP_ORPHAN_CLEANED')
     expect(first.id).toBeTruthy()
     expect(first.resourceId).toBeTruthy()
-    expect(first.reason).toContain('freedBytes=')
+    // freedBytes 为结构化字段（V27），reason 不再含 freedBytes= 子串
+    expect(first.freedBytes).toBeTruthy()
+    expect(first.reason).not.toContain('freedBytes=')
     expect(first.occurredAt).toBeTruthy()
   }
   // 响应不含 passphrase（审计记录从不存 passphrase）
@@ -1013,6 +1015,77 @@ test('AT-50 full audit log query with action and resourceType filter', async ({ 
   // UI：设置页「审计日志」区块可见
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})
+
+/**
+ * AT-57 freedBytes 结构化字段：孤儿清理释放字节数从 reason 子串提升为 audit_log.freed_bytes 结构化列，
+ * 查询/导出走结构化字段，reason 不再含 freedBytes= 子串。
+ *
+ * 真实 cleanOrphans 写入 freed_bytes 列链路由后端集成测试覆盖；
+ * 本 E2E 聚焦端点契约：触发 clean 产生 BACKUP_ORPHAN_CLEANED → GET /backups/orphans/audit 200 +
+ * items[0].freedBytes 为正数 + reason 不含 freedBytes= → GET /audit-logs/export?format=json 元素含 freedBytes →
+ * GET /audit-logs/export?format=csv 表头含 freedBytes 列 → UI 设置页「孤儿清理审计日志」区块可见。
+ */
+test('AT-57 freedBytes structured field in audit log query and export', async ({ page, request }) => {
+  const suffix = Date.now()
+
+  // 造岗位保证导出有数据，再造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at57-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `结构化释放-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at57-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（DB 跨测试残留的历史孤儿会写审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // GET /api/backups/orphans/audit：items[0].freedBytes 为正数，reason 不含 freedBytes= 子串
+  const auditRes = await request.get('/api/backups/orphans/audit?page=1&pageSize=20')
+  expect(auditRes.status()).toBe(200)
+  const auditBody = await auditRes.json()
+  expect(Array.isArray(auditBody.items)).toBe(true)
+  if (auditBody.items.length > 0) {
+    const first = auditBody.items[0]
+    expect(first.freedBytes).toBeTruthy()
+    expect(first.reason).not.toContain('freedBytes=')
+  }
+
+  // GET /api/audit-logs/export?format=json：元素含 freedBytes 字段（有记录时校验）
+  const jsonRes = await request.get('/api/audit-logs/export?format=json&action=BACKUP_ORPHAN_CLEANED')
+  expect(jsonRes.status()).toBe(200)
+  const jsonBody = await jsonRes.json()
+  expect(Array.isArray(jsonBody)).toBe(true)
+  if (jsonBody.length > 0) {
+    expect(jsonBody[0]).toHaveProperty('freedBytes')
+  }
+
+  // GET /api/audit-logs/export?format=csv：表头含 freedBytes 列（表头恒存在）
+  const csvRes = await request.get('/api/audit-logs/export?format=csv&action=BACKUP_ORPHAN_CLEANED')
+  expect(csvRes.status()).toBe(200)
+  const csvText = await csvRes.text()
+  expect(csvText).toContain('id,resourceType,resourceId,action,reason,freedBytes,occurredAt')
+
+  // UI：设置页「孤儿清理审计日志」区块可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '孤儿清理审计日志' })).toBeVisible()
 
   // 清理本次产生的备份
   await request.delete(`/api/backups/${created.id}`, {
@@ -1288,6 +1361,7 @@ test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
     expect(entry).toHaveProperty('resourceId')
     expect(entry).toHaveProperty('action')
     expect(entry).toHaveProperty('reason')
+    expect(entry).toHaveProperty('freedBytes')
     expect(entry).toHaveProperty('occurredAt')
     // 不含 passphrase 字段与快照字段（reason 文本可能合法地提到 "passphrase" 一词，这里校验字段名而非字面词）
     expect(entry).not.toHaveProperty('passphrase')
@@ -1310,7 +1384,7 @@ test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
   // UTF-8 BOM
   expect(csvText.charCodeAt(0)).toBe(0xFEFF)
   const csvNoBom = csvText.slice(1)
-  expect(csvNoBom.startsWith('id,resourceType,resourceId,action,reason,occurredAt')).toBe(true)
+  expect(csvNoBom.startsWith('id,resourceType,resourceId,action,reason,freedBytes,occurredAt')).toBe(true)
   // 表头无 passphrase 列
   const csvHeader = csvNoBom.split(/\r?\n/, 1)[0]
   expect(csvHeader).not.toContain('passphrase')

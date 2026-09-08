@@ -216,11 +216,12 @@ class BackupRestoreIntegrationTest extends AbstractIntegrationTest {
 
 		// AT-47 恢复联动 cleanOrphans 删除孤儿后，audit_log 同样为被删孤儿写一条审计记录
 		Map<String, Object> auditRow = jdbc.queryForMap(
-			"SELECT resource_type, resource_id, action, reason FROM audit_log "
+			"SELECT resource_type, resource_id, action, reason, freed_bytes FROM audit_log "
 				+ "WHERE action = 'BACKUP_ORPHAN_CLEANED' AND resource_id = ?", orphanId);
 		assertThat(auditRow.get("resource_type")).isEqualTo("BACKUP_FILE");
 		assertThat(auditRow.get("resource_id")).isEqualTo(orphanId);
-		assertThat(String.valueOf(auditRow.get("reason"))).contains("freedBytes=");
+		assertThat(String.valueOf(auditRow.get("reason"))).doesNotContain("freedBytes=");
+		assertThat(((Number) auditRow.get("freed_bytes")).longValue()).isGreaterThan(0L);
 	}
 
 	@Test

@@ -6,6 +6,7 @@ import { Field, Select } from '@/components/ui/Form'
 import { Spinner } from '@/components/ui/Spinner'
 import { Table } from '@/components/ui/Table'
 import { pushToast } from '@/components/feedback/toastStore'
+import { formatBytes } from '@/api/backup/backupApi'
 import { formatDateTime } from '@/features/jobs/statusLabels'
 import {
   AUDIT_ACTIONS,
@@ -171,13 +172,14 @@ export function AuditLogSection() {
           <EmptyState text="无匹配审计记录" />
         ) : (
           <>
-            <Table headers={['时间', '资源类型', '动作', '资源 ID', '详情']}>
+            <Table headers={['时间', '资源类型', '动作', '资源 ID', '释放字节', '详情']}>
               {(query.data?.items ?? []).map((entry) => (
                 <tr key={entry.id}>
                   <td>{formatDateTime(entry.occurredAt)}</td>
                   <td>{entry.resourceType}</td>
                   <td>{entry.action}</td>
                   <td>{entry.resourceId}</td>
+                  <td>{entry.freedBytes != null ? formatBytes(entry.freedBytes) : '—'}</td>
                   <td>{entry.reason}</td>
                 </tr>
               ))}
