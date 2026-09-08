@@ -60,3 +60,28 @@ export function useAuditLogs(query: AuditLogQuery) {
     placeholderData: (prev) => prev,
   })
 }
+
+/** 导出审计日志为 CSV 或 JSON 文件下载（只读，即时下载，复用当前过滤条件）。
+ *  浏览器侧完成下载，不落盘后端文件系统。导出失败（非法 format/from/to 经后端 400）抛 ApiError。 */
+export async function exportAuditLogs(
+  format: 'csv' | 'json',
+  filters: { action?: string; resourceType?: string; from?: string; to?: string },
+): Promise<void> {
+  const res = await apiClient.get<Blob>('/audit-logs/export', {
+    params: { format, ...filters },
+    responseType: 'blob',
+  })
+  const ext = format
+  // 从 Content-Disposition 提取文件名，回退到默认名
+  const disposition = String(res.headers['content-disposition'] ?? '')
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = match ? match[1] : `audit-logs.${ext}`
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

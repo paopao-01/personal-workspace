@@ -888,8 +888,47 @@ When GET /api/audit-logs?resourceType=BACKUP_RECORD
 Then 返回 200 且 items 含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT/BACKUP_KEY_ROTATED 各类（若均有写入）
 ```
 
+### AT-54 审计日志导出（GET /audit-logs/export 即时下载 CSV/JSON，复用 action/resourceType/from/to 过滤）
+
+```gherkin
+Given audit_log 表有多条不同 action/resourceType/occurred_at 的记录（覆盖至少 BACKUP_ORPHAN_CLEANED、REQUIREMENT_MERGED、BACKUP_DELETED 三类）
+When 用户调用 GET /api/audit-logs/export?format=json（无过滤参数）
+Then 返回 200 且 Content-Type 为 application/json，Content-Disposition 含 attachment 与 audit-logs- 且 .json
+And 响应体为 JSON 数组，每元素含 id/resourceType/resourceId/action/reason/occurredAt，省略 beforeSnapshotJson/afterSnapshotJson
+And 响应不含 passphrase
+And 数组按 occurredAt DESC 排序（最新优先），长度等于 GET /api/audit-logs（逐页累加）的全量记录数
+When 用户调用 GET /api/audit-logs/export?format=csv（无过滤参数）
+Then 返回 200 且 Content-Type 为 text/csv，Content-Disposition 含 attachment 与 .csv
+And 响应体以 UTF-8 BOM 开头，首行为表头 id,resourceType,resourceId,action,reason,occurredAt
+And 每条记录一行，行尾为 CRLF，字段用 RFC 4180 转义（含逗号/引号/换行的字段用双引号包裹，内部双引号转义为两个双引号）
+And 行数（不含表头）等于 JSON 导出的数组长度
+When 用户调用 GET /api/audit-logs/export?format=json&action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且数组每条 action=BACKUP_ORPHAN_CLEANED（过滤生效，少于全量）
+When 用户调用 GET /api/audit-logs/export?format=csv&resourceType=BACKUP_RECORD
+Then 返回 200 且每行（除表头）的 resourceType 列为 BACKUP_RECORD
+When 用户调用 GET /api/audit-logs/export?from=2026-09-01T00:00:00Z&to=2026-09-30T23:59:59Z
+Then 返回 200 且 JSON 数组（默认 format=json）每条 occurredAt 落在 [from,to] 闭区间内
+When 用户调用 GET /api/audit-logs/export?format=json&action=NONEXISTENT
+Then 返回 200 且响应体为 [] （空结果不报 400）
+When 用户调用 GET /api/audit-logs/export?format=csv&action=NONEXISTENT
+Then 返回 200 且响应体为 BOM + 表头行 + 无数据行（空结果仅表头）
+When audit_log 表为空时调用 GET /api/audit-logs/export?format=json
+Then 返回 200 且响应体为 []
+When audit_log 表为空时调用 GET /api/audit-logs/export?format=csv
+Then 返回 200 且响应体为 BOM + 表头行（无数据行）
+When 用户调用 GET /api/audit-logs/export?format=xml
+Then 返回 400 VALIDATION_ERROR（format 非 csv/json）
+When 用户调用 GET /api/audit-logs/export?from=not-a-date
+Then 返回 400（from 非 ISO-8601 UTC）
+When 用户调用 GET /api/audit-logs/export?to=2026/09/05
+Then 返回 400（to 非 ISO-8601 UTC）
+When 用户调用 GET /api/audit-logs/export?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z
+Then 返回 200 且 JSON 为 [] （from>to 空结果不报 400）
+And 全程后端不写文件系统（无 data/exports 下审计导出文件残留），不创建 data_export 记录，不动 audit_log/backup_record 表
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-53 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-54 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

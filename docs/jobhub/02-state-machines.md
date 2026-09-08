@@ -352,6 +352,18 @@ ABANDONED ──restore──> TODO
 - 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，全表扫描性能可接受，**不新增索引迁移**。
 - `AuditLogMapper` 在既有 `selectPageByAction`/`countByAction` 之外新增只读 `selectPage(action, resourceType, from, to, pageSize, offset)` + `count(action, resourceType, from, to)` 方法（动态 SQL，参数 null/空不加条件，仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。`from`/`to` 与 `occurred_at` 均为 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，字符串 `>=`/`<=` 比较正确。
 
+**全量审计日志导出（只读，即时下载）**：`GET /audit-logs/export` 把 `GET /audit-logs` 的查询结果导出为文件下载，供用户离线追溯。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to` 均可选，空=不过滤导出全量，可单独或任意组合（语义、校验、`occurred_at DESC` 排序全同查询端点）；新增 `format` 参数选 `csv` 或 `json`（默认 `json`）。即时在内存生成直接返回响应，**不落盘、不写文件系统、不创建 `data_export` 记录、无 `afterCommit` 清理**（与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，契合「只读查询不动任何业务表/文件系统」语义）。
+
+- 查询范围与字段：只读暴露既有写入值，不新增 action（取值与 `GET /audit-logs` 一致，见该节）。每条记录字段同查询端点：`id`/`resourceType`（全量查询不固定故返回）/`resourceId`/`action`/`reason`（原样呈现）/`occurredAt`（UTC ISO）。省略恒 null 的快照字段；响应与审计记录均不含 passphrase。
+- CSV 格式：UTF-8 BOM（便于 Excel 识别编码）+ RFC 4180 转义（含逗号/引号/换行的字段用双引号包裹、内部双引号转义为两个双引号）+ CRLF 行尾；首行为表头 `id,resourceType,resourceId,action,reason,occurredAt`；无记录时仅返回表头（与查询端点空结果 `items=[]` 语义一致）。
+- JSON 格式：以审计条目数组为根（对齐查询端点 `items` 元素结构），空结果为 `[]`。
+- 响应头：`Content-Disposition: attachment; filename=audit-logs-<exportedAt>.<ext>`（`exportedAt` 为导出时刻 UTC ISO 去冒号、`ext` 为 `csv` 或 `json`），触发浏览器下载；CSV `Content-Type: text/csv`，JSON `Content-Type: application/json`。
+- 即时下载不落盘：本地单用户审计量小，不设行数上限（与 `POST /data-exports` 全量导出一致）；导出全量匹配记录在内存生成，无文件残留、无孤儿清理。
+- 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase。
+- 无二级索引：`audit_log` 表 V1 起无任何二级索引，导出走 `ORDER BY occurred_at DESC` 全表扫描（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，全表扫描性能可接受，**不新增索引迁移**。
+- 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。
+- `AuditLogMapper` 在 `selectPage`/`count` 之外新增只读 `selectAll(action, resourceType, from, to)` 方法（动态 SQL 同 `selectPage` 去掉 `LIMIT`/`OFFSET`，仅 SELECT，不违背「仅追加、不提供更新/删除」语义），返回全部匹配记录供控制器在内存生成 CSV/JSON。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
+
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。

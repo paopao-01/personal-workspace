@@ -67,5 +67,26 @@ public interface AuditLogMapper {
 			"</script>")
 	long count(@Param("action") String action, @Param("resourceType") String resourceType,
 			@Param("from") String from, @Param("to") String to);
+
+	/**
+	 * 全量审计日志导出查询（只读）：action、resourceType、from、to 均可选，null 或空时不加条件返回全量；
+	 * 条件与 {@link #selectPage} 完全一致，仅去掉 {@code LIMIT}/{@code OFFSET}，返回全部匹配记录供
+	 * 控制器在内存生成 CSV/JSON 导出。仅 SELECT，不违背「仅追加、不提供更新/删除」语义。按
+	 * {@code occurred_at DESC} 排序（与查询端点一致）。
+	 */
+	@Select("<script>" +
+			"SELECT id, resource_type AS resourceType, resource_id AS resourceId, action, " +
+			"before_snapshot_json AS beforeSnapshotJson, after_snapshot_json AS afterSnapshotJson, " +
+			"reason, occurred_at AS occurredAt FROM audit_log " +
+			"<where>" +
+			"<if test='action != null and action != \"\"'>AND action = #{action}</if>" +
+			"<if test='resourceType != null and resourceType != \"\"'>AND resource_type = #{resourceType}</if>" +
+			"<if test='from != null and from != \"\"'>AND occurred_at &gt;= #{from}</if>" +
+			"<if test='to != null and to != \"\"'>AND occurred_at &lt;= #{to}</if>" +
+			"</where>" +
+			"ORDER BY occurred_at DESC" +
+			"</script>")
+	List<AuditLogEntry> selectAll(@Param("action") String action, @Param("resourceType") String resourceType,
+			@Param("from") String from, @Param("to") String to);
 }
 
