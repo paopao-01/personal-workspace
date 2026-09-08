@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobhub.backup.api.BackupOrphanCleanSummary;
 import com.jobhub.backup.api.BackupPurgeSummary;
+import com.jobhub.backup.api.RotateKeyResult;
+import com.jobhub.backup.api.RotateKeysSummary;
 import com.jobhub.backup.domain.BackupRecord;
 import com.jobhub.backup.infrastructure.BackupRecordMapper;
 import com.jobhub.backup.infrastructure.BackupScheduleMapper;
@@ -18,6 +20,7 @@ import com.jobhub.datamanagement.application.ImportService;
 import com.jobhub.datamanagement.api.ImportResultResponse;
 import com.jobhub.datamanagement.domain.DataExport;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -54,6 +57,13 @@ public class BackupService {
 	private final String backupDir;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
+	/**
+	 * Self-injection 引用：批量轮换 {@link #rotateKeys(List, String, String)} 需逐条调用
+	 * {@link #rotateKey(String, String, String)} 的 {@code @Transactional} 代理，避免 Spring 自调用
+	 * 绕过代理导致事务失效。用 {@code @Lazy} 打破构造期循环依赖。
+	 */
+	private BackupService self;
+
 	public BackupService(ExportService exportService, ImportService importService, EncryptionService encryption,
 			BackupRecordMapper mapper, BackupScheduleMapper scheduleMapper, AuditLogMapper auditLogMapper,
 			IdGenerator ids, UtcTime time,
@@ -67,6 +77,11 @@ public class BackupService {
 		this.ids = ids;
 		this.time = time;
 		this.backupDir = backupDir;
+	}
+
+	@org.springframework.beans.factory.annotation.Autowired
+	public void setSelf(@Lazy BackupService self) {
+		this.self = self;
 	}
 
 	@Transactional
@@ -612,6 +627,49 @@ public class BackupService {
 	/** 孤儿清理审计记录总数（action=BACKUP_ORPHAN_CLEANED），供分页 totalPages 计算。 */
 	public long countOrphanAudit() {
 		return auditLogMapper.countByAction(AuditLogEntry.ACTION_BACKUP_ORPHAN_CLEANED);
+	}
+
+	/**
+	 * 批量密钥轮换（逐条就地重加密）：对一组 backup_record 用同一 oldPassphrase 解密、同一 newPassphrase +
+	 * 各自新随机 salt/iv 重新加密同一明文。逐条独立事务（每条经 self-injection 调用单条 {@link #rotateKey}
+	 * 的 @Transactional 代理，避免 Spring 自调用事务失效），复用单条轮换的全部逻辑与一致性保证。
+	 *
+	 * 处理流程：
+	 * (1) 入口先校验 newPassphrase 强度门槛（要求 strong，score<70 返回 400，fail fast——不处理任何备份，
+	 *     不解密、不落盘、不写审计，无任何副作用）；oldPassphrase 豁免门槛（同单条语义）；
+	 * (2) backupIds 去重保持顺序（LinkedHashSet）；
+	 * (3) 逐条循环调用 self.rotateKey(backupId, oldPassphrase, newPassphrase)：每条独立事务，成功 → rotated++
+	 *     + 该条事务内写一条 BACKUP_KEY_ROTATED 审计（随该条事务提交/回滚强一致，复用 AT-53 范式）；
+	 *     失败（422 oldPassphrase 错/文件损坏、404 不存在、其他）→ failed++ + 记 {backupId, FAILED, reason}，
+	 *     不阻塞其他条，失败条不写审计（未改写任何记录，同单条语义）。
+	 *
+	 * 逐条独立·部分成功（与批量清理 purge 的逐条独立范式一致）：HTTP 200 即使部分或全部失败也 200，
+	 * 摘要反映结果；仅 newPassphrase 弱返回 400、backupIds 非法返回 400（由控制器校验 @NotEmpty）。
+	 * newPassphrase 与 oldPassphrase 相同不拒绝（仍刷新各 salt/iv，合法重加密）；last_backup_id/data_export_id/
+	 * armed 不受影响；passphrase 永不持久化/不回显，响应只返回摘要；幂等性由 Idempotency-Key 保证。
+	 */
+	public RotateKeysSummary rotateKeys(List<String> backupIds, String oldPassphrase, String newPassphrase) {
+		// 先校验 newPassphrase 强度门槛（fail fast：强度不足时不处理任何备份，无副作用）
+		PassphraseStrengthValidator.requireAcceptable(newPassphrase);
+
+		// 去重保持顺序：同一 backupId 只处理一次
+		java.util.List<String> uniqueIds = new java.util.ArrayList<>(
+			new java.util.LinkedHashSet<>(backupIds));
+
+		int rotated = 0;
+		int failed = 0;
+		java.util.List<RotateKeyResult> results = new java.util.ArrayList<>(uniqueIds.size());
+		for (String backupId : uniqueIds) {
+			try {
+				self.rotateKey(backupId, oldPassphrase, newPassphrase);
+				rotated++;
+				results.add(RotateKeyResult.success(backupId));
+			} catch (Exception ex) {
+				failed++;
+				results.add(RotateKeyResult.failure(backupId, ex.getMessage()));
+			}
+		}
+		return new RotateKeysSummary(uniqueIds.size(), rotated, failed, results);
 	}
 }
 

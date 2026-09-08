@@ -1154,6 +1154,114 @@ test('AT-53 rotate-key re-encrypts in place keeping id unchanged', async ({ page
   })
 })
 
+/**
+ * AT-56 批量密钥轮换：POST /api/backups/rotate-keys 对一组备份用同一旧口令解密、同一新口令
+ * 逐条就地重加密。逐条独立事务，部分成功不阻塞其他。真实链路由后端集成测试覆盖；本 E2E 聚焦
+ * 端点契约：创建多份同口令备份 → 批量轮换成功（rotated=N/failed=0）→ 部分失败（混入错误旧口令）
+ * → newPassphrase 弱 400 → 审计可查 → UI「批量轮换」按钮可见。
+ */
+test('AT-56 batch rotate-keys re-encrypts multiple with single passphrase', async ({ page, request }) => {
+  const suffix = Date.now()
+  const oldPass = `batch-old-${suffix}!Strong`
+  const newPass = `batch-new-${suffix}!Strong`
+
+  // 造一个岗位保证导出有数据
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at56-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `批量轮换-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 创建三份加密备份（均用同一 oldPass）
+  const ids: string[] = []
+  for (let i = 0; i < 3; i++) {
+    const createRes = await request.post('/api/backups', {
+      headers: { 'Idempotency-Key': `e2e-at56-create-${suffix}-${i}-${crypto.randomUUID()}` },
+      data: { passphrase: oldPass },
+    })
+    expect(createRes.status()).toBe(201)
+    ids.push((await createRes.json()).id)
+  }
+
+  // 批量轮换：全部成功
+  const rotateRes = await request.post('/api/backups/rotate-keys', {
+    headers: { 'Idempotency-Key': `e2e-at56-rotate-${suffix}-${crypto.randomUUID()}` },
+    data: { backupIds: ids, oldPassphrase: oldPass, newPassphrase: newPass },
+  })
+  expect(rotateRes.status()).toBe(200)
+  const summary = await rotateRes.json()
+  expect(summary.total).toBe(3)
+  expect(summary.rotated).toBe(3)
+  expect(summary.failed).toBe(0)
+  expect(summary.results.length).toBe(3)
+  for (const r of summary.results) {
+    expect(r.status).toBe('SUCCESS')
+    expect(ids).toContain(r.backupId)
+  }
+  // 响应不回显 passphrase
+  const summaryJson = JSON.stringify(summary)
+  expect(summaryJson).not.toContain(oldPass)
+  expect(summaryJson).not.toContain(newPass)
+
+  // 审计可按 action=BACKUP_KEY_ROTATED 查询到 3 条
+  const auditRes = await request.get('/api/audit-logs?page=1&pageSize=100&action=BACKUP_KEY_ROTATED')
+  expect(auditRes.status()).toBe(200)
+  const auditBody = await auditRes.json()
+  expect(auditBody.total).toBeGreaterThanOrEqual(3)
+  for (const id of ids) {
+    expect(auditBody.items.some((i: { resourceId: string }) => i.resourceId === id)).toBe(true)
+  }
+
+  // 部分失败：再创建 1 份用不同口令的备份，混入批量轮换
+  const otherPass = `other-${suffix}!Strong`
+  const otherCreate = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at56-other-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: otherPass },
+  })
+  expect(otherCreate.status()).toBe(201)
+  const otherId = (await otherCreate.json()).id
+  // 用 oldPass 批量轮换 otherId（其旧口令为 otherPass，不匹配）→ 该条 FAILED
+  const partialRes = await request.post('/api/backups/rotate-keys', {
+    headers: { 'Idempotency-Key': `e2e-at56-partial-${suffix}-${crypto.randomUUID()}` },
+    data: { backupIds: [otherId], oldPassphrase: oldPass, newPassphrase: newPass },
+  })
+  expect(partialRes.status()).toBe(200)
+  const partial = await partialRes.json()
+  expect(partial.total).toBe(1)
+  expect(partial.rotated).toBe(0)
+  expect(partial.failed).toBe(1)
+  expect(partial.results[0].status).toBe('FAILED')
+
+  // newPassphrase 弱 → 400 fail fast
+  const weakRes = await request.post('/api/backups/rotate-keys', {
+    headers: { 'Idempotency-Key': `e2e-at56-weak-${suffix}-${crypto.randomUUID()}` },
+    data: { backupIds: ids, oldPassphrase: newPass, newPassphrase: 'aaaaaaaa' },
+  })
+  expect(weakRes.status()).toBe(400)
+
+  // empty backupIds → 400
+  const emptyRes = await request.post('/api/backups/rotate-keys', {
+    headers: { 'Idempotency-Key': `e2e-at56-empty-${suffix}-${crypto.randomUUID()}` },
+    data: { backupIds: [], oldPassphrase: oldPass, newPassphrase: newPass },
+  })
+  expect(emptyRes.status()).toBe(400)
+
+  // UI：设置页有「批量轮换」按钮
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: '批量轮换' })).toBeVisible()
+
+  // 清理本次产生的备份
+  for (const id of [...ids, otherId]) {
+    await request.delete(`/api/backups/${id}`, {
+      headers: { 'X-Confirm-Permanent-Delete': 'true' },
+    })
+  }
+})
+
 test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
   const suffix = Date.now()
   // 造数：一个岗位 + 二次投递确认触发审计（SECONDARY_APPLICATION_CONFIRMED），再加一个备份造 BACKUP_DELETED 审计

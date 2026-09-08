@@ -22,6 +22,7 @@ import {
   usePurgeOldBackups,
   useRestoreBackup,
   useRotateBackupKey,
+  useRotateBackupKeys,
   useUpdateBackupSchedule,
 } from '@/api/backup/backupApi'
 import { PassphraseStrengthMeter } from './PassphraseStrengthMeter'
@@ -52,6 +53,7 @@ export function EncryptedBackupSection() {
   const restoreBackup = useRestoreBackup()
   const deleteBackup = useDeleteBackup()
   const rotateKey = useRotateBackupKey()
+  const rotateKeys = useRotateBackupKeys()
   const scheduleQuery = useBackupSchedule()
   const updateSchedule = useUpdateBackupSchedule()
   const armSchedule = useArmBackupSchedule()
@@ -70,6 +72,10 @@ export function EncryptedBackupSection() {
   const [rotatingId, setRotatingId] = useState<string | null>(null)
   const [rotateOldPass, setRotateOldPass] = useState('')
   const [rotateNewPass, setRotateNewPass] = useState('')
+  const [selectedRotateIds, setSelectedRotateIds] = useState<Set<string>>(new Set())
+  const [batchRotateOldPass, setBatchRotateOldPass] = useState('')
+  const [batchRotateNewPass, setBatchRotateNewPass] = useState('')
+  const [showBatchRotate, setShowBatchRotate] = useState(false)
   const [purgeDays, setPurgeDays] = useState('30')
   const [confirmingPurge, setConfirmingPurge] = useState(false)
   const [keepLast, setKeepLast] = useState('5')
@@ -191,6 +197,52 @@ export function EncryptedBackupSection() {
     }
   }
 
+  const submitBatchRotate = async () => {
+    if (selectedRotateIds.size === 0) {
+      pushToast('请勾选要轮换的备份', 'error')
+      return
+    }
+    if (batchRotateOldPass.trim().length < 8 || batchRotateNewPass.trim().length < 8) {
+      pushToast('新旧 passphrase 均至少 8 位', 'error')
+      return
+    }
+    try {
+      const summary = await rotateKeys.mutateAsync({
+        backupIds: [...selectedRotateIds],
+        oldPassphrase: batchRotateOldPass,
+        newPassphrase: batchRotateNewPass,
+      })
+      setBatchRotateOldPass('')
+      setBatchRotateNewPass('')
+      setSelectedRotateIds(new Set())
+      if (summary.failed > 0) {
+        const failedNames = summary.results
+          .filter((r) => r.status === 'FAILED')
+          .map((r) => r.backupId.slice(0, 8))
+          .join('、')
+        pushToast(`已轮换 ${summary.rotated}/${summary.total} 条，${summary.failed} 条失败（${failedNames}）`, 'error')
+      } else {
+        pushToast(`已轮换 ${summary.rotated}/${summary.total} 条备份的保护口令`)
+      }
+    } catch (caught) {
+      pushToast(backupErrorMessage(caught as Error), 'error')
+      setBatchRotateOldPass('')
+      setBatchRotateNewPass('')
+    }
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedRotateIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
   const submitPurge = async () => {
     const days = Number(purgeDays)
     if (!Number.isInteger(days) || days < 1) {
@@ -293,10 +345,108 @@ export function EncryptedBackupSection() {
             <EmptyState icon="🔐" text="尚无加密备份记录。" />
           ) : (
             <div>
+              <div className="flex-row" style={{ justifyContent: 'flex-start', marginBottom: 8 }}>
+                <Button
+                  variant="default"
+                  type="button"
+                  onClick={() => setShowBatchRotate((v) => !v)}
+                >
+                  {showBatchRotate ? '收起批量轮换' : '批量轮换'}
+                </Button>
+                {showBatchRotate ? (
+                  <>
+                    <span className="muted" style={{ alignSelf: 'center' }}>
+                      已选 {selectedRotateIds.size} 条
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      type="button"
+                      onClick={() =>
+                        setSelectedRotateIds(
+                          new Set(backups.map((r) => r.id)),
+                        )
+                      }
+                    >
+                      全选
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      type="button"
+                      onClick={() => setSelectedRotateIds(new Set())}
+                      disabled={selectedRotateIds.size === 0}
+                    >
+                      清空
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+              {showBatchRotate ? (
+                <div className="requirement-row" style={{ marginBottom: 12 }}>
+                  <div className="requirement-main">
+                    <p className="muted" style={{ marginTop: 0 }}>
+                      对勾选的多个备份用同一旧口令解密、同一新口令重新加密。逐条独立事务，
+                      单个失败不阻塞其他。适用于多个备份共享同一旧口令的场景。
+                    </p>
+                    <Field label="旧 passphrase" required>
+                      <Input
+                        type="password"
+                        value={batchRotateOldPass}
+                        onChange={(event) => setBatchRotateOldPass(event.target.value)}
+                        placeholder="至少 8 位（当前保护口令）"
+                        maxLength={256}
+                        aria-label="批量轮换旧 passphrase"
+                        autoComplete="new-password"
+                      />
+                    </Field>
+                    <Field label="新 passphrase" required>
+                      <Input
+                        type="password"
+                        value={batchRotateNewPass}
+                        onChange={(event) => setBatchRotateNewPass(event.target.value)}
+                        placeholder="至少 8 位（新保护口令，需达强）"
+                        maxLength={256}
+                        aria-label="批量轮换新 passphrase"
+                        autoComplete="new-password"
+                      />
+                      <PassphraseStrengthMeter passphrase={batchRotateNewPass} />
+                    </Field>
+                  </div>
+                  <div className="requirement-actions">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      type="button"
+                      disabled={
+                        rotateKeys.isPending
+                        || selectedRotateIds.size === 0
+                        || batchRotateOldPass.trim().length < 8
+                        || batchRotateNewPass.trim().length < 8
+                      }
+                      onClick={submitBatchRotate}
+                    >
+                      {rotateKeys.isPending ? '批量轮换中…' : `确认批量轮换（${selectedRotateIds.size}）`}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               {backups.map((record) => (
                 <div className="requirement-row" key={record.id}>
                   <div className="requirement-main">
-                    <span className="requirement-raw">{record.fileName}</span>
+                    {showBatchRotate ? (
+                      <label className="flex-row" style={{ gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedRotateIds.has(record.id)}
+                          onChange={() => toggleSelect(record.id)}
+                          aria-label={`选择 ${record.fileName}`}
+                        />
+                        <span className="requirement-raw">{record.fileName}</span>
+                      </label>
+                    ) : (
+                      <span className="requirement-raw">{record.fileName}</span>
+                    )}
                     <p className="muted" style={{ margin: '4px 0 0' }}>
                       创建于 {formatDateTime(record.createdAt)} · {formatBytes(record.sizeBytes)}
                       {' · 算法 '}
