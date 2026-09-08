@@ -1,5 +1,34 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-08-2
+
+- 目标：实现「audit_log occurred_at 二级索引迁移」最小切片——新增 Flyway V26 迁移 `CREATE INDEX idx_audit_log_occurred_at ON audit_log(occurred_at)`，优化审计日志查询（`GET /audit-logs`、`GET /backups/orphans/audit`）与导出（`GET /audit-logs/export`）的 `ORDER BY occurred_at DESC` 排序与 `occurred_at >= ?`/`<= ?` 时间范围过滤性能。承接 2026-09-08-1「下一窗口只做」候选切片「audit_log occurred_at 二级索引迁移」（经用户从 3 候选中拍板）。`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（SQLite 支持反向扫描）与范围过滤。V1 建表时无二级索引此前走全表扫描（本地单用户量小可接受），本切片补索引面向未来数据增长。不新增表/列、不改 V1~V25 既有迁移、不改任何查询/导出语义结果（索引为纯性能优化，行为不变）。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：bounded 切片经用户拍板 2 个关键决策——(1) 单列索引 `occurred_at`（vs 复合 `(occurred_at, action)`），最小切片与文档一直承诺的「occurred_at 索引」一致，复合索引过设计（`action`/`resource_type` 为精确匹配非索引列，本地量小走索引定位后回表过滤或全表扫描均可接受）；(2) 新增 AT-55 作回归守卫（纯迁移无行为变化，但加断言索引存在的测试防止未来迁移误删索引，并验证查询/导出排序与范围过滤行为不变）。
+  - 规格（按权威顺序）：`V26__index_audit_log_occurred_at.sql` 新增迁移（`CREATE INDEX idx_audit_log_occurred_at ON audit_log(occurred_at)`，注释说明 occurred_at TEXT 存 UTC ISO 字典序与时间序一致 B-tree 索引服务排序与范围过滤、V1 无索引此前全表扫描本地量小可接受本切片补索引面向未来、不新增表/列不改 V1 DDL 不动既有迁移仅追加）。`02-state-machines.md §9` 三处措辞从「无二级索引/不新增索引迁移」改为「二级索引：V1 建表时无二级索引，V26 起补 occurred_at 二级索引（idx_audit_log_occurred_at），服务排序与范围过滤」（孤儿清理审计查询、全量审计查询、全量审计导出三节）。`04-database-design.md §6` 三处措辞同改（孤儿清理审计查询、全量审计查询、导出）+ 新增「audit_log occurred_at 二级索引（V26 迁移）」独立条目（不新增表/列不改 V1 DDL 仅追加索引、B-tree 服务排序与范围过滤、action/resource_type 非索引列仍回表过滤或全表扫描、不修改 V1~V25 既有迁移）。`03-openapi.yaml` GET /audit-logs 与 GET /audit-logs/export 两处 description 措辞从「无二级索引/不新增索引迁移」改为「二级索引：V26 起补 occurred_at 索引」。`05-acceptance-test-cases.md` 新增 AT-55（PRAGMA index_list 断言 idx_audit_log_occurred_at 存在且建索引列为 occurred_at 且非唯一 + 查询 DESC 排序不变 + 范围过滤不变 + 导出排序与范围过滤不变 + 索引为纯性能优化不改变语义结果）+ 发布门槛升 AT-55。`jobhub-prd.md §10` 追加 audit_log occurred_at 二级索引已实现最小切片标注。
+  - 迁移 `backend/src/main/resources/db/migration/V26__index_audit_log_occurred_at.sql` 新增（单条 `CREATE INDEX idx_audit_log_occurred_at ON audit_log(occurred_at)` + 注释说明设计理由）。
+  - 测试扩既有 `AuditLogQueryIntegrationTest`：加 2 个 AT-55 用例（AT55_occurred_at_indexExistsAfterV26Migration PRAGMA index_list 断言索引存在+建索引列 occurred_at+非唯一；AT55_queryAndExportBehaviorUnchangedAfterIndex 索引为纯性能优化查询 DESC 排序不变+范围过滤不变+导出 DESC 排序不变）+ auditLogIndexes/indexColumns 辅助。
+- 未完成：不新增表/列（仅追加索引，audit_log schema 不变）、不改 V1~V25 既有迁移（结构变更经新增版本 V26 完成）、不做复合索引（occurred_at 单列，action/resource_type 非索引列留回表过滤或全表扫描）、不做查询/导出语义变更（索引为纯性能优化，行为不变）、不做审计导出 CSV/JSON 的流式响应或分页导出（留后续切片）、不做密钥轮换批量操作、不做第三方日历 ICS 订阅。
+- 单窗口边界：本切片 8 文件（迁移 1[V26] + 规格 6[openapi/state-machines/db-design/AT/prd + 本文件] + 后端测试 1[扩 AuditLogQueryIntegrationTest]），在 MASTER_PROMPT ≤10 文件边界内。纯迁移 + 文档措辞同步 + 2 个回归测试，无新端点/表/列/语义变更，最小切片。
+- 修改文件：
+  - 迁移：`backend/src/main/resources/db/migration/V26__index_audit_log_occurred_at.sql`（新增）。
+  - 规格：`docs/jobhub/03-openapi.yaml`、`docs/jobhub/02-state-machines.md`、`docs/jobhub/04-database-design.md`、`docs/jobhub/05-acceptance-test-cases.md`、`jobhub-prd.md`、本文件。
+  - 后端测试：`src/test/java/com/jobhub/integration/AuditLogQueryIntegrationTest.java`（加 2 个 AT-55 用例 + auditLogIndexes/indexColumns 辅助 + import Map）。
+- 已运行验证：
+  - `cd backend && mvn test -Dtest=AuditLogQueryIntegrationTest`：33 tests，0 failures（含新增 2 个 AT-55 用例，原 31 个 AT-50/AT-52/AT-54 用例不破坏）。
+  - `cd backend && mvn clean test`：229 tests，0 failures，0 errors，0 skipped（上一窗口 227→本窗口 229，+2 AT-55）；Flyway V1→V26 成功（V26 新增迁移执行成功，schema_version=26）。
+  - `cd frontend && npm run gen-types && npm run typecheck && npm run lint && npm run build`：全部通过（构建仅有既有 chunk-size 提示）。
+  - `cd frontend && npx playwright test e2e/p1-encrypted-backup.spec.ts --grep "AT-50|AT-54|AT-55" --reporter=dot`：2 passed（审计相关 E2E 回归不破坏）。
+- 验证结果：audit_log occurred_at 二级索引迁移链路（V26 迁移执行成功 schema_version=26；PRAGMA index_list 断言 idx_audit_log_occurred_at 存在且建索引列为 occurred_at 且非唯一；查询 DESC 排序不变[首条最新]；范围过滤不变[from≥排除更早]；导出 DESC 排序不变；索引为纯性能优化不改变语义结果）有后端集成测试（2 新增用例）覆盖与既有 31 用例回归；OpenAPI 变更为 description 措辞补强（非破坏性，既有端点不变）；数据库变更为新增 V26 迁移（仅追加索引，不改 V1 DDL，不动 V1~V25 既有迁移，audit_log schema 不变）；索引为只读查询性能优化，不写 audit_log、不动任何业务表、不需确认头/幂等键。
+- 已知问题：
+  - V26 迁移为纯索引追加，不改任何查询/导出语义结果（索引为性能优化，SQLite 查询计划器自动选择是否使用索引，应用层无感知）；既有 AT-50/AT-52/AT-54 查询与导出测试全绿证行为不变。
+  - `action`/`resource_type` 过滤为精确匹配非索引列，带这些过滤的查询仍可能走索引定位后回表过滤或全表扫描（本地量小可接受）；若未来需要可另开迁移补复合索引（超出本切片范围）。
+  - 全量 E2E（p1-encrypted-backup.spec.ts 全 14 用例）下 AT-36/38/39/41/42/43/44 等 7 个既有用例仍失败（弱口令 `secret-${suffix}` score<70 被 AT-48 强口令门槛拒绝的既有 flaky，与本切片无代码关联，本切片未碰 passphrase 门槛/备份逻辑）；本切片审计相关 AT-50/AT-54/AT-55 回归全绿。
+  - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：备份密钥轮换批量操作、第三方日历 ICS 订阅、修复既有 E2E flaky[升级弱口令]、其他用户指定切片）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。
+- 不要重复做：不要重建 V26 索引迁移（已建 idx_audit_log_occurred_at）；不要给 audit_log 加复合索引（occurred_at 单列，action/resource_type 非索引列留回表过滤或全表扫描）；不要改 V1~V25 既有迁移（结构变更经新增版本完成）；不要改任何查询/导出语义（索引为纯性能优化，行为不变）；不要给 AuditLogMapper 加 update/delete（仅追加 + 只读 select/count/selectAll）；不要做审计导出流式响应/分页导出（留后续切片）；不要做密钥轮换批量操作、第三方日历 ICS 订阅。
+
 ### 窗口 2026-09-08-1
 
 - 目标：实现「审计日志导出 CSV/JSON」最小切片——在 AT-50/AT-52 全量审计查询端点 `GET /audit-logs`（action/resourceType/from/to 过滤 + DESC 排序）之上，新增 `GET /audit-logs/export` 只读即时下载端点，把查询结果导出为 CSV 或 JSON 文件，供用户离线追溯关键用户确认与不可覆盖操作。承接 2026-09-07-8「下一窗口只做」候选切片「审计日志导出 CSV/JSON」（经用户从 4 候选中拍板）。过滤参数与查询端点完全一致（语义、校验、DESC 排序全同），新增 `format` 参数（`csv`|`json`，默认 `json`）。即时在内存生成直接返回响应，**不落盘、不写文件系统、不创建 `data_export` 记录、无 `afterCommit` 清理**（与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，契合「只读查询不动任何业务表/文件系统」语义）；本地单用户审计量小，不设行数上限（与 `POST /data-exports` 全量导出一致）。不新增表/列/迁移/索引，不改响应 schema（复用 `AuditLogEntryResponse` 字段），复用既有 `AuditLogMapper` 动态 SQL 模式加只读 `selectAll`。CSV 用 UTF-8 BOM + RFC 4180 转义 + CRLF（复用 `ExportService.escapeCsvField` 范式），JSON 为审计条目数组。非法 `format`/`from`/`to` 返回 400；`from > to` 返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）。
@@ -226,12 +255,12 @@
 
 ## 1. 当前总状态
 
-- 项目阶段：P1（V0.2）已完成二十七个切片；本窗口实现审计日志导出 CSV/JSON（AT-54），新增 `GET /audit-logs/export` 即时下载端点，复用 action/resourceType/from/to 过滤，内存生成 CSV（BOM+RFC4180+CRLF）或 JSON 数组，不落盘。
+- 项目阶段：P1（V0.2）已完成二十八个切片；本窗口新增 audit_log occurred_at 二级索引迁移（V26，AT-55），优化审计日志查询/导出排序与时间范围过滤性能，纯性能优化不改语义。
 - 里程碑说明：V0.2 主流程已完成，AI 供应商配置删除切片已完成。附件仍遵守本地安全约束，只保存用户填写的引用元数据，不实现文件上传、读取、扫描、下载或校验。
 - 当前里程碑：P1/V0.2 `DONE`；P0 四个里程碑 M1~M4 与 AT-01~AT-24 保持全部完成，新增 P1 验收 AT-17A~AT-17D、AT-26 已覆盖。
-- 当前任务：审计日志导出切片（AT-54）已在窗口 2026-09-08-1 完成并发布；除 V0.3 外无待实现的已定义 P0/P1 契约需求；V1.0 跨端完整体验需求（第三方日历同步、飞书/钉钉/企业微信专有签名、跨设备同步、移动端深度优化）已从规格移除，不再作为后续切片。
+- 当前任务：audit_log occurred_at 二级索引切片（V26/AT-55）已在窗口 2026-09-08-2 完成并发布；除 V0.3 外无待实现的已定义 P0/P1 契约需求；V1.0 跨端完整体验需求（第三方日历同步、飞书/钉钉/企业微信专有签名、跨设备同步、移动端深度优化）已从规格移除，不再作为后续切片。
 - 当前负责人窗口：Codex。
-- 最后更新：2026-09-08（窗口 2026-09-08-1）。
+- 最后更新：2026-09-08（窗口 2026-09-08-2）。
 
 ## 2. 已完成内容
 

@@ -1194,9 +1194,9 @@ paths:
         按 `occurred_at DESC` 排序（最新优先）。只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete`
         确认头、不需 `Idempotency-Key`（GET 幂等天然）、不动 `backup_record`/文件系统/任何业务表。
         分页参数复用 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）；空表或过滤无匹配返回 `items=[]`、`total=0`。
-        无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描（带可选
-        `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，
-        全表扫描性能可接受，**不新增索引迁移**。
+        二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`），
+        服务 `ORDER BY occurred_at DESC`（含反向扫描）与 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`
+        范围过滤；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引可用。
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
@@ -1254,9 +1254,10 @@ paths:
         不设行数上限（与 `POST /data-exports` 全量导出一致）。
         只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete` 确认头（非销毁性）、不需
         `Idempotency-Key`（GET 幂等天然）、不动 `backup_record`/文件系统/任何业务表。响应不含 passphrase。
-        无二级索引：`audit_log` 表 V1 起无任何二级索引，导出走 `ORDER BY occurred_at DESC` 全表扫描（带可选
-        `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，
-        全表扫描性能可接受，**不新增索引迁移**。`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to`
+        二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`），
+        服务 `ORDER BY occurred_at DESC`（含反向扫描）与 `WHERE action=? AND resource_type=? AND occurred_at >= ?
+        AND occurred_at <= ?` 范围过滤；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引可用。
+        `from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to`
         返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。
       parameters:
         - name: action

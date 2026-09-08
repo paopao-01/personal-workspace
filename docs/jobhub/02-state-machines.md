@@ -339,7 +339,7 @@ ABANDONED ──restore──> TODO
 - 排序：按 `occurred_at DESC`（最新优先）。
 - 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageApplication`）。空表返回 `items=[]`、`total=0`、`totalPages=0`。
 - 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统。响应不含 passphrase（审计记录本身从不存 passphrase）。
-- 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描；本地单用户审计量小（仅孤儿清理追加写入），全表扫描性能可接受，**不新增索引迁移**。若未来数据量增长可另开迁移补 `occurred_at` 索引。
+- 二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`）。`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务 `ORDER BY occurred_at DESC`（含反向扫描）与 `occurred_at >= ?`/`<= ?` 范围过滤。此前全表扫描，本地单用户审计量小可接受；补索引面向未来数据增长。
 - `AuditLogMapper` 在既有 `insert` 之外新增只读 `selectPageByAction` + `countByAction` 方法（仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。
 
 **全量审计日志查询（只读）**：`GET /audit-logs` 分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的跨域统一事后追溯（承接 `GET /backups/orphans/audit` 仅覆盖孤儿清理的备份域便捷入口，本端点为通用查询入口，**不废弃、不替代**前者）。
@@ -349,7 +349,7 @@ ABANDONED ──restore──> TODO
 - 排序：按 `occurred_at DESC`（最新优先），与 `GET /backups/orphans/audit` 一致。
 - 分页：复用全局 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）参数；`offset = (page - 1) * pageSize`。响应 `items + page + pageSize + total + totalPages`（对齐 `PageJob`/`PageBackupOrphanAuditEntry`）。空表或过滤无匹配返回 `items=[]`、`total=0`、`totalPages=0`。
 - 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase。
-- 无二级索引：`audit_log` 表 V1 起无任何二级索引，查询走 `ORDER BY occurred_at DESC` 全表扫描（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，全表扫描性能可接受，**不新增索引迁移**。
+- 二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`）。查询走 `ORDER BY occurred_at DESC`（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（含反向扫描）与范围过滤。此前全表扫描，本地单用户审计量小可接受。
 - `AuditLogMapper` 在既有 `selectPageByAction`/`countByAction` 之外新增只读 `selectPage(action, resourceType, from, to, pageSize, offset)` + `count(action, resourceType, from, to)` 方法（动态 SQL，参数 null/空不加条件，仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。`from`/`to` 与 `occurred_at` 均为 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，字符串 `>=`/`<=` 比较正确。
 
 **全量审计日志导出（只读，即时下载）**：`GET /audit-logs/export` 把 `GET /audit-logs` 的查询结果导出为文件下载，供用户离线追溯。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to` 均可选，空=不过滤导出全量，可单独或任意组合（语义、校验、`occurred_at DESC` 排序全同查询端点）；新增 `format` 参数选 `csv` 或 `json`（默认 `json`）。即时在内存生成直接返回响应，**不落盘、不写文件系统、不创建 `data_export` 记录、无 `afterCommit` 清理**（与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，契合「只读查询不动任何业务表/文件系统」语义）。
@@ -360,7 +360,7 @@ ABANDONED ──restore──> TODO
 - 响应头：`Content-Disposition: attachment; filename=audit-logs-<exportedAt>.<ext>`（`exportedAt` 为导出时刻 UTC ISO 去冒号、`ext` 为 `csv` 或 `json`），触发浏览器下载；CSV `Content-Type: text/csv`，JSON `Content-Type: application/json`。
 - 即时下载不落盘：本地单用户审计量小，不设行数上限（与 `POST /data-exports` 全量导出一致）；导出全量匹配记录在内存生成，无文件残留、无孤儿清理。
 - 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase。
-- 无二级索引：`audit_log` 表 V1 起无任何二级索引，导出走 `ORDER BY occurred_at DESC` 全表扫描（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；本地单用户审计量小，全表扫描性能可接受，**不新增索引迁移**。
+- 二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`）。导出走 `ORDER BY occurred_at DESC`（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（含反向扫描）与范围过滤。此前全表扫描，本地单用户审计量小可接受。
 - 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。
 - `AuditLogMapper` 在 `selectPage`/`count` 之外新增只读 `selectAll(action, resourceType, from, to)` 方法（动态 SQL 同 `selectPage` 去掉 `LIMIT`/`OFFSET`，仅 SELECT，不违背「仅追加、不提供更新/删除」语义），返回全部匹配记录供控制器在内存生成 CSV/JSON。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
 
