@@ -947,6 +947,52 @@ Then 返回 200 且每行 occurredAt 列 >= from（范围过滤行为不变）
 And 全程查询与导出结果与加索引前完全一致（索引为性能优化，不改变语义结果）
 ```
 
+### AT-59 audit_log action+occurred_at 复合二级索引（V28 迁移补复合索引，带 action 等值过滤的查询/导出由复合索引服务，行为不变）
+
+```gherkin
+Given Flyway 已执行 V28 迁移（V1→V28 成功，schema_version=28）
+When 检查 audit_log 表索引（PRAGMA index_list('audit_log')）
+Then 存在名为 idx_audit_log_action_occurred_at 的索引，且其建索引列为 (action, occurred_at)（复合索引，等值列 action 在前、范围/排序列 occurred_at 在后）
+And 该索引为非唯一索引
+And V26 的 idx_audit_log_occurred_at 单列索引仍存在（V28 复合索引与 V26 单列索引互补，不替换）
+Given audit_log 表有多条不同 action、occurred_at 递增的记录
+When 用户调用 GET /api/audit-logs?action=BACKUP_DELETED&page=1&pageSize=20
+Then 返回 200 且按 occurred_at DESC 排序，仅含 action=BACKUP_DELETED 的记录（带 action 等值过滤的查询行为不变，仅索引最优服务）
+When 用户调用 GET /api/audit-logs?action=BACKUP_ORPHAN_CLEANED&from=2026-09-03T00:00:00Z&to=2026-09-05T23:59:59Z
+Then 返回 200 且仅含 action=BACKUP_ORPHAN_CLEANED 且 occurred_at 落在 [from,to] 闭区间的记录（复合索引服务 action 等值 + occurred_at 范围，行为不变）
+When 用户调用 GET /api/audit-logs/export?format=json&action=BACKUP_KEY_ROTATED
+Then 返回 200 且 JSON 数组仅含 action=BACKUP_KEY_ROTATED 的记录、按 occurredAt DESC 排序（带 action 过滤的导出行为不变）
+When 用户调用 GET /api/audit-logs（不带 action 过滤）
+Then 返回 200 且按 occurred_at DESC 排序全量记录（action 为空时退回 V26 单列索引，行为不变）
+And 全程查询与导出结果与加复合索引前完全一致（索引为性能优化，不改变语义结果）
+```
+
+### AT-60 freedBytes 布尔过滤参数（GET /audit-logs 与 GET /audit-logs/export 新增 hasFreedBytes 过滤：true 只返回 freed_bytes IS NOT NULL 的孤儿清理行，可与 action/resourceType/from/to 组合，缺省/false 不过滤）
+
+```gherkin
+Given audit_log 表存在 2 条 BACKUP_ORPHAN_CLEANED 行（freed_bytes 为正数）与 2 条非孤儿清理行（BACKUP_DELETED、REQUIREMENT_MERGED，freed_bytes 为 null）
+When 用户调用 GET /api/audit-logs?hasFreedBytes=true&page=1&pageSize=20
+Then 返回 200 且 items 只含 freed_bytes IS NOT NULL 的记录（即 2 条 BACKUP_ORPHAN_CLEANED）
+And items 不含 BACKUP_DELETED 与 REQUIREMENT_MERGED 行（freed_bytes 为 null 被排除）
+When 用户调用 GET /api/audit-logs?hasFreedBytes=true&action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且 items 为 2 条 BACKUP_ORPHAN_CLEANED（hasFreedBytes 与 action 组合，二者重叠结果一致）
+When 用户调用 GET /api/audit-logs?hasFreedBytes=true&action=BACKUP_DELETED
+Then 返回 200 且 items 为空（BACKUP_DELETED 行 freed_bytes 为 null，hasFreedBytes=true 与 action=BACKUP_DELETED 组合无匹配）
+When 用户调用 GET /api/audit-logs?hasFreedBytes=false（缺省与 false 等价）
+Then 返回 200 且 items 含全部 4 条记录（false=不过滤，向后兼容）
+When 用户调用 GET /api/audit-logs（不传 hasFreedBytes）
+Then 返回 200 且 items 含全部 4 条记录（缺省=不过滤，向后兼容）
+When 用户调用 GET /api/audit-logs?hasFreedBytes=true&from=2026-09-03T00:00:00Z
+Then 返回 200 且 items 只含 occurred_at >= from 且 freed_bytes IS NOT NULL 的记录（hasFreedBytes 与 from 组合）
+When 用户调用 GET /api/audit-logs/export?format=json&hasFreedBytes=true
+Then 返回 200 且 JSON 数组只含 freedBytes 非 null 的元素（导出端点同步过滤）
+When 用户调用 GET /api/audit-logs/export?format=csv&hasFreedBytes=true
+Then 返回 200 且 CSV 数据行只含 freedBytes 列非空的记录（导出端点同步过滤）
+When 用户调用 GET /api/audit-logs/export?hasFreedBytes=true&format=xml
+Then 返回 400 VALIDATION_ERROR（hasFreedBytes 不影响 format 校验，写流前 fail fast）
+And 全程 hasFreedBytes 仅作过滤输入不回显到响应，响应 schema 不变（PageAuditLogEntry 不变），不写 audit_log、不动任何业务表
+```
+
 ### AT-56 批量密钥轮换（POST /backups/rotate-keys 逐条就地重加密：同一旧口令解密 → 同一新口令重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
 
 ```gherkin
@@ -1036,6 +1082,6 @@ And 全程后端不写文件系统（无 data/exports 下审计导出文件残�
 
 ## 8. 发布门槛
 
-- AT-01 至 AT-58 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-60 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

@@ -1472,3 +1472,129 @@ test('AT-58 audit log export streaming response (chunked transfer, complete down
   await expect(page.getByRole('button', { name: '导出 JSON' })).toBeVisible()
 })
 
+/**
+ * AT-59 audit_log action+occurred_at 复合二级索引（V28 迁移）：复合索引存在且建索引列为
+ * (action, occurred_at)，V26 单列索引仍存在（互补不替换）；带 action 过滤的查询/导出行为不变。
+ * PRAGMA 断言由后端 AT-59 集成测试覆盖；E2E 聚焦真实 server 的带 action 过滤查询/导出链路。
+ * 造数同 AT-50：创建备份 + 触发 orphans/clean（全量跑时删残留孤儿写 BACKUP_ORPHAN_CLEANED 审计，
+ * 单跑时可能删 0 个无审计，用条件断言容忍空 DB，强语义由后端集成测试覆盖）。
+ */
+test('AT-59 audit log composite index (action+occurred_at) serves action-filtered query', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at59-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（全量跑时删残留孤儿写 BACKUP_ORPHAN_CLEANED 审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // 带 action 等值过滤的查询：复合索引服务，行为不变
+  const listRes = await request.get('/api/audit-logs?action=BACKUP_ORPHAN_CLEANED&page=1&pageSize=20')
+  expect(listRes.status()).toBe(200)
+  const listBody = await listRes.json()
+  expect(Array.isArray(listBody.items)).toBe(true)
+  for (const item of listBody.items as Record<string, unknown>[]) {
+    expect(item.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // 带 action 过滤的导出：复合索引服务，行为不变
+  const exportRes = await request.get('/api/audit-logs/export?format=json&action=BACKUP_ORPHAN_CLEANED')
+  expect(exportRes.status()).toBe(200)
+  const exportBody = await exportRes.json()
+  expect(Array.isArray(exportBody)).toBe(true)
+  for (const item of exportBody as Record<string, unknown>[]) {
+    expect(item.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // 不带 action 过滤的查询退回 V26 单列索引，行为不变
+  const allRes = await request.get('/api/audit-logs?page=1&pageSize=1')
+  expect(allRes.status()).toBe(200)
+
+  // UI：设置页审计日志区块可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})
+
+/**
+ * AT-60 freedBytes 布尔过滤参数：hasFreedBytes=true 只返回 freed_bytes IS NOT NULL 的孤儿清理行，
+ * 可与 action 组合，缺省/false 不过滤（向后兼容）；导出端点同步过滤；UI「仅看有释放字节」复选框可见。
+ * 造数同 AT-49：创建备份 + 触发 orphans/clean（全量跑时删残留孤儿写 freed_bytes 非 null 审计，
+ * 单跑时可能删 0 个无审计，用条件断言容忍空 DB，强语义由后端 AT-60 集成测试覆盖）。
+ */
+test('AT-60 audit log hasFreedBytes filter (only freed_bytes IS NOT NULL rows)', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at60-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（全量跑时删残留孤儿写 freed_bytes 非 null 的 BACKUP_ORPHAN_CLEANED 审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // hasFreedBytes=true → 只返回 freed_bytes IS NOT NULL 的记录（孤儿清理行）
+  const filteredRes = await request.get('/api/audit-logs?hasFreedBytes=true&page=1&pageSize=20')
+  expect(filteredRes.status()).toBe(200)
+  const filteredBody = await filteredRes.json()
+  expect(Array.isArray(filteredBody.items)).toBe(true)
+  for (const item of filteredBody.items as Record<string, unknown>[]) {
+    expect(item.freedBytes).not.toBeNull()
+    expect(item.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // 不传 hasFreedBytes → 缺省不过滤返回全量（向后兼容，total >= hasFreedBytes=true 的 total）
+  const allRes = await request.get('/api/audit-logs?page=1&pageSize=1')
+  expect(allRes.status()).toBe(200)
+  const allBody = await allRes.json()
+  expect(allBody.total).toBeGreaterThanOrEqual(filteredBody.total)
+
+  // hasFreedBytes=true & action=BACKUP_DELETED → 无匹配（BACKUP_DELETED 行 freed_bytes 恒 null，可靠断言）
+  const emptyRes = await request.get('/api/audit-logs?hasFreedBytes=true&action=BACKUP_DELETED')
+  expect(emptyRes.status()).toBe(200)
+  const emptyBody = await emptyRes.json()
+  expect(emptyBody.total).toBe(0)
+
+  // 导出端点同步过滤：hasFreedBytes=true 的 JSON 只含 freedBytes 非 null 元素
+  const exportRes = await request.get('/api/audit-logs/export?format=json&hasFreedBytes=true')
+  expect(exportRes.status()).toBe(200)
+  const exportBody = await exportRes.json()
+  expect(Array.isArray(exportBody)).toBe(true)
+  for (const item of exportBody as Record<string, unknown>[]) {
+    expect(item.freedBytes).not.toBeNull()
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // hasFreedBytes 不影响 format 校验：hasFreedBytes=true & format=xml → 400 fail fast
+  const badFmt = await request.get('/api/audit-logs/export?hasFreedBytes=true&format=xml')
+  expect(badFmt.status()).toBe(400)
+
+  // UI：设置页审计日志区块「仅看有释放字节」复选框可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: '仅看有释放字节' })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})
+
+

@@ -775,4 +775,168 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		Long backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Long.class);
 		assertThat(backupCount).isZero();
 	}
+
+	// ==================== AT-59 audit_log action+occurred_at 复合二级索引（V28 迁移补复合索引，行为不变） ====================
+
+	@Test
+	void AT59_actionOccurredAtIndexExistsAfterV28Migration() {
+		// V28 迁移后 audit_log 表应有 idx_audit_log_action_occurred_at 复合索引，建索引列为 (action, occurred_at)
+		List<String> indexNames = auditLogIndexes().stream()
+				.map(m -> String.valueOf(m.get("name")))
+				.toList();
+		assertThat(indexNames).contains("idx_audit_log_action_occurred_at");
+		assertThat(indexColumns("idx_audit_log_action_occurred_at"))
+				.containsExactly("action", "occurred_at");
+		// 非唯一索引
+		Map<String, Object> idx = auditLogIndexes().stream()
+				.filter(m -> "idx_audit_log_action_occurred_at".equals(String.valueOf(m.get("name"))))
+				.findFirst().orElseThrow();
+		assertThat(String.valueOf(idx.get("unique"))).isEqualTo("0");
+		// V26 单列索引仍存在（V28 复合索引与 V26 单列索引互补，不替换）
+		assertThat(indexNames).contains("idx_audit_log_occurred_at");
+	}
+
+	@Test
+	void AT59_queryAndExportBehaviorUnchangedAfterCompositeIndex() {
+		// 复合索引为纯性能优化，不改变语义结果：造多条不同 action、occurred_at 递增的记录
+		seedExportRows();  // 4 条 occurred_at 10/11/12/13:00（含 4 种 action）
+		// 带 action 等值过滤的查询行为不变
+		String body = listAuditLogs("?action=BACKUP_DELETED&page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body, "items", 0, "action")).isEqualTo("BACKUP_DELETED");
+		assertThat(JsonProbe.arrStr(body, "items", 0, "occurredAt")).isEqualTo("2026-09-07T12:00:00Z");
+		// 带 action + from/to 组合的查询行为不变
+		String rangeBody = listAuditLogs("?action=BACKUP_ORPHAN_CLEANED&from=2026-09-07T11:00:00Z&to=2026-09-07T13:00:00Z").getBody();
+		assertThat(JsonProbe.lng(rangeBody, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(rangeBody, "items", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		// 带 action 过滤的导出行为不变
+		String exportBody = new String(exportAuditLogs("?format=json&action=BACKUP_ORPHAN_CLEANED").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(exportBody, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(exportBody, "", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		// 不带 action 过滤的查询退回 V26 单列索引，行为不变
+		String allBody = listAuditLogs("?page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.arraySize(allBody, "items")).isEqualTo(4);
+		assertThat(JsonProbe.arrStr(allBody, "items", 0, "occurredAt")).isEqualTo("2026-09-07T13:00:00Z");
+	}
+
+	// ==================== AT-60 freedBytes 布尔过滤参数（hasFreedBytes=true 只返回 freed_bytes IS NOT NULL） ====================
+
+	@Test
+	void AT60_hasFreedBytesTrueReturnsOnlyFreedBytesNotNull() {
+		// 2 条 BACKUP_ORPHAN_CLEANED（freed_bytes 非 null）+ 2 条非孤儿清理行（freed_bytes 为 null）
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-07T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T11:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"Merged into requirement.", "2026-09-07T10:00:00Z");
+
+		// hasFreedBytes=true → 只返回 freed_bytes IS NOT NULL 的 2 条
+		String body = listAuditLogs("?hasFreedBytes=true&page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<String> actions = JsonProbe.collectArrayField(body, "items", "action");
+		assertThat(actions).containsOnly("BACKUP_ORPHAN_CLEANED");
+		// 不含 BACKUP_DELETED 与 REQUIREMENT_MERGED（freed_bytes 为 null 被排除）
+		assertThat(actions).doesNotContain("BACKUP_DELETED", "REQUIREMENT_MERGED");
+		// 每条 freedBytes 有值
+		for (int i = 0; i < 2; i++) {
+			assertThat(JsonProbe.arrLng(body, "items", i, "freedBytes")).isGreaterThan(0L);
+		}
+	}
+
+	@Test
+	void AT60_hasFreedBytesTrueCombinedWithActionOrphan() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-07T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T11:00:00Z");
+
+		// hasFreedBytes=true & action=BACKUP_ORPHAN_CLEANED → 2 条（二者重叠结果一致）
+		String body = listAuditLogs("?hasFreedBytes=true&action=BACKUP_ORPHAN_CLEANED").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		assertThat(JsonProbe.collectArrayField(body, "items", "action"))
+				.containsOnly("BACKUP_ORPHAN_CLEANED");
+	}
+
+	@Test
+	void AT60_hasFreedBytesTrueWithActionBackupDeletedReturnsEmpty() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T11:00:00Z");
+
+		// hasFreedBytes=true & action=BACKUP_DELETED → 无匹配（BACKUP_DELETED 行 freed_bytes 为 null）
+		String body = listAuditLogs("?hasFreedBytes=true&action=BACKUP_DELETED").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		assertThat(JsonProbe.arraySize(body, "items")).isZero();
+	}
+
+	@Test
+	void AT60_hasFreedBytesFalseOrOmittedReturnsAllBackwardCompatible() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T11:00:00Z");
+
+		// hasFreedBytes=false → 不过滤返回全部 2 条（向后兼容）
+		String falseBody = listAuditLogs("?hasFreedBytes=false").getBody();
+		assertThat(JsonProbe.lng(falseBody, "total")).isEqualTo(2L);
+		// 不传 hasFreedBytes → 缺省=不过滤返回全部 2 条（向后兼容）
+		String omittedBody = listAuditLogs("").getBody();
+		assertThat(JsonProbe.lng(omittedBody, "total")).isEqualTo(2L);
+	}
+
+	@Test
+	void AT60_hasFreedBytesTrueCombinedWithFrom() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T09:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-07T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T12:00:00Z");
+
+		// hasFreedBytes=true & from=2026-09-10T00:00:00Z → 0 条（被 from 排除全部）
+		String body = listAuditLogs("?hasFreedBytes=true&from=2026-09-10T00:00:00Z").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		// hasFreedBytes=true & from=2026-09-07T10:00:00Z → 1 条（09:00 的孤儿清理被 from 排除，12:00 的 BACKUP_DELETED freed_bytes 为 null）
+		String body2 = listAuditLogs("?hasFreedBytes=true&from=2026-09-07T10:00:00Z").getBody();
+		assertThat(JsonProbe.lng(body2, "total")).isEqualTo(1L);
+		assertThat(JsonProbe.arrStr(body2, "items", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+	}
+
+	@Test
+	void AT60_exportHasFreedBytesTrueFiltersByFormat() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T11:00:00Z");
+
+		// JSON 导出：只含 freedBytes 非 null 的元素
+		String json = new String(exportAuditLogs("?format=json&hasFreedBytes=true").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(json, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(json, "", 0, "action")).isEqualTo("BACKUP_ORPHAN_CLEANED");
+		assertThat(JsonProbe.arrLng(json, "", 0, "freedBytes")).isEqualTo(1024L);
+
+		// CSV 导出：数据行只含 freedBytes 列非空的记录
+		String csv = csvText(exportAuditLogs("?format=csv&hasFreedBytes=true").getBody());
+		assertThat(csv).startsWith("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+		long dataRows = java.util.Arrays.stream(csv.replace("\r\n", "\n").split("\n", -1))
+				.filter(l -> !l.isEmpty() && !l.startsWith("id,")).count();
+		assertThat(dataRows).isEqualTo(1);
+		assertThat(csv).contains("BACKUP_ORPHAN_CLEANED").contains(",1024,");
+		assertThat(csv).doesNotContain("BACKUP_DELETED");
+	}
+
+	@Test
+	void AT60_exportHasFreedBytesWithInvalidFormatReturns400() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T13:00:00Z");
+		// hasFreedBytes 不影响 format 校验，写流前 fail fast
+		assertThat(exportAuditLogs("?hasFreedBytes=true&format=xml").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
 }

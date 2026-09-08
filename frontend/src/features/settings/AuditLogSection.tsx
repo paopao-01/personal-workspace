@@ -37,6 +37,7 @@ export function AuditLogSection() {
   const [resourceType, setResourceType] = useState('')
   const [fromLocal, setFromLocal] = useState('')  // datetime-local 本地时间值
   const [toLocal, setToLocal] = useState('')      // datetime-local 本地时间值
+  const [hasFreedBytes, setHasFreedBytes] = useState(false)
   const [exporting, setExporting] = useState<'' | 'csv' | 'json'>('')
 
   const query = useAuditLogs({
@@ -46,6 +47,7 @@ export function AuditLogSection() {
     resourceType: resourceType || undefined,
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
     to: toLocal ? toUtcIso(toLocal) : undefined,
+    hasFreedBytes: hasFreedBytes || undefined,
   })
 
   // 当前生效的过滤条件（供导出复用，与查询一致）
@@ -54,6 +56,7 @@ export function AuditLogSection() {
     resourceType: resourceType || undefined,
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
     to: toLocal ? toUtcIso(toLocal) : undefined,
+    hasFreedBytes: hasFreedBytes || undefined,
   }
 
   const onExport = async (format: 'csv' | 'json') => {
@@ -73,6 +76,10 @@ export function AuditLogSection() {
   }
   const onDateChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setter(event.target.value)
+    setPage(1)
+  }
+  const onToggleFreedBytes = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setHasFreedBytes(event.target.checked)
     setPage(1)
   }
 
@@ -135,6 +142,17 @@ export function AuditLogSection() {
                 aria-label="按结束时间过滤（含边界）"
               />
             </Field>
+          </div>
+          <div style={{ alignSelf: 'flex-end', paddingBottom: 6 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={hasFreedBytes}
+                onChange={onToggleFreedBytes}
+                aria-label="仅看有释放字节的记录"
+              />
+              仅看有释放字节
+            </label>
           </div>
           <div className="flex-row" style={{ justifyContent: 'flex-start', alignSelf: 'flex-end' }}>
             <Button
