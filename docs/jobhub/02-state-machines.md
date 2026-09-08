@@ -350,17 +350,18 @@ ABANDONED ──restore──> TODO
 - 二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`）。查询走 `ORDER BY occurred_at DESC`（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（含反向扫描）与范围过滤。此前全表扫描，本地单用户审计量小可接受。
 - `AuditLogMapper` 在既有 `selectPageByAction`/`countByAction` 之外新增只读 `selectPage(action, resourceType, from, to, pageSize, offset)` + `count(action, resourceType, from, to)` 方法（动态 SQL，参数 null/空不加条件，仅 SELECT，不违背「仅追加、不提供更新/删除」语义）。`from`/`to` 与 `occurred_at` 均为 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，字符串 `>=`/`<=` 比较正确。
 
-**全量审计日志导出（只读，即时下载）**：`GET /audit-logs/export` 把 `GET /audit-logs` 的查询结果导出为文件下载，供用户离线追溯。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to` 均可选，空=不过滤导出全量，可单独或任意组合（语义、校验、`occurred_at DESC` 排序全同查询端点）；新增 `format` 参数选 `csv` 或 `json`（默认 `json`）。即时在内存生成直接返回响应，**不落盘、不写文件系统、不创建 `data_export` 记录、无 `afterCommit` 清理**（与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，契合「只读查询不动任何业务表/文件系统」语义）。
+**全量审计日志导出（只读，流式下载）**：`GET /audit-logs/export` 把 `GET /audit-logs` 的查询结果导出为文件下载，供用户离线追溯。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to` 均可选，空=不过滤导出全量，可单独或任意组合（语义、校验、`occurred_at DESC` 排序全同查询端点）；新增 `format` 参数选 `csv` 或 `json`（默认 `json`）。**流式分批生成、内存有界**：控制器用 `StreamingResponseBody` 按 `BATCH_SIZE`（500）分批调 `selectPage`（offset 递增）逐批写入响应输出流，用户仍一次性下载完整 CSV/JSON 文件（语义不变），后端内存只持有一批记录而非全量；**不落盘、不写文件系统、不创建 `data_export` 记录、无 `afterCommit` 清理**（与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，契合「只读查询不动任何业务表/文件系统」语义）。
 
 - 查询范围与字段：只读暴露既有写入值，不新增 action（取值与 `GET /audit-logs` 一致，见该节）。每条记录字段同查询端点：`id`/`resourceType`（全量查询不固定故返回）/`resourceId`/`action`/`reason`（原样呈现）/`freedBytes`（仅 `BACKUP_ORPHAN_CLEANED` 行有值，其余为 null）/`occurredAt`（UTC ISO）。省略恒 null 的快照字段；响应与审计记录均不含 passphrase。
 - CSV 格式：UTF-8 BOM（便于 Excel 识别编码）+ RFC 4180 转义（含逗号/引号/换行的字段用双引号包裹、内部双引号转义为两个双引号）+ CRLF 行尾；首行为表头 `id,resourceType,resourceId,action,reason,freedBytes,occurredAt`；无记录时仅返回表头（与查询端点空结果 `items=[]` 语义一致）。
 - JSON 格式：以审计条目数组为根（对齐查询端点 `items` 元素结构），空结果为 `[]`。
-- 响应头：`Content-Disposition: attachment; filename=audit-logs-<exportedAt>.<ext>`（`exportedAt` 为导出时刻 UTC ISO 去冒号、`ext` 为 `csv` 或 `json`），触发浏览器下载；CSV `Content-Type: text/csv`，JSON `Content-Type: application/json`。
-- 即时下载不落盘：本地单用户审计量小，不设行数上限（与 `POST /data-exports` 全量导出一致）；导出全量匹配记录在内存生成，无文件残留、无孤儿清理。
+- 响应头：`Content-Disposition: attachment; filename=audit-logs-<exportedAt>.<ext>`（`exportedAt` 为导出时刻 UTC ISO 去冒号、`ext` 为 `csv` 或 `json`），触发浏览器下载；CSV `Content-Type: text/csv`，JSON `Content-Type: application/json`。流式响应不预设 `Content-Length`，以分块传输编码（`Transfer-Encoding: chunked`）逐批写入。
+- 流式分批生成不落盘：本地单用户审计量小，不设行数上限（与 `POST /data-exports` 全量导出一致）；控制器按 `BATCH_SIZE=500` 分批调 `selectPage` 逐批写流，内存只持有一批记录，用户仍得到完整文件，无文件残留、无孤儿清理。
 - 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase。
 - 二级索引：`audit_log` 表 V1 建表时无二级索引，V26 起补 `occurred_at` 二级索引（`idx_audit_log_occurred_at`）。导出走 `ORDER BY occurred_at DESC`（带可选 `WHERE action=? AND resource_type=? AND occurred_at >= ? AND occurred_at <= ?`）；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引同时服务排序（含反向扫描）与范围过滤。此前全表扫描，本地单用户审计量小可接受。
-- 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。
-- `AuditLogMapper` 在 `selectPage`/`count` 之外新增只读 `selectAll(action, resourceType, from, to)` 方法（动态 SQL 同 `selectPage` 去掉 `LIMIT`/`OFFSET`，仅 SELECT，不违背「仅追加、不提供更新/删除」语义），返回全部匹配记录供控制器在内存生成 CSV/JSON。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
+- 错误处理：`from`/`to`/`format` 校验在写流前 fail fast（返回 400 前不开始写响应体）；`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。流式开始后中途 DB 出错无法改状态码（已发送 200，本地量小概率极低）。
+- `AuditLogMapper` 复用既有只读 `selectPage(action, resourceType, from, to, pageSize, offset)`（分批 fetch，offset 递增）与 `count`；不再使用一次性 `selectAll` 全量加载（流式后该只读方法保留不删，但导出端点不再调用）。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
+- 已知限制：OFFSET 分批随 offset 增大扫描成本上升（SQLite 需扫描跳过 offset 行），本地单用户审计量小可接受；若未来数据量显著增长可改 keyset 分批（按 `occurred_at` 锚点 + `id` 兜底）避免深翻页，超出本切片范围。
 
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 

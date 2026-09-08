@@ -1409,3 +1409,66 @@ test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
   await expect(page.getByRole('button', { name: '导出 CSV' })).toBeVisible()
   await expect(page.getByRole('button', { name: '导出 JSON' })).toBeVisible()
 })
+
+/**
+ * AT-58 审计导出流式响应：导出端点用 StreamingResponseBody 分批 fetch + 逐批写入响应流，真实 Tomcat
+ * 以分块传输编码（Transfer-Encoding: chunked）逐批发送、不预设 Content-Length，用户仍一次性下载完整文件。
+ * 跨批拼接完整性（>BATCH_SIZE 501 条无丢批无重复）由后端 AT-58 集成测试覆盖；E2E 聚焦真实 server 的
+ * 流式传输契约（MockMvc 无法暴露 Transfer-Encoding 头，须真实 webServer 验证）。
+ */
+test('AT-58 audit log export streaming response (chunked transfer, complete download)', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造数：创建岗位触发需求合并审计（REQUIREMENT_MERGED），确保导出有记录走流式传输
+  const jobRes = await request.post('/api/jobs', {
+    headers: { 'Idempotency-Key': `e2e-at58-job-${crypto.randomUUID()}` },
+    data: {
+      companyName: `流式导出-${suffix}`,
+      title: `Java 后端 ${suffix}`,
+      jdRawText: '岗位负责 Java 与 Spring Boot 后端开发，5 年经验优先。',
+    },
+  })
+  expect(jobRes.ok()).toBe(true)
+
+  // 导出 JSON（无过滤）→ 200，流式分块传输，body 完整可解析
+  const jsonRes = await request.get('/api/audit-logs/export?format=json')
+  expect(jsonRes.status()).toBe(200)
+  const jsonHeaders = jsonRes.headers()
+  // 流式响应不预设 Content-Length（分批生成，流式前无法预知总字节数）
+  expect(String(jsonHeaders['content-length'] ?? '')).toBe('')
+  // 真实 Tomcat 以分块传输编码逐批发送
+  expect(String(jsonHeaders['transfer-encoding'] ?? '').toLowerCase()).toContain('chunked')
+  // body 完整可解析为 JSON 数组（流式逐批拼接后客户端收到完整文件）
+  const jsonBody = await jsonRes.json()
+  expect(Array.isArray(jsonBody)).toBe(true)
+  for (const item of jsonBody as Record<string, unknown>[]) {
+    expect(item).not.toHaveProperty('passphrase')
+  }
+  // Content-Disposition 含 .json
+  expect(String(jsonHeaders['content-disposition'] ?? '')).toContain('.json')
+
+  // 导出 CSV（无过滤）→ 200，流式分块，BOM + 表头完整
+  const csvRes = await request.get('/api/audit-logs/export?format=csv')
+  expect(csvRes.status()).toBe(200)
+  expect(String(csvRes.headers()['transfer-encoding'] ?? '').toLowerCase()).toContain('chunked')
+  expect(String(csvRes.headers()['content-length'] ?? '')).toBe('')
+  const csvText = await csvRes.text()
+  // UTF-8 BOM
+  expect(csvText.charCodeAt(0)).toBe(0xFEFF)
+  expect(csvText.slice(1).startsWith('id,resourceType,resourceId,action,reason,freedBytes,occurredAt')).toBe(true)
+
+  // 空匹配流式导出仍返回 []
+  const emptyRes = await request.get('/api/audit-logs/export?format=json&action=NONEXISTENT')
+  expect(emptyRes.status()).toBe(200)
+  expect(await emptyRes.json()).toEqual([])
+
+  // 非法 format → 400 fail fast（写流前不开始写响应体）
+  const badFmt = await request.get('/api/audit-logs/export?format=xml')
+  expect(badFmt.status()).toBe(400)
+
+  // UI：设置页审计日志区块导出按钮可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出 CSV' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出 JSON' })).toBeVisible()
+})
+

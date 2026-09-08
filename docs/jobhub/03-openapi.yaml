@@ -1269,14 +1269,18 @@ paths:
   /audit-logs/export:
     get:
       tags: [DataManagement]
-      summary: 导出全量审计日志为 CSV 或 JSON 文件（只读，即时下载，复用 action/resourceType/from/to 过滤）
+      summary: 导出全量审计日志为 CSV 或 JSON 文件（只读，流式下载，复用 action/resourceType/from/to 过滤）
       description: |
-        把 `GET /audit-logs` 的查询结果导出为文件下载（即时在内存生成直接返回响应，不落盘、不写文件系统、
+        把 `GET /audit-logs` 的查询结果导出为文件下载（流式分批生成、内存有界，不落盘、不写文件系统、
         不动任何业务表/`audit_log`/`backup_record`），供用户离线追溯关键用户确认与不可覆盖操作。过滤参数与
         `GET /audit-logs` 完全一致：`action`、`resourceType`、`from`、`to` 均可选，空=不过滤导出全量，可单独
         或任意组合（`action`/`resourceType` 字符串精确匹配，`from`/`to` 按 `occurred_at` 时间范围过滤，均为
         ISO-8601 UTC 字符串）；按 `occurred_at DESC` 排序（与查询端点一致）。`format` 参数选 `csv` 或 `json`
         （默认 `json`）。
+        流式分批：控制器用 `StreamingResponseBody` 按 `BATCH_SIZE=500` 分批调 `selectPage`（offset 递增）
+        逐批写入响应输出流，用户仍一次性下载完整 CSV/JSON 文件（语义不变），后端内存只持有一批记录而非全量，
+        不预设 `Content-Length`、以分块传输编码（`Transfer-Encoding: chunked`）逐批发送。`from`/`to`/`format`
+        校验在写流前 fail fast（返回 400 前不开始写响应体）。
         只读暴露既有写入值，不新增 action（取值与字段语义同 `GET /audit-logs`，见该端点 description）：
         `SECONDARY_APPLICATION_CONFIRMED`、`REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`、
         `BACKUP_ORPHAN_CLEANED`、`BACKUP_DELETED`、`BACKUP_PURGED_BY_AGE`、`BACKUP_PURGED_BY_COUNT`、
@@ -1288,8 +1292,8 @@ paths:
         转义为两个双引号）+ CRLF 行尾；首行为表头 `id,resourceType,resourceId,action,reason,freedBytes,occurredAt`；
         无记录时仅返回表头（与 `GET /audit-logs` 空结果语义一致）。JSON：以审计条目数组为根（对齐查询端点
         `items` 元素结构），空结果为 `[]`。
-        即时下载不落盘：与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，内容在内存生成
-        直接返回响应，不创建 `data_export` 记录、不写文件系统、无 `afterCommit` 清理。本地单用户审计量小，
+        流式下载不落盘：与 `POST /data-exports` 的持久化导出不同——审计导出是只读即时下载，内容在内存分批
+        生成直接返回响应，不创建 `data_export` 记录、不写文件系统、无 `afterCommit` 清理。本地单用户审计量小，
         不设行数上限（与 `POST /data-exports` 全量导出一致）。
         只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete` 确认头（非销毁性）、不需
         `Idempotency-Key`（GET 幂等天然）、不动 `backup_record`/文件系统/任何业务表。响应不含 passphrase。
@@ -1297,7 +1301,9 @@ paths:
         服务 `ORDER BY occurred_at DESC`（含反向扫描）与 `WHERE action=? AND resource_type=? AND occurred_at >= ?
         AND occurred_at <= ?` 范围过滤；`occurred_at` 以 TEXT 存 UTC ISO，ISO-8601 字典序与时间序一致，普通 B-tree 索引可用。
         `from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to`
-        返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。
+        返回空结果（CSV 仅表头、JSON 为 `[]`，不报 400）；`format` 非 `csv`/`json` 返回 400。`from`/`to`/`format`
+        校验在写流前 fail fast，非法时返回 400 前不开始写响应体；流式开始后中途 DB 出错无法改状态码
+        （已发送 200，本地单用户审计量小概率极低）。OFFSET 分批随 offset 增大扫描成本上升，本地量小可接受。
       parameters:
         - name: action
           in: query
