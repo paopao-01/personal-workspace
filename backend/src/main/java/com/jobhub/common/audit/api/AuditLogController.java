@@ -14,7 +14,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -60,16 +63,23 @@ public class AuditLogController {
 	}
 
 	/**
-	 * 导出全量审计日志为 CSV 或 JSON 文件（只读，即时下载）。过滤参数与 {@link #listAuditLogs} 完全一致
+	 * 导出全量审计日志为 CSV 或 JSON 文件（只读，流式下载）。过滤参数与 {@link #listAuditLogs} 完全一致
 	 * （action/resourceType/from/to，空=不过滤导出全量，可单独或任意组合，按 occurred_at DESC 排序）；
-	 * {@code format} 选 {@code csv} 或 {@code json}（默认 {@code json}）。即时在内存生成直接返回响应，
+	 * {@code format} 选 {@code csv} 或 {@code json}（默认 {@code json}）。
+	 *
+	 * <p>流式分批生成、内存有界：用 {@link StreamingResponseBody} 按 {@link #EXPORT_BATCH_SIZE}（500）分批调
+	 * {@link AuditLogMapper#selectPage selectPage}（offset 递增）逐批写入响应输出流，用户仍一次性下载完整 CSV/JSON
+	 * 文件（语义不变），后端内存只持有一批记录而非全量；不预设 {@code Content-Length}、以分块传输编码逐批发送。
 	 * 不落盘、不写文件系统、不创建 data_export 记录、无 afterCommit 清理（与 {@code POST /data-exports}
 	 * 的持久化导出不同——审计导出是只读即时下载）。本地单用户审计量小，不设行数上限。响应不含 passphrase，
-	 * 省略恒 null 的快照字段。{@code from}/{@code to} 非法格式返回 400；{@code from > to} 返回空结果
-	 * （CSV 仅表头、JSON 为 {@code []}，不报 400）；{@code format} 非 {@code csv}/{@code json} 返回 400。
+	 * 省略恒 null 的快照字段。
+	 *
+	 * <p>{@code from}/{@code to}/{@code format} 校验在写流前 fail fast（返回 400 前不开始写响应体）；
+	 * {@code from}/{@code to} 非法格式返回 400；{@code from > to} 返回空结果（CSV 仅表头、JSON 为
+	 * {@code []}，不报 400）；{@code format} 非 {@code csv}/{@code json} 返回 400。
 	 */
 	@GetMapping("/audit-logs/export")
-	public ResponseEntity<byte[]> exportAuditLogs(
+	public ResponseEntity<StreamingResponseBody> exportAuditLogs(
 			@RequestParam(required = false) String action,
 			@RequestParam(required = false) String resourceType,
 			@RequestParam(required = false) String from,
@@ -77,21 +87,85 @@ public class AuditLogController {
 			@RequestParam(defaultValue = "json") String format) {
 		String validatedFrom = parseIsoUtc(from, "from");
 		String validatedTo = parseIsoUtc(to, "to");
-		List<AuditLogEntry> entries = auditLogMapper.selectAll(action, resourceType, validatedFrom, validatedTo);
-		String stamp = Instant.now().toString().replace(":", "");
+		boolean csv;
 		if ("json".equalsIgnoreCase(format)) {
-			return ResponseEntity.ok()
-					.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=audit-logs-" + stamp + ".json")
-					.contentType(MediaType.APPLICATION_JSON)
-					.body(toJson(entries));
+			csv = false;
 		} else if ("csv".equalsIgnoreCase(format)) {
-			return ResponseEntity.ok()
-					.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=audit-logs-" + stamp + ".csv")
-					.contentType(MediaType.valueOf("text/csv"))
-					.body(toCsv(entries));
+			csv = true;
+		} else {
+			throw new BusinessRuleException(ErrorCode.VALIDATION_ERROR, "format 必须为 csv 或 json");
 		}
-		throw new BusinessRuleException(ErrorCode.VALIDATION_ERROR,
-				"format 必须为 csv 或 json");
+		String stamp = Instant.now().toString().replace(":", "");
+		String filename = "audit-logs-" + stamp + (csv ? ".csv" : ".json");
+		StreamingResponseBody body = csv
+				? out -> streamCsv(out, action, resourceType, validatedFrom, validatedTo)
+				: out -> streamJson(out, action, resourceType, validatedFrom, validatedTo);
+		return ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
+				.contentType(csv ? MediaType.valueOf("text/csv") : MediaType.APPLICATION_JSON)
+				.body(body);
+	}
+
+	/** 流式导出每批最多 fetch 500 条，offset 递增直到某批不足 500 条停止（内存只持有一批）。 */
+	static final int EXPORT_BATCH_SIZE = 500;
+
+	private void streamJson(OutputStream out, String action, String resourceType, String from, String to) throws IOException {
+		out.write('[');
+		boolean first = true;
+		int offset = 0;
+		while (true) {
+			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, EXPORT_BATCH_SIZE, offset);
+			if (batch.isEmpty()) {
+				break;
+			}
+			StringBuilder sb = new StringBuilder();
+			for (AuditLogEntry e : batch) {
+				if (!first) {
+					sb.append(',');
+				}
+				first = false;
+				sb.append("{\"id\":").append(jsonString(e.getId()))
+						.append(",\"resourceType\":").append(jsonString(e.getResourceType()))
+						.append(",\"resourceId\":").append(jsonString(e.getResourceId()))
+						.append(",\"action\":").append(jsonString(e.getAction()))
+						.append(",\"reason\":").append(jsonString(e.getReason()))
+						.append(",\"freedBytes\":").append(e.getFreedBytes() == null ? "null" : e.getFreedBytes())
+						.append(",\"occurredAt\":").append(jsonString(e.getOccurredAt()))
+						.append('}');
+			}
+			out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+			if (batch.size() < EXPORT_BATCH_SIZE) {
+				break;
+			}
+			offset += EXPORT_BATCH_SIZE;
+		}
+		out.write(']');
+	}
+
+	private void streamCsv(OutputStream out, String action, String resourceType, String from, String to) throws IOException {
+		out.write(UTF8_BOM);
+		out.write(csvRow(CSV_COLUMNS).getBytes(StandardCharsets.UTF_8));
+		out.write(CRLF);
+		int offset = 0;
+		while (true) {
+			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, EXPORT_BATCH_SIZE, offset);
+			if (batch.isEmpty()) {
+				break;
+			}
+			StringBuilder sb = new StringBuilder();
+			for (AuditLogEntry e : batch) {
+				String[] values = {e.getId(), e.getResourceType(), e.getResourceId(),
+						e.getAction(), e.getReason(),
+						e.getFreedBytes() == null ? "" : e.getFreedBytes().toString(),
+						e.getOccurredAt()};
+				sb.append(csvRow(values)).append("\r\n");
+			}
+			out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+			if (batch.size() < EXPORT_BATCH_SIZE) {
+				break;
+			}
+			offset += EXPORT_BATCH_SIZE;
+		}
 	}
 
 	/**
@@ -116,48 +190,6 @@ public class AuditLogController {
 	private static final byte[] CRLF = {'\r', '\n'};
 	private static final byte[] UTF8_BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
 	private static final String[] CSV_COLUMNS = {"id", "resourceType", "resourceId", "action", "reason", "freedBytes", "occurredAt"};
-
-	/** 把审计条目列表序列化为 JSON 数组（与查询端点 items 元素结构对齐，省略恒 null 的快照字段）。 */
-	private static byte[] toJson(List<AuditLogEntry> entries) {
-		StringBuilder sb = new StringBuilder("[");
-		for (int i = 0; i < entries.size(); i++) {
-			if (i > 0) {
-				sb.append(',');
-			}
-			AuditLogEntry e = entries.get(i);
-			sb.append("{\"id\":").append(jsonString(e.getId()))
-					.append(",\"resourceType\":").append(jsonString(e.getResourceType()))
-					.append(",\"resourceId\":").append(jsonString(e.getResourceId()))
-					.append(",\"action\":").append(jsonString(e.getAction()))
-					.append(",\"reason\":").append(jsonString(e.getReason()))
-					.append(",\"freedBytes\":").append(e.getFreedBytes() == null ? "null" : e.getFreedBytes())
-					.append(",\"occurredAt\":").append(jsonString(e.getOccurredAt()))
-					.append('}');
-		}
-		sb.append(']');
-		return sb.toString().getBytes(StandardCharsets.UTF_8);
-	}
-
-	/** 把审计条目列表序列化为 CSV（UTF-8 BOM + RFC 4180 转义 + CRLF，首行表头，无记录仅表头）。 */
-	private static byte[] toCsv(List<AuditLogEntry> entries) {
-		java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-		try {
-			out.write(UTF8_BOM);
-			out.write(csvRow(CSV_COLUMNS).getBytes(StandardCharsets.UTF_8));
-			out.write(CRLF);
-			for (AuditLogEntry e : entries) {
-				String[] values = {e.getId(), e.getResourceType(), e.getResourceId(),
-						e.getAction(), e.getReason(),
-						e.getFreedBytes() == null ? "" : e.getFreedBytes().toString(),
-						e.getOccurredAt()};
-				out.write(csvRow(values).getBytes(StandardCharsets.UTF_8));
-				out.write(CRLF);
-			}
-		} catch (java.io.IOException ex) {
-			throw new IllegalStateException(ex);
-		}
-		return out.toByteArray();
-	}
 
 	private static String csvRow(String[] values) {
 		StringBuilder sb = new StringBuilder();

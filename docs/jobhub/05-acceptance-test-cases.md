@@ -888,7 +888,7 @@ When GET /api/audit-logs?resourceType=BACKUP_RECORD
 Then 返回 200 且 items 含 BACKUP_DELETED/BACKUP_PURGED_BY_AGE/BACKUP_PURGED_BY_COUNT/BACKUP_KEY_ROTATED 各类（若均有写入）
 ```
 
-### AT-54 审计日志导出（GET /audit-logs/export 即时下载 CSV/JSON，复用 action/resourceType/from/to 过滤）
+### AT-54 审计日志导出（GET /audit-logs/export 流式下载 CSV/JSON，复用 action/resourceType/from/to 过滤）
 
 ```gherkin
 Given audit_log 表有多条不同 action/resourceType/occurred_at 的记录（覆盖至少 BACKUP_ORPHAN_CLEANED、REQUIREMENT_MERGED、BACKUP_DELETED 三类）
@@ -1009,8 +1009,33 @@ When 用户调用 GET /api/audit-logs/export?format=csv（无过滤）
 Then 返回 200 且首行表头含 freedBytes 列，BACKUP_ORPHAN_CLEANED 数据行该列为 N，BACKUP_DELETED 数据行该列为空
 ```
 
+### AT-58 审计导出流式响应（GET /audit-logs/export 分批流式生成：超过单批 BATCH_SIZE 时内容仍完整、内存有界、对外语义不变）
+
+```gherkin
+Given audit_log 表存在多于 BATCH_SIZE（500）条记录（如 501 条 occurred_at 递增的 BACKUP_DELETED 记录）
+When 用户调用 GET /api/audit-logs/export?format=json（无过滤）
+Then 返回 200 且响应体为完整 JSON 数组，数组长度 = 501（跨批拼接无丢批无重复）
+And 数组按 occurredAt DESC 排序（最新优先，跨批顺序仍正确）
+And 每元素含 id/resourceType/resourceId/action/reason/freedBytes/occurredAt，响应不含 passphrase
+When 用户调用 GET /api/audit-logs/export?format=csv（无过滤）
+Then 返回 200 且响应体以 UTF-8 BOM 开头，首行为表头 id,resourceType,resourceId,action,reason,freedBytes,occurredAt
+And 数据行数（不含表头）= 501，每行行尾为 CRLF，字段用 RFC 4180 转义
+And CSV 数据行数等于 JSON 数组长度（两种格式跨批内容一致）
+When 检查响应头
+Then 响应为分块传输编码（Transfer-Encoding: chunked，不预设 Content-Length）
+When 用户调用 GET /api/audit-logs/export?format=json&action=NONEXISTENT（无匹配且为空表外的空匹配）
+Then 返回 200 且响应体为 [] （流式下空结果仍为空数组）
+When audit_log 表为空时调用 GET /api/audit-logs/export?format=csv
+Then 返回 200 且响应体为 BOM + 表头行（无数据行，流式下空表仅写表头）
+When 用户调用 GET /api/audit-logs/export?format=xml
+Then 返回 400 VALIDATION_ERROR（format 非 csv/json，写流前 fail fast）
+When 用户调用 GET /api/audit-logs/export?from=not-a-date
+Then 返回 400（from 非 ISO-8601 UTC，写流前 fail fast，不开始写响应体）
+And 全程后端不写文件系统（无 data/exports 下审计导出文件残留），不创建 data_export 记录，不动 audit_log/backup_record 表
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-57 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-58 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

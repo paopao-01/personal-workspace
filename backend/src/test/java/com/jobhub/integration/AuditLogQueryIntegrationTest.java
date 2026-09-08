@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -663,5 +664,115 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 				.filter(l -> l.contains("BACKUP_DELETED"))
 				.count();
 		assertThat(deletedRowsWithEmptyFreed).isEqualTo(1);
+	}
+
+	// ==================== AT-58 审计导出流式响应（分批 fetch + 逐批写流，超过 BATCH_SIZE 时内容仍完整） ====================
+
+	/** 批量插入 count 条 BACKUP_DELETED 审计行，occurred_at 从 base 起每条 +1 秒递增（i 越大越新），返回最新与最旧 occurredAt。 */
+	private void seedBatchRows(int count) {
+		Instant base = Instant.parse("2026-09-07T10:00:00Z");
+		for (int i = 0; i < count; i++) {
+			insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+					"batch row " + i, base.plusSeconds(i).toString());
+		}
+	}
+
+	@Test
+	void AT58_streamingJsonExportAcrossBatchBoundaryIsCompleteAndOrdered() {
+		// 造 501 条 > BATCH_SIZE(500)，触发跨批拼接（第一批 500 + 第二批 1）
+		seedBatchRows(501);
+		ResponseEntity<byte[]> res = exportAuditLogs("?format=json");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(res.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+		String body = new String(res.getBody(), StandardCharsets.UTF_8);
+		assertThat(body).startsWith("[").endsWith("]");
+		// 跨批拼接无丢批无重复：数组长度 = 501
+		int size = JsonProbe.arraySize(body, "");
+		assertThat(size).isEqualTo(501);
+		// 跨批 DESC 排序仍正确：首条最新（i=500 → 10:08:20Z），末条最旧（i=0 → 10:00:00Z）
+		assertThat(JsonProbe.arrStr(body, "", 0, "occurredAt")).isEqualTo("2026-09-07T10:08:20Z");
+		assertThat(JsonProbe.arrStr(body, "", size - 1, "occurredAt")).isEqualTo("2026-09-07T10:00:00Z");
+		// 每元素字段齐全，不含 passphrase/快照
+		assertThat(JsonProbe.arrStr(body, "", 0, "id")).isNotBlank();
+		assertThat(JsonProbe.arrStr(body, "", 0, "action")).isEqualTo("BACKUP_DELETED");
+		assertThat(body).doesNotContain("passphrase")
+				.doesNotContain("beforeSnapshotJson").doesNotContain("afterSnapshotJson");
+	}
+
+	@Test
+	void AT58_streamingCsvExportAcrossBatchBoundaryIsCompleteAndConsistentWithJson() {
+		seedBatchRows(501);
+		// CSV 导出
+		byte[] csvBody = exportAuditLogs("?format=csv").getBody();
+		assertThat(csvBody[0]).isEqualTo((byte) 0xEF);
+		assertThat(csvBody[1]).isEqualTo((byte) 0xBB);
+		assertThat(csvBody[2]).isEqualTo((byte) 0xBF);
+		String text = csvText(csvBody);
+		assertThat(text).startsWith("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+		assertThat(text).contains("\r\n");
+		// 数据行数（不含表头）= 501
+		long dataRows = java.util.Arrays.stream(text.replace("\r\n", "\n").split("\n", -1))
+				.filter(l -> !l.isEmpty() && !l.startsWith("id,")).count();
+		assertThat(dataRows).isEqualTo(501);
+		// CSV 数据行数 == JSON 数组长度（两种格式跨批内容一致）
+		String json = new String(exportAuditLogs("?format=json").getBody(), StandardCharsets.UTF_8);
+		assertThat(dataRows).isEqualTo(JsonProbe.arraySize(json, ""));
+	}
+
+	@Test
+	void AT58_streamingResponseDoesNotPresetContentLength() {
+		seedBatchRows(501);
+		ResponseEntity<byte[]> res = exportAuditLogs("?format=json");
+		// 流式响应不预设 Content-Length（以分块传输编码逐批发送；MockMvc 可能不暴露 Transfer-Encoding 头，
+		// 但不应出现固定 Content-Length——流式前无法预知总字节数）
+		assertThat(res.getHeaders().getContentLength()).as("streaming response must not preset Content-Length")
+				.isLessThanOrEqualTo(0);
+	}
+
+	@Test
+	void AT58_streamingEmptyMatchStillReturnsEmptyArray() {
+		seedBatchRows(10);
+		// 空匹配（action=NONEXISTENT）走流式路径仍返回 []
+		String body = new String(exportAuditLogs("?format=json&action=NONEXISTENT").getBody(), StandardCharsets.UTF_8);
+		assertThat(body).isEqualTo("[]");
+	}
+
+	@Test
+	void AT58_streamingEmptyTableCsvReturnsHeaderOnly() {
+		// 空表（@BeforeEach 已清表）流式导出 CSV 仍只写表头
+		byte[] body = exportAuditLogs("?format=csv").getBody();
+		assertThat(body[0]).isEqualTo((byte) 0xEF);
+		String text = csvText(body);
+		assertThat(text.trim()).isEqualTo("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+	}
+
+	@Test
+	void AT58_streamingRejectsInvalidFormatBeforeWritingBody() {
+		seedBatchRows(501);
+		// format 非 csv/json → 写流前 fail fast 400
+		assertThat(exportAuditLogs("?format=xml").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT58_streamingRejectsInvalidFromBeforeWritingBody() {
+		seedBatchRows(501);
+		// from 非法 → 写流前 fail fast 400，不开始写响应体
+		assertThat(exportAuditLogs("?from=not-a-date").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT58_streamingExportCreatesNoDataExportRecordAndMutatesNoBusinessTable() {
+		seedBatchRows(501);
+		exportAuditLogs("?format=json");
+		exportAuditLogs("?format=csv");
+		// 全程不创建 data_export 记录（审计导出是只读即时下载）
+		Long exportCount = jdbc.queryForObject("SELECT COUNT(*) FROM data_export", Long.class);
+		assertThat(exportCount).isZero();
+		// 不动 audit_log（仍是 501 条，导出不新增不删除）
+		Long auditCount = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log", Long.class);
+		assertThat(auditCount).isEqualTo(501L);
+		// 不动 backup_record
+		Long backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Long.class);
+		assertThat(backupCount).isZero();
 	}
 }
