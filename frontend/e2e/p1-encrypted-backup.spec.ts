@@ -24,14 +24,14 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
   await expect(page.getByRole('heading', { name: '加密备份' })).toBeVisible()
 
   const passphraseInput = page.getByLabel('备份 passphrase')
-  await passphraseInput.fill(`secret-${suffix}`)
+  await passphraseInput.fill(`secret-${suffix}!Strong`)
 
   // passphrase 不足 8 位时按钮 disabled
   await passphraseInput.fill('short')
   await expect(page.getByRole('button', { name: '立即加密备份' })).toBeDisabled()
 
   // 重新填入有效 passphrase 并提交
-  await passphraseInput.fill(`secret-${suffix}`)
+  await passphraseInput.fill(`secret-${suffix}!Strong`)
   await page.getByRole('button', { name: '立即加密备份' }).click()
 
   // 提交后 passphrase 输入清空
@@ -70,7 +70,7 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
     headers: { 'Idempotency-Key': `e2e-at37-restore-${crypto.randomUUID()}` },
     multipart: {
       file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
-      passphrase: `secret-${suffix}`,
+      passphrase: `secret-${suffix}!Strong`,
     },
   })
   expect(restoreRes.ok(), `POST /backups/restore returned ${restoreRes.status()}`).toBe(true)
@@ -78,14 +78,14 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
   expect(report.status).toMatch(/COMPLETED/)
   expect(report.skippedIdentical).toBeGreaterThanOrEqual(0)
   // 响应不含 passphrase 值（字段名 passphraseResetRecommended 不含口令值，仅返回布尔）
-  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}`)
+  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}!Strong`)
 
   // 再次恢复：幂等，inserted=0（无新增行）
   const restoreAgainRes = await request.post('/api/backups/restore', {
     headers: { 'Idempotency-Key': `e2e-at37-restore2-${crypto.randomUUID()}` },
     multipart: {
       file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
-      passphrase: `secret-${suffix}`,
+      passphrase: `secret-${suffix}!Strong`,
     },
   })
   expect(restoreAgainRes.ok()).toBe(true)
@@ -114,7 +114,7 @@ test('AT-36 encrypted backup creates, lists and offers download', async ({ page,
     mimeType: 'application/octet-stream',
     buffer: encBytes,
   })
-  await restorePassphraseInput.fill(`secret-${suffix}`)
+  await restorePassphraseInput.fill(`secret-${suffix}!Strong`)
   await expect(page.getByRole('button', { name: '恢复备份' })).toBeEnabled()
   // 提交后 passphrase 清空，恢复完成 toast 出现
   await page.getByRole('button', { name: '恢复备份' }).click()
@@ -141,7 +141,7 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
   })
   const createRes = await request.post('/api/backups', {
     headers: { 'Idempotency-Key': `e2e-at44-backup-${crypto.randomUUID()}` },
-    data: { passphrase: `secret-${suffix}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
   })
   expect(createRes.ok()).toBe(true)
   const created = await createRes.json()
@@ -156,7 +156,7 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
     headers: { 'Idempotency-Key': `e2e-at44-restore-${crypto.randomUUID()}` },
     multipart: {
       file: { name: created.fileName, mimeType: 'application/octet-stream', buffer: encBytes },
-      passphrase: `secret-${suffix}`,
+      passphrase: `secret-${suffix}!Strong`,
     },
   })
   expect(restoreRes.ok(), `POST /backups/restore returned ${restoreRes.status()}`).toBe(true)
@@ -166,7 +166,7 @@ test('AT-44 restore auto-cleans orphans and returns summary', async ({ request }
   expect(report.orphanCleanSummary.orphanFiles).toBeGreaterThanOrEqual(0)
   expect(report.orphanCleanSummary.deletedFiles).toBeGreaterThanOrEqual(0)
   // 响应不含 passphrase 值（字段名 passphraseResetRecommended 不含口令值，仅返回布尔）
-  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}`)
+  expect(JSON.stringify(report)).not.toContain(`secret-${suffix}!Strong`)
 
   // 错误 passphrase 返回 422，不触发孤儿清理
   const badRes = await request.post('/api/backups/restore', {
@@ -273,7 +273,7 @@ test('AT-39 backup delete removes record, file and clears lastBackupId', async (
   // 生成一份加密备份
   const createRes = await request.post('/api/backups', {
     headers: { 'Idempotency-Key': `e2e-at39-create-${crypto.randomUUID()}` },
-    data: { passphrase: `secret-${suffix}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
   })
   expect(createRes.status()).toBe(201)
   const created = await createRes.json()
@@ -418,7 +418,7 @@ test('AT-38 backup schedule arm + cron trigger + disarmed skip', async ({ page, 
 
   // 4. 武装：passphrase 仅写入内存，提交后清空，armed 变 true
   const armInput = page.getByLabel('武装 passphrase')
-  await armInput.fill(`arm-secret-${suffix}`)
+  await armInput.fill(`arm-secret-${suffix}!Strong`)
   await page.getByRole('button', { name: '武装调度器' }).click()
   await expect(armInput).toHaveValue('')
   await expect(page.getByText('调度器已武装，应用重启后需重新武装')).toBeVisible({ timeout: 10_000 })
@@ -432,7 +432,7 @@ test('AT-38 backup schedule arm + cron trigger + disarmed skip', async ({ page, 
   expect(schedRes.ok()).toBe(true)
   const schedBody = JSON.stringify(await schedRes.json())
   expect(schedBody).toContain('"armed":true')
-  expect(schedBody).not.toContain(`arm-secret-${suffix}`)
+  expect(schedBody).not.toContain(`arm-secret-${suffix}!Strong`)
 
   // 7. passphrase 不落库（backup_schedule 无 passphrase 列）
   const passColRes = await request.get('/api/backups/schedule')
@@ -442,7 +442,7 @@ test('AT-38 backup schedule arm + cron trigger + disarmed skip', async ({ page, 
   // 8. 后台轮询触发定时备份（last_run_at=null 首次立即触发）：
   //    等待 last_run_status=SUCCESS 与新 backup_record。
   //    全量 E2E 下 4 个 webServer 资源竞争可能延迟后台调度线程，轮询 60s 增加容错。
-  const armSecret = `arm-secret-${suffix}`
+  const armSecret = `arm-secret-${suffix}!Strong`
   for (let i = 0; i < 80; i++) {
     const r = await request.get('/api/backups/schedule')
     const j = await r.json()
@@ -498,7 +498,7 @@ test('AT-41 backup purge by age removes old records and files', async ({ page, r
   for (let i = 0; i < 3; i++) {
     const res = await request.post('/api/backups', {
       headers: { 'Idempotency-Key': `e2e-at41-create-${suffix}-${i}-${crypto.randomUUID()}` },
-      data: { passphrase: `secret-${suffix}-${i}` },
+      data: { passphrase: `secret-${suffix}-${i}!Strong` },
     })
     expect(res.status()).toBe(201)
     const body = await res.json()
@@ -591,7 +591,7 @@ test('AT-42 orphan .enc scan clean removes orphans and keeps legit files', async
   // 造 1 份合法加密备份（文件与记录都在）
   const createRes = await request.post('/api/backups', {
     headers: { 'Idempotency-Key': `e2e-at42-create-${suffix}-${crypto.randomUUID()}` },
-    data: { passphrase: `secret-${suffix}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
   })
   expect(createRes.status()).toBe(201)
   const created = await createRes.json()
@@ -682,7 +682,7 @@ test('AT-43 backup keep last N retains newest and deletes the rest', async ({ pa
   for (let i = 0; i < 2; i++) {
     const res = await request.post('/api/backups', {
       headers: { 'Idempotency-Key': `e2e-at43-create-${suffix}-${i}-${crypto.randomUUID()}` },
-      data: { passphrase: `secret-${suffix}-${i}` },
+      data: { passphrase: `secret-${suffix}-${i}!Strong` },
     })
     expect(res.status()).toBe(201)
     const body = await res.json()
@@ -1012,7 +1012,7 @@ test('AT-50 full audit log query with action and resourceType filter', async ({ 
 
   // UI：设置页「审计日志」区块可见
   await page.goto('/settings')
-  await expect(page.getByRole('heading', { name: '审计日志' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
 
   // 清理本次产生的备份
   await request.delete(`/api/backups/${created.id}`, {
@@ -1223,7 +1223,7 @@ test('AT-54 audit log export CSV and JSON', async ({ request, page }) => {
 
   // UI：设置页审计日志区块有「导出 CSV」「导出 JSON」按钮
   await page.goto('/settings')
-  await expect(page.getByRole('heading', { name: '审计日志' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '导出 CSV' })).toBeVisible()
   await expect(page.getByRole('button', { name: '导出 JSON' })).toBeVisible()
 })
