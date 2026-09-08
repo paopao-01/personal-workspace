@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -537,5 +538,51 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		String body = new String(res.getBody(), StandardCharsets.UTF_8);
 		assertThat(body).startsWith("[").endsWith("]");
 		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(4);
+	}
+
+	// ==================== AT-55 audit_log occurred_at 二级索引（V26 迁移补索引，行为不变） ====================
+
+	/** PRAGMA index_list('audit_log') 返回的索引信息行（name 在第 2 列，origin 在第 4 列：c=create index）。 */
+	private List<Map<String, Object>> auditLogIndexes() {
+		return jdbc.queryForList("PRAGMA index_list('audit_log')");
+	}
+
+	/** PRAGMA index_info(<indexName>) 返回建索引的列（name 在第 3 列）。 */
+	private List<String> indexColumns(String indexName) {
+		return jdbc.queryForList("PRAGMA index_info('" + indexName + "')").stream()
+				.map(m -> String.valueOf(m.get("name")))
+				.toList();
+	}
+
+	@Test
+	void AT55_occurred_at_indexExistsAfterV26Migration() {
+		// V26 迁移后 audit_log 表应有 idx_audit_log_occurred_at 索引，建索引列为 occurred_at
+		List<String> indexNames = auditLogIndexes().stream()
+				.map(m -> String.valueOf(m.get("name")))
+				.toList();
+		assertThat(indexNames).contains("idx_audit_log_occurred_at");
+		assertThat(indexColumns("idx_audit_log_occurred_at")).containsExactly("occurred_at");
+		// 非唯一索引（audit_log 允许多条相同 occurred_at；PRAGMA index_list 第 3 列 unique 为 0）
+		Map<String, Object> idx = auditLogIndexes().stream()
+				.filter(m -> "idx_audit_log_occurred_at".equals(String.valueOf(m.get("name"))))
+				.findFirst().orElseThrow();
+		assertThat(String.valueOf(idx.get("unique"))).isEqualTo("0");
+	}
+
+	@Test
+	void AT55_queryAndExportBehaviorUnchangedAfterIndex() {
+		// 索引为纯性能优化，不改变语义结果：造多条 occurred_at 递增的记录，验证查询/导出排序与范围过滤不变
+		seedExportRows();  // 4 条 occurred_at 10/11/12/13:00
+		// 查询 DESC 排序不变（首条最新 13:00）
+		String queryBody = listAuditLogs("?page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.arraySize(queryBody, "items")).isEqualTo(4);
+		assertThat(JsonProbe.arrStr(queryBody, "items", 0, "occurredAt")).isEqualTo("2026-09-07T13:00:00Z");
+		// 范围过滤不变（from=11:00 → 3 条）
+		String rangeBody = listAuditLogs("?from=2026-09-07T11:00:00Z").getBody();
+		assertThat(JsonProbe.lng(rangeBody, "total")).isEqualTo(3L);
+		// 导出 DESC 排序不变
+		String exportBody = new String(exportAuditLogs("?format=json").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(exportBody, "")).isEqualTo(4);
+		assertThat(JsonProbe.arrStr(exportBody, "", 0, "occurredAt")).isEqualTo("2026-09-07T13:00:00Z");
 	}
 }

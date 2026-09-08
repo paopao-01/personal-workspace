@@ -927,8 +927,27 @@ Then 返回 200 且 JSON 为 [] （from>to 空结果不报 400）
 And 全程后端不写文件系统（无 data/exports 下审计导出文件残留），不创建 data_export 记录，不动 audit_log/backup_record 表
 ```
 
+### AT-55 audit_log occurred_at 二级索引（V26 迁移补索引，查询/导出排序与范围过滤行为不变）
+
+```gherkin
+Given Flyway 已执行 V26 迁移（V1→V26 成功，schema_version=26）
+When 检查 audit_log 表索引（PRAGMA index_list('audit_log')）
+Then 存在名为 idx_audit_log_occurred_at 的索引，且其建索引列为 occurred_at
+And 该索引为非唯一索引（audit_log 允许多条相同 occurred_at）
+Given audit_log 表有多条 occurred_at 递增的记录
+When 用户调用 GET /api/audit-logs?page=1&pageSize=20
+Then 返回 200 且按 occurred_at DESC 排序（索引可反向扫描，结果与加索引前一致）
+When 用户调用 GET /api/audit-logs?from=2026-09-03T00:00:00Z&to=2026-09-05T23:59:59Z
+Then 返回 200 且仅含 occurred_at 落在 [from,to] 闭区间的记录（范围过滤行为不变）
+When 用户调用 GET /api/audit-logs/export?format=json
+Then 返回 200 且 JSON 数组按 occurredAt DESC 排序（导出行为不变）
+When 用户调用 GET /api/audit-logs/export?format=csv&from=2026-09-03T00:00:00Z
+Then 返回 200 且每行 occurredAt 列 >= from（范围过滤行为不变）
+And 全程查询与导出结果与加索引前完全一致（索引为性能优化，不改变语义结果）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-54 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-55 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
