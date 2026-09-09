@@ -1207,13 +1207,13 @@ paths:
   /audit-logs:
     get:
       tags: [DataManagement]
-      summary: 分页查询全量审计日志（只读，可按 action/resourceType/from/to/hasFreedBytes 过滤）
+      summary: 分页查询全量审计日志（只读，可按 action/resourceType/from/to/释放字节过滤）
       description: |
         分页查询 `audit_log` 表全量审计记录，供关键用户确认与不可覆盖操作的事后统一追溯。承接
         `GET /backups/orphans/audit`（仅 `BACKUP_ORPHAN_CLEANED` 的备份域便捷入口，不废弃、不替代），
-        本端点为跨域通用查询入口：支持可选 `action`、`resourceType`、`from`、`to`、`hasFreedBytes` 过滤（均可空，
-        空=不过滤；可单独或任意组合使用，`action`/`resourceType` 按字符串精确匹配，`from`/`to` 按 `occurred_at`
-        时间范围过滤，`hasFreedBytes` 按是否释放字节过滤）。只读暴露既有写入值，不新增 action：
+        本端点为跨域通用查询入口：支持可选 `action`、`resourceType`、`from`、`to`、`hasFreedBytes`、`freedBytesMin`、
+        `freedBytesMax` 过滤（均可空，空=不过滤；可单独或任意组合使用，`action`/`resourceType` 按字符串精确匹配，
+        `from`/`to` 按 `occurred_at` 时间范围过滤，`hasFreedBytes`/`freedBytesMin`/`freedBytesMax` 按释放字节过滤）。只读暴露既有写入值，不新增 action：
         `SECONDARY_APPLICATION_CONFIRMED`（`resourceType=APPLICATION`，二次投递确认）、
         `REQUIREMENT_MERGED`/`REQUIREMENT_UPDATED`/`REQUIREMENT_DELETED`（`resourceType=JOB_REQUIREMENT`，需求合并/编辑/删除）、
         `BACKUP_ORPHAN_CLEANED`（`resourceType=BACKUP_FILE`，孤儿 .enc 文件清理）、
@@ -1234,6 +1234,14 @@ paths:
         字节数有值的），排除历史 NULL 行（V27 前的旧孤儿清理行 `freed_bytes` 为 NULL）；缺省或 `false` 时不过滤
         （向后兼容）。与 `action`/`resourceType`/`from`/`to` 正交可任意组合。注：`hasFreedBytes=true` 与
         `action=BACKUP_ORPHAN_CLEANED` 部分重叠，区别在于排除 V27 前历史 NULL 行。
+        释放字节范围过滤：`freedBytesMin`（可选，含边界 `freed_bytes >= freedBytesMin`）与 `freedBytesMax`（可选，
+        含边界 `freed_bytes <= freedBytesMax`），均为非负整数（`minimum: 0`），可单独或组合使用（闭区间，与
+        `from`/`to` 时间范围过滤一致）。SQL 中 `freed_bytes >= N` / `freed_bytes <= N` 对 NULL 行求值为 NULL→false，
+        故设了 `freedBytesMin`/`freedBytesMax` 时自动排除 `freed_bytes` 为 NULL 的非孤儿清理行（隐式含 NOT NULL 语义，
+        无需另加 `hasFreedBytes`）；`hasFreedBytes` 保持独立不与范围参数耦合（两者并列不冲突）。`freedBytesMin`、
+        `freedBytesMax` 与 `action`/`resourceType`/`from`/`to` 正交可任意组合。`freedBytesMin > freedBytesMax` 返回
+        空结果（合法但无匹配，不报 400，与 `from > to` 先例一致）；`freedBytesMin`/`freedBytesMax` 为负数或非整数返回
+        400（`minimum: 0` + Long 类型绑定校验，fail fast）。
         按 `occurred_at DESC` 排序（最新优先）。只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete`
         确认头、不需 `Idempotency-Key`（GET 幂等天然）、不动 `backup_record`/文件系统/任何业务表。
         分页参数复用 `page`（从 1 起，默认 1）与 `pageSize`（1–100，默认 20）；空表或过滤无匹配返回 `items=[]`、`total=0`。
@@ -1261,17 +1269,27 @@ paths:
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: 按起始时间过滤（可选，含边界 `occurred_at >= from`），ISO-8601 UTC 字符串（如 `2026-09-01T00:00:00Z`）；与 `to`/`action`/`resourceType`/`hasFreedBytes` 可任意组合；非法格式返回 400。
+          description: 按起始时间过滤（可选，含边界 `occurred_at >= from`），ISO-8601 UTC 字符串（如 `2026-09-01T00:00:00Z`）；与 `to`/`action`/`resourceType`/`hasFreedBytes`/`freedBytesMin`/`freedBytesMax` 可任意组合；非法格式返回 400。
         - name: to
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: 按结束时间过滤（可选，含边界 `occurred_at <= to`），ISO-8601 UTC 字符串（如 `2026-09-07T23:59:59Z`）；与 `from`/`action`/`resourceType`/`hasFreedBytes` 可任意组合；非法格式返回 400。
+          description: 按结束时间过滤（可选，含边界 `occurred_at <= to`），ISO-8601 UTC 字符串（如 `2026-09-07T23:59:59Z`）；与 `from`/`action`/`resourceType`/`hasFreedBytes`/`freedBytesMin`/`freedBytesMax` 可任意组合；非法格式返回 400。
         - name: hasFreedBytes
           in: query
           required: false
           schema: { type: boolean, default: false }
-          description: 按是否释放字节过滤（可选，缺省 `false`=不过滤）；`true` 只返回 `freed_bytes IS NOT NULL` 的记录（孤儿清理行释放字节数有值的），排除 V27 前历史 NULL 行；与 `action`/`resourceType`/`from`/`to` 正交可任意组合。
+          description: 按是否释放字节过滤（可选，缺省 `false`=不过滤）；`true` 只返回 `freed_bytes IS NOT NULL` 的记录（孤儿清理行释放字节数有值的），排除 V27 前历史 NULL 行；与 `action`/`resourceType`/`from`/`to`/`freedBytesMin`/`freedBytesMax` 正交可任意组合。
+        - name: freedBytesMin
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数下界过滤（可选，含边界 `freed_bytes >= freedBytesMin`），非负整数；NULL 行自动排除（SQL 与 NULL 数值比较求值为 NULL→false，故非孤儿清理行被排除，隐式含 NOT NULL 语义）；与 `freedBytesMax`/`hasFreedBytes`/`action`/`resourceType`/`from`/`to` 可任意组合；负值或非整数返回 400。
+        - name: freedBytesMax
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数上界过滤（可选，含边界 `freed_bytes <= freedBytesMax`），非负整数；NULL 行自动排除；`freedBytesMin > freedBytesMax` 返回空结果不报 400（与 `from > to` 一致）；与 `freedBytesMin`/`hasFreedBytes`/`action`/`resourceType`/`from`/`to` 可任意组合；负值或非整数返回 400。
       responses:
         '200':
           description: 全量审计日志分页列表
@@ -1282,14 +1300,15 @@ paths:
   /audit-logs/export:
     get:
       tags: [DataManagement]
-      summary: 导出全量审计日志为 CSV 或 JSON 文件（只读，流式下载，复用 action/resourceType/from/to/hasFreedBytes 过滤）
+      summary: 导出全量审计日志为 CSV 或 JSON 文件（只读，流式下载，复用 action/resourceType/from/to/释放字节过滤）
       description: |
         把 `GET /audit-logs` 的查询结果导出为文件下载（流式分批生成、内存有界，不落盘、不写文件系统、
         不动任何业务表/`audit_log`/`backup_record`），供用户离线追溯关键用户确认与不可覆盖操作。过滤参数与
-        `GET /audit-logs` 完全一致：`action`、`resourceType`、`from`、`to`、`hasFreedBytes` 均可选，空=不过滤导出全量，可单独
-        或任意组合（`action`/`resourceType` 字符串精确匹配，`from`/`to` 按 `occurred_at` 时间范围过滤，均为
-        ISO-8601 UTC 字符串，`hasFreedBytes` 按是否释放字节过滤）；按 `occurred_at DESC` 排序（与查询端点一致）。`format` 参数选 `csv` 或 `json`
-        （默认 `json`）。
+        `GET /audit-logs` 完全一致：`action`、`resourceType`、`from`、`to`、`hasFreedBytes`、`freedBytesMin`、
+        `freedBytesMax` 均可选，空=不过滤导出全量，可单独或任意组合（`action`/`resourceType` 字符串精确匹配，`from`/`to`
+        按 `occurred_at` 时间范围过滤，均为 ISO-8601 UTC 字符串，`hasFreedBytes` 按是否释放字节过滤，`freedBytesMin`/
+        `freedBytesMax` 按释放字节数范围过滤）；按 `occurred_at DESC` 排序（与查询端点一致）。`format` 参数选 `csv` 或
+        `json`（默认 `json`）。
         流式分批：控制器用 `StreamingResponseBody` 按 `BATCH_SIZE=500` 分批调 `selectPage`（offset 递增）
         逐批写入响应输出流，用户仍一次性下载完整 CSV/JSON 文件（语义不变），后端内存只持有一批记录而非全量，
         不预设 `Content-Length`、以分块传输编码（`Transfer-Encoding: chunked`）逐批发送。`from`/`to`/`format`
@@ -1346,6 +1365,16 @@ paths:
           required: false
           schema: { type: boolean, default: false }
           description: 按是否释放字节过滤（可选，缺省 `false`=不过滤）；`true` 只返回 `freed_bytes IS NOT NULL` 的记录，取值语义同 `GET /audit-logs` 的 `hasFreedBytes` 参数。
+        - name: freedBytesMin
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数下界过滤（可选，含边界 `freed_bytes >= freedBytesMin`），非负整数；取值语义同 `GET /audit-logs` 的 `freedBytesMin` 参数。
+        - name: freedBytesMax
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数上界过滤（可选，含边界 `freed_bytes <= freedBytesMax`），非负整数；`freedBytesMin > freedBytesMax` 空结果不报 400；取值语义同 `GET /audit-logs` 的 `freedBytesMax` 参数。
         - name: format
           in: query
           required: false

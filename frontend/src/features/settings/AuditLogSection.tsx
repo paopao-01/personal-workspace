@@ -38,7 +38,12 @@ export function AuditLogSection() {
   const [fromLocal, setFromLocal] = useState('')  // datetime-local 本地时间值
   const [toLocal, setToLocal] = useState('')      // datetime-local 本地时间值
   const [hasFreedBytes, setHasFreedBytes] = useState(false)
+  const [freedBytesMin, setFreedBytesMin] = useState('')
+  const [freedBytesMax, setFreedBytesMax] = useState('')
   const [exporting, setExporting] = useState<'' | 'csv' | 'json'>('')
+
+  const freedBytesMinNum = freedBytesMin === '' ? undefined : Number(freedBytesMin)
+  const freedBytesMaxNum = freedBytesMax === '' ? undefined : Number(freedBytesMax)
 
   const query = useAuditLogs({
     page,
@@ -48,6 +53,8 @@ export function AuditLogSection() {
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
     to: toLocal ? toUtcIso(toLocal) : undefined,
     hasFreedBytes: hasFreedBytes || undefined,
+    freedBytesMin: freedBytesMinNum !== undefined && !Number.isNaN(freedBytesMinNum) ? freedBytesMinNum : undefined,
+    freedBytesMax: freedBytesMaxNum !== undefined && !Number.isNaN(freedBytesMaxNum) ? freedBytesMaxNum : undefined,
   })
 
   // 当前生效的过滤条件（供导出复用，与查询一致）
@@ -57,6 +64,8 @@ export function AuditLogSection() {
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
     to: toLocal ? toUtcIso(toLocal) : undefined,
     hasFreedBytes: hasFreedBytes || undefined,
+    freedBytesMin: freedBytesMinNum !== undefined && !Number.isNaN(freedBytesMinNum) ? freedBytesMinNum : undefined,
+    freedBytesMax: freedBytesMaxNum !== undefined && !Number.isNaN(freedBytesMaxNum) ? freedBytesMaxNum : undefined,
   }
 
   const onExport = async (format: 'csv' | 'json') => {
@@ -82,6 +91,10 @@ export function AuditLogSection() {
     setHasFreedBytes(event.target.checked)
     setPage(1)
   }
+  const onFreedBytesRangeChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    setter(event.target.value)
+    setPage(1)
+  }
 
   return (
     <section className="card">
@@ -91,7 +104,7 @@ export function AuditLogSection() {
       <div className="card-body">
         <p className="muted" style={{ marginTop: 0 }}>
           只读追溯关键用户确认与不可覆盖操作：二次投递确认、需求合并/编辑/删除、孤儿文件清理。
-          可按动作类型、资源类型与时间范围过滤；按时间倒序展示。审计为事后只读视图，不含 passphrase，
+          可按动作类型、资源类型、时间范围与释放字节范围过滤；按时间倒序展示。审计为事后只读视图，不含 passphrase，
           省略恒为空的快照字段。
         </p>
         <div className="flex-row" style={{ justifyContent: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -153,6 +166,30 @@ export function AuditLogSection() {
               />
               仅看有释放字节
             </label>
+          </div>
+          <div style={{ minWidth: 120, alignSelf: 'flex-end' }}>
+            <Field label="释放字节下界">
+              <input
+                type="number"
+                min={0}
+                value={freedBytesMin}
+                onChange={onFreedBytesRangeChange(setFreedBytesMin)}
+                placeholder="最小"
+                aria-label="按释放字节下界过滤（含边界）"
+              />
+            </Field>
+          </div>
+          <div style={{ minWidth: 120, alignSelf: 'flex-end' }}>
+            <Field label="释放字节上界">
+              <input
+                type="number"
+                min={0}
+                value={freedBytesMax}
+                onChange={onFreedBytesRangeChange(setFreedBytesMax)}
+                placeholder="最大"
+                aria-label="按释放字节上界过滤（含边界）"
+              />
+            </Field>
           </div>
           <div className="flex-row" style={{ justifyContent: 'flex-start', alignSelf: 'flex-end' }}>
             <Button

@@ -37,11 +37,14 @@ export interface AuditLogQuery {
   from?: string
   to?: string
   hasFreedBytes?: boolean
+  freedBytesMin?: number
+  freedBytesMax?: number
 }
 
-/** 分页查询全量审计日志（只读，无需确认头/幂等键）。action/resourceType/from/to/hasFreedBytes 可选，
- *  空/hasFreedBytes=false=不过滤返回全量。from/to 为 ISO-8601 UTC 字符串（含边界：from 起始
- *  occurred_at >= from，to 结束 occurred_at <= to）。hasFreedBytes=true 只返回 freed_bytes IS NOT NULL 的记录。 */
+/** 分页查询全量审计日志（只读，无需确认头/幂等键）。action/resourceType/from/to/hasFreedBytes/freedBytesMin/
+ *  freedBytesMax 可选，空/hasFreedBytes=false/缺省=不过滤返回全量。from/to 为 ISO-8601 UTC 字符串（含边界：
+ *  from 起始 occurred_at >= from，to 结束 occurred_at <= to）。hasFreedBytes=true 只返回 freed_bytes IS NOT NULL
+ *  的记录。freedBytesMin/freedBytesMax 按释放字节数范围过滤（闭区间，非负整数，NULL 行自动排除）。 */
 export async function listAuditLogs(params: AuditLogQuery): Promise<PageAuditLogEntry> {
   const res = await apiClient.get<PageAuditLogEntry>('/audit-logs', { params })
   return res.data
@@ -58,6 +61,8 @@ export function useAuditLogs(query: AuditLogQuery) {
       query.from ?? '',
       query.to ?? '',
       query.hasFreedBytes ?? false,
+      query.freedBytesMin ?? '',
+      query.freedBytesMax ?? '',
     ],
     queryFn: () => listAuditLogs(query),
     placeholderData: (prev) => prev,
@@ -65,10 +70,19 @@ export function useAuditLogs(query: AuditLogQuery) {
 }
 
 /** 导出审计日志为 CSV 或 JSON 文件下载（只读，即时下载，复用当前过滤条件）。
- *  浏览器侧完成下载，不落盘后端文件系统。导出失败（非法 format/from/to 经后端 400）抛 ApiError。 */
+ *  浏览器侧完成下载，不落盘后端文件系统。导出失败（非法 format/from/to/freedBytesMin/freedBytesMax
+ *  经后端 400）抛 ApiError。 */
 export async function exportAuditLogs(
   format: 'csv' | 'json',
-  filters: { action?: string; resourceType?: string; from?: string; to?: string; hasFreedBytes?: boolean },
+  filters: {
+    action?: string
+    resourceType?: string
+    from?: string
+    to?: string
+    hasFreedBytes?: boolean
+    freedBytesMin?: number
+    freedBytesMax?: number
+  },
 ): Promise<void> {
   const res = await apiClient.get<Blob>('/audit-logs/export', {
     params: { format, ...filters },
