@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 审计日志仅允许追加，不提供更新或删除接口。只读查询方法（selectPageByAction/countByAction 与
@@ -104,6 +105,31 @@ public interface AuditLogMapper {
 	List<AuditLogEntry> selectAll(@Param("action") String action, @Param("resourceType") String resourceType,
 			@Param("from") String from, @Param("to") String to, @Param("hasFreedBytes") boolean hasFreedBytes,
 			@Param("freedBytesMin") Long freedBytesMin, @Param("freedBytesMax") Long freedBytesMax);
+
+	/**
+	 * 释放字节数聚合统计（只读）：对匹配记录做 {@code COUNT(*)}、{@code COALESCE(SUM(freed_bytes), 0)}、
+	 * {@code COUNT(freed_bytes)} 一条聚合 SQL，过滤条件与 {@link #selectPage} 完全一致（同 {@code <where>}）。
+	 * 返回单行 Map（key 为 totalCount/totalFreedBytes/nonNullCount）；仅 SELECT，不违背仅追加语义。
+	 * <p>SQL {@code SUM(freed_bytes)} 对 NULL 行不计入（故为有释放字节行之和），{@code COALESCE} 兜底 0；
+	 * {@code COUNT(freed_bytes)} 只数非 NULL 行（作为 avg 分母，避免 totalCount 稀释均值）。
+	 */
+	@Select("<script>" +
+			"SELECT COUNT(*) AS totalCount, COALESCE(SUM(freed_bytes), 0) AS totalFreedBytes, " +
+			"COUNT(freed_bytes) AS nonNullCount FROM audit_log " +
+			"<where>" +
+			"<if test='action != null and action != \"\"'>AND action = #{action}</if>" +
+			"<if test='resourceType != null and resourceType != \"\"'>AND resource_type = #{resourceType}</if>" +
+			"<if test='from != null and from != \"\"'>AND occurred_at &gt;= #{from}</if>" +
+			"<if test='to != null and to != \"\"'>AND occurred_at &lt;= #{to}</if>" +
+			"<if test='hasFreedBytes'>AND freed_bytes IS NOT NULL </if>" +
+			"<if test='freedBytesMin != null'>AND freed_bytes &gt;= #{freedBytesMin}</if>" +
+			"<if test='freedBytesMax != null'>AND freed_bytes &lt;= #{freedBytesMax}</if>" +
+			"</where>" +
+			"</script>")
+	Map<String, Object> selectFreedBytesSummary(@Param("action") String action,
+			@Param("resourceType") String resourceType, @Param("from") String from, @Param("to") String to,
+			@Param("hasFreedBytes") boolean hasFreedBytes, @Param("freedBytesMin") Long freedBytesMin,
+			@Param("freedBytesMax") Long freedBytesMax);
 }
 
 

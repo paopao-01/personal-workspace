@@ -13,6 +13,7 @@ import {
   AUDIT_RESOURCE_TYPES,
   exportAuditLogs,
   useAuditLogs,
+  useFreedBytesSummary,
 } from '@/api/audit/auditLogApi'
 
 const AUDIT_PAGE_SIZE = 20
@@ -48,6 +49,17 @@ export function AuditLogSection() {
   const query = useAuditLogs({
     page,
     pageSize: AUDIT_PAGE_SIZE,
+    action: action || undefined,
+    resourceType: resourceType || undefined,
+    from: fromLocal ? toUtcIso(fromLocal) : undefined,
+    to: toLocal ? toUtcIso(toLocal) : undefined,
+    hasFreedBytes: hasFreedBytes || undefined,
+    freedBytesMin: freedBytesMinNum !== undefined && !Number.isNaN(freedBytesMinNum) ? freedBytesMinNum : undefined,
+    freedBytesMax: freedBytesMaxNum !== undefined && !Number.isNaN(freedBytesMaxNum) ? freedBytesMaxNum : undefined,
+  })
+
+  // 释放字节数聚合统计（复用与查询同源的过滤条件）
+  const summary = useFreedBytesSummary({
     action: action || undefined,
     resourceType: resourceType || undefined,
     from: fromLocal ? toUtcIso(fromLocal) : undefined,
@@ -218,6 +230,15 @@ export function AuditLogSection() {
             </Button>
           </div>
         </div>
+
+        <p className="muted" style={{ margin: '12px 0' }}>
+          释放字节汇总：
+          {summary.isLoading
+            ? '统计中…'
+            : summary.error
+              ? '统计失败'
+              : `共 ${summary.data?.totalCount ?? 0} 条 · 释放 ${formatBytes(summary.data?.totalFreedBytes ?? 0)}（均值 ${formatBytes(summary.data?.avgFreedBytes ? Math.round(summary.data.avgFreedBytes) : 0)}/条）`}
+        </p>
 
         {query.isLoading ? (
           <Spinner label="加载审计日志…" />

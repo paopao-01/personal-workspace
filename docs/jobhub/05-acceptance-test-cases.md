@@ -1030,6 +1030,38 @@ Then 返回 200 且 JSON 为 []（min > max 空结果不报 400，CSV 仅表头�
 And 全程 freedBytesMin/freedBytesMax 仅作过滤输入不回显到响应，响应 schema 不变（PageAuditLogEntry 不变），不写 audit_log、不动任何业务表，freed_bytes 非索引列走索引定位后回表过滤或全表扫描（本地量小可接受）
 ```
 
+### AT-62 freedBytes 聚合统计（GET /audit-logs/freed-bytes-summary 只读聚合，复用既有过滤参数，返回 totalCount/totalFreedBytes/avgFreedBytes，avg 分母为非空行数）
+
+```gherkin
+Given audit_log 表存在 3 条 BACKUP_ORPHAN_CLEANED 行（freed_bytes 分别为 512、1024、2048）与 2 条非孤儿清理行（BACKUP_DELETED、REQUIREMENT_MERGED，freed_bytes 为 null）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary
+Then 返回 200 且 totalCount=5（含 freed_bytes 为 null 的 2 条非孤儿清理行）
+And totalFreedBytes=3584（512+1024+2048，SUM 不计 NULL 行，COALESCE 兜底）
+And avgFreedBytes=1194.67（3584/3，分母为 freed_bytes 非空行数 3，非 totalCount 5，避免 NULL 行稀释均值）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且 totalCount=3 且 totalFreedBytes=3584 且 avgFreedBytes=1194.67（action 过滤聚合）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?action=BACKUP_DELETED
+Then 返回 200 且 totalCount=1 且 totalFreedBytes=0 且 avgFreedBytes=0（全 NULL 行，SUM 兜底 0，分母 COUNT(freed_bytes)=0 时 avg 兜底 0 不抛除零异常）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?hasFreedBytes=true
+Then 返回 200 且 totalCount=3 且 totalFreedBytes=3584（hasFreedBytes=true 只统计 freed_bytes IS NOT NULL 的记录）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?freedBytesMin=1024
+Then 返回 200 且 totalCount=2 且 totalFreedBytes=3072（1024+2048，范围过滤聚合）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?freedBytesMin=512&freedBytesMax=1024
+Then 返回 200 且 totalCount=2 且 totalFreedBytes=1536 且 avgFreedBytes=768（范围闭区间聚合）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?freedBytesMin=2048&freedBytesMax=512
+Then 返回 200 且 totalCount=0 且 totalFreedBytes=0 且 avgFreedBytes=0（min>max 空聚合不报 400）
+When audit_log 表为空（无任何记录）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary
+Then 返回 200 且 totalCount=0 且 totalFreedBytes=0 且 avgFreedBytes=0（空表聚合兜底 0）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?from=not-a-date
+Then 返回 400 VALIDATION_ERROR（非法 from 格式 fail fast）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?freedBytesMin=-1
+Then 返回 400 VALIDATION_ERROR（负值 fail fast）
+When 用户调用 GET /api/audit-logs/freed-bytes-summary?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z
+Then 返回 200 且 totalCount=0 且 totalFreedBytes=0（from>to 空聚合不报 400）
+And 全程聚合端点只读，不写 audit_log、不动任何业务表，响应不含 passphrase，不影响分页查询/导出端点的任何行为，不落盘、无确认头/幂等键
+```
+
 ### AT-56 批量密钥轮换（POST /backups/rotate-keys 逐条就地重加密：同一旧口令解密 → 同一新口令重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
 
 ```gherkin
@@ -1119,6 +1151,6 @@ And 全程后端不写文件系统（无 data/exports 下审计导出文件残�
 
 ## 8. 发布门槛
 
-- AT-01 至 AT-61 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-62 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
