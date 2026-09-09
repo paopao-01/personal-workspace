@@ -1112,6 +1112,30 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		return restTemplate.getForEntity(url("/audit-logs/freed-bytes-summary" + query), String.class);
 	}
 
+	/** GET /api/audit-logs/freed-bytes-timeseries 只读时间序列分组（query 形如 "?granularity=hour&action=X"）。 */
+	private ResponseEntity<String> fetchFreedBytesTimeseries(String query) {
+		return restTemplate.getForEntity(url("/audit-logs/freed-bytes-timeseries" + query), String.class);
+	}
+
+	/** 造跨 3 天的审计行：09-07（3 孤儿 512/1024/2048 + 1 BACKUP_DELETED null）、09-08（2 孤儿 1024/2048）、
+	 * 09-09（1 孤儿 512）。occurred_at 跨多天多时，供 day/hour 粒度分组与「不补 0 桶」断言。 */
+	private void seedTimeseriesRows() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 512L,
+				"2026-09-07T10:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T11:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-07T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T13:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-08T09:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-08T10:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 512L,
+				"2026-09-09T08:00:00Z");
+	}
+
 	@Test
 	void AT62_summaryAggregatesAllMatchingRows() {
 		// 3 条 BACKUP_ORPHAN_CLEANED（freed_bytes=512/1024/2048）+ 2 条非孤儿清理（null）
@@ -1226,6 +1250,162 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		// 聚合只读：audit_log 行数不变（仍 5 条），不动 backup_record/data_export
 		Long auditCount = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log", Long.class);
 		assertThat(auditCount).isEqualTo(5L);
+		Long backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Long.class);
+		assertThat(backupCount).isZero();
+		Long exportCount = jdbc.queryForObject("SELECT COUNT(*) FROM data_export", Long.class);
+		assertThat(exportCount).isZero();
+	}
+
+	// ==================== AT-63 freedBytes 时间序列分组（GET /audit-logs/freed-bytes-timeseries 只读分组聚合） ====================
+
+	@Test
+	void AT63_dayGranularityGroupsByDateAscending() {
+		// day 粒度（缺省）：跨 3 天 → 3 桶，按 date 升序 09-07/09-08/09-09
+		seedTimeseriesRows();
+		String body = fetchFreedBytesTimeseries("").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(3);
+		// 升序：第一桶 09-07
+		assertThat(JsonProbe.arrStr(body, "", 0, "date")).isEqualTo("2026-09-07");
+		// 09-07 桶：4 条（3 孤儿 + 1 BACKUP_DELETED null），totalFreedBytes=512+1024+2048=3584
+		assertThat(JsonProbe.arrLng(body, "", 0, "count")).isEqualTo(4L);
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isEqualTo(3584L);
+		// avg=3584/3 非空行（分母非 count 4，避免 null 行稀释均值）
+		assertThat(JsonProbe.arrDbl(body, "", 0, "avgFreedBytes")).isCloseTo(3584.0 / 3, within(0.01));
+		// 09-08 桶：2 条孤儿，total=1024+2048=3072
+		assertThat(JsonProbe.arrStr(body, "", 1, "date")).isEqualTo("2026-09-08");
+		assertThat(JsonProbe.arrLng(body, "", 1, "count")).isEqualTo(2L);
+		assertThat(JsonProbe.arrLng(body, "", 1, "totalFreedBytes")).isEqualTo(3072L);
+		// 09-09 桶：1 条孤儿 512
+		assertThat(JsonProbe.arrStr(body, "", 2, "date")).isEqualTo("2026-09-09");
+		assertThat(JsonProbe.arrLng(body, "", 2, "totalFreedBytes")).isEqualTo(512L);
+		assertThat(body).doesNotContain("passphrase");
+	}
+
+	@Test
+	void AT63_hourGranularityGroupsByHour() {
+		// hour 粒度：09-07 跨 10/11/12/13 四小时 → 4 桶，按 date 升序
+		seedTimeseriesRows();
+		String body = fetchFreedBytesTimeseries("?granularity=hour").getBody();
+		// 09-07 有 4 小时（10/11/12/13），09-08 有 2 小时（09/10），09-09 有 1 小时（08）→ 共 7 桶
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(7);
+		// 升序第一桶 09-07T10:00:00Z（512）
+		assertThat(JsonProbe.arrStr(body, "", 0, "date")).isEqualTo("2026-09-07T10:00:00Z");
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isEqualTo(512L);
+	}
+
+	@Test
+	void AT63_filtersByAction() {
+		seedTimeseriesRows();
+		// action=BACKUP_ORPHAN_CLEANED → 排除 BACKUP_DELETED null 行，09-07 桶 count=3 非 4
+		String body = fetchFreedBytesTimeseries("?action=BACKUP_ORPHAN_CLEANED").getBody();
+		assertThat(JsonProbe.arrStr(body, "", 0, "date")).isEqualTo("2026-09-07");
+		assertThat(JsonProbe.arrLng(body, "", 0, "count")).isEqualTo(3L);
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isEqualTo(3584L);
+	}
+
+	@Test
+	void AT63_filtersByHasFreedBytes() {
+		seedTimeseriesRows();
+		// hasFreedBytes=true → 只统计 freed_bytes IS NOT NULL，09-07 桶 count=3 非 4
+		String body = fetchFreedBytesTimeseries("?hasFreedBytes=true").getBody();
+		assertThat(JsonProbe.arrLng(body, "", 0, "count")).isEqualTo(3L);
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isEqualTo(3584L);
+	}
+
+	@Test
+	void AT63_filtersByFreedBytesMin() {
+		seedTimeseriesRows();
+		// freedBytesMin=1024 → 09-07 桶只剩 1024/2048（count=2），09-08 桶只剩 1024/2048，09-09 桶空
+		String body = fetchFreedBytesTimeseries("?freedBytesMin=1024").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(2);
+		assertThat(JsonProbe.arrLng(body, "", 0, "count")).isEqualTo(2L);
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isEqualTo(3072L);
+	}
+
+	@Test
+	void AT63_filtersByTimeRange() {
+		seedTimeseriesRows();
+		// from=2026-09-08 & to=2026-09-08T23:59:59Z → 只 09-08 一桶
+		String body = fetchFreedBytesTimeseries("?from=2026-09-08T00:00:00Z&to=2026-09-08T23:59:59Z").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrStr(body, "", 0, "date")).isEqualTo("2026-09-08");
+	}
+
+	@Test
+	void AT63_doesNotFillZeroBucketsOnlyReturnsBucketsWithData() {
+		// 不补 0 桶：缺失日期不出现。09-07/08/09 三桶，无 09-01..09-06
+		seedTimeseriesRows();
+		String body = fetchFreedBytesTimeseries("?from=2026-09-01T00:00:00Z&to=2026-09-30T00:00:00Z").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(3);
+		assertThat(JsonProbe.arrStr(body, "", 0, "date")).isEqualTo("2026-09-07");
+		assertThat(JsonProbe.arrStr(body, "", 2, "date")).isEqualTo("2026-09-09");
+	}
+
+	@Test
+	void AT63_emptyTableReturnsEmptyArray() {
+		// 空表 → []（@BeforeEach 已清表）
+		String body = fetchFreedBytesTimeseries("").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isZero();
+		assertThat(body).isEqualTo("[]");
+	}
+
+	@Test
+	void AT63_rejectsInvalidGranularity() {
+		seedTimeseriesRows();
+		assertThat(fetchFreedBytesTimeseries("?granularity=invalid").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT63_rejectsInvalidFrom() {
+		seedTimeseriesRows();
+		assertThat(fetchFreedBytesTimeseries("?from=not-a-date").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT63_rejectsNegativeFreedBytesMin() {
+		seedTimeseriesRows();
+		assertThat(fetchFreedBytesTimeseries("?freedBytesMin=-1").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT63_minGreaterThanMaxReturnsEmptyArrayNot400() {
+		seedTimeseriesRows();
+		// min=2048 > max=512 → 空数组不报 400
+		String body = fetchFreedBytesTimeseries("?freedBytesMin=2048&freedBytesMax=512").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isZero();
+	}
+
+	@Test
+	void AT63_fromGreaterThanToReturnsEmptyArrayNot400() {
+		seedTimeseriesRows();
+		// from > to → 空数组不报 400
+		String body = fetchFreedBytesTimeseries("?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isZero();
+	}
+
+	@Test
+	void AT63_allNullRowsBucketAvgIsZeroNoDivisionByZero() {
+		// 造一个全 NULL 行的桶（BACKUP_DELETED），分母 COUNT(freed_bytes)=0 → avg=0 不抛除零异常
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T10:00:00Z");
+		String body = fetchFreedBytesTimeseries("?action=BACKUP_DELETED").getBody();
+		assertThat(JsonProbe.arraySize(body, "")).isEqualTo(1);
+		assertThat(JsonProbe.arrLng(body, "", 0, "count")).isEqualTo(1L);
+		assertThat(JsonProbe.arrLng(body, "", 0, "totalFreedBytes")).isZero();
+		assertThat(JsonProbe.arrDbl(body, "", 0, "avgFreedBytes")).isZero();
+	}
+
+	@Test
+	void AT63_doesNotMutateAnyBusinessTable() {
+		seedTimeseriesRows();
+		fetchFreedBytesTimeseries("");
+		fetchFreedBytesTimeseries("?granularity=hour&action=BACKUP_ORPHAN_CLEANED");
+		// 时间序列只读：audit_log 行数不变（仍 7 条），不动 backup_record/data_export
+		Long auditCount = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log", Long.class);
+		assertThat(auditCount).isEqualTo(7L);
 		Long backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Long.class);
 		assertThat(backupCount).isZero();
 		Long exportCount = jdbc.queryForObject("SELECT COUNT(*) FROM data_export", Long.class);

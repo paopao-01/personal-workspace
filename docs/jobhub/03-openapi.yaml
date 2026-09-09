@@ -1457,6 +1457,80 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FreedBytesSummary' }
         '400': { $ref: '#/components/responses/ValidationError' }
+  /audit-logs/freed-bytes-timeseries:
+    get:
+      tags: [DataManagement]
+      summary: 按当前过滤条件对释放字节数做时间序列分组聚合（只读，复用 action/resourceType/from/to/hasFreedBytes/freedBytesMin/freedBytesMax 过滤 + granularity 粒度）
+      description: |
+        对 `GET /audit-logs` 的匹配记录按时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，对每桶做
+        释放字节数聚合统计（只读，一条 GROUP BY SQL 一次完成）。过滤参数与 `GET /audit-logs` 完全一致：
+        `action`、`resourceType`、`from`、`to`、`hasFreedBytes`、`freedBytesMin`、`freedBytesMax` 均可选，
+        空/`hasFreedBytes=false`/缺省=不过滤统计全量，可单独或任意组合（语义、校验与 `GET /audit-logs` 完全一致）。
+        返回 `FreedBytesBucket` 数组，每桶 `{ date, count, totalFreedBytes, avgFreedBytes }`：`date` 为桶的分组键
+        （`day` 粒度为 `date(occurred_at)` 如 `2026-09-07`，`hour` 粒度为 `strftime('%Y-%m-%dT%H:00:00Z', occurred_at)`
+        如 `2026-09-07T13:00:00Z`）；`count` 为该桶记录数（`COUNT(*)`，含 `freed_bytes` 为 NULL 的非孤儿清理行）；
+        `totalFreedBytes` 为该桶 `freed_bytes` 的 `SUM`（`COALESCE` 兜底 0，NULL 行不计入）；`avgFreedBytes` 为
+        `totalFreedBytes / COUNT(freed_bytes)`（分母为该桶 `freed_bytes` 非空行数，避免 NULL 行稀释均值；分母为 0 时
+        `avgFreedBytes=0`，不抛除零异常）。
+        按 `date` 升序排列（时间正序，用于趋势展示；与 `GET /audit-logs` 的 `occurred_at DESC` 不同——列表为「最新优先」、
+        时间序列为「时间正序趋势」，二者用途不同故排序方向不同）。**不补 0 桶**：只返回有匹配记录的桶，缺失日期/小时不出现
+        （与 SQL `GROUP BY` 自然结果一致，与 `freed-bytes-summary` 单行聚合同源同风格）；空匹配（如过滤无结果）返回 `[]`。
+        只读查询：不写 `audit_log`、不需 `X-Confirm-Permanent-Delete` 确认头、不需 `Idempotency-Key`（GET 幂等天然）、
+        不动 `backup_record`/文件系统/任何业务表。响应不含 passphrase（审计记录从不存 passphrase）。与 `GET /audit-logs`
+        分页查询的关系：时间序列对全部匹配记录分组（非当前页），与分页查询同源同过滤；不影响分页查询/导出/聚合统计端点的任何行为。
+        `from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空数组（不报 400，与聚合统计先例一致）；
+        `freedBytesMin > freedBytesMax` 返回空数组（不报 400）；`freedBytesMin`/`freedBytesMax` 为负数或非整数返回 400；
+        `granularity` 非 `day`/`hour` 返回 400。
+      parameters:
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按动作类型过滤（可选，精确匹配），取值同 `GET /audit-logs` 的 `action` 参数。
+        - name: resourceType
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按资源类型过滤（可选，精确匹配），取值同 `GET /audit-logs` 的 `resourceType` 参数。
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: 按起始时间过滤（可选，含边界 `occurred_at >= from`），ISO-8601 UTC 字符串；非法格式返回 400。
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: 按结束时间过滤（可选，含边界 `occurred_at <= to`），ISO-8601 UTC 字符串；非法格式返回 400。
+        - name: hasFreedBytes
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: 按是否释放字节过滤（可选，缺省 `false`=不过滤）；`true` 只统计 `freed_bytes IS NOT NULL` 的记录，取值语义同 `GET /audit-logs` 的 `hasFreedBytes` 参数。
+        - name: freedBytesMin
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数下界过滤（可选，含边界 `freed_bytes >= freedBytesMin`），非负整数；取值语义同 `GET /audit-logs` 的 `freedBytesMin` 参数。
+        - name: freedBytesMax
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: 按释放字节数上界过滤（可选，含边界 `freed_bytes <= freedBytesMax`），非负整数；`freedBytesMin > freedBytesMax` 空数组不报 400；取值语义同 `GET /audit-logs` 的 `freedBytesMax` 参数。
+        - name: granularity
+          in: query
+          required: false
+          schema: { type: string, enum: [day, hour], default: day }
+          description: 分组粒度（可选，缺省 `day`）；`day` 按 `date(occurred_at)` 分组返回如 `2026-09-07`，`hour` 按 `strftime('%Y-%m-%dT%H:00:00Z', occurred_at)` 分组返回如 `2026-09-07T13:00:00Z`；非 `day`/`hour` 返回 400。
+      responses:
+        '200':
+          description: 释放字节数时间序列分组聚合（按 date 升序，只含有数据的桶）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FreedBytesBucket' }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /data-imports/validate:
     post:
       tags: [DataManagement]
@@ -3218,3 +3292,12 @@ components:
         totalCount: { type: integer, description: 匹配记录总数（含 freed_bytes 为 NULL 的非孤儿清理行） }
         totalFreedBytes: { type: integer, format: int64, description: 匹配行 freed_bytes 的 SUM（SQL SUM(freed_bytes)，NULL 行不计入，COALESCE 兜底 0；即有释放字节行之和） }
         avgFreedBytes: { type: number, format: double, description: totalFreedBytes / COUNT(freed_bytes)（分母为 freed_bytes 非空行数，非 totalCount；分母为 0 时 0，不抛除零异常） }
+    FreedBytesBucket:
+      type: object
+      required: [date, count, totalFreedBytes, avgFreedBytes]
+      description: 释放字节数时间序列分组的一桶（对 GET /audit-logs 的全部匹配记录按 granularity 分组后每桶的 SUM/COUNT/AVG，只读，一条 GROUP BY SQL 一次完成；按 date 升序，只含有数据的桶不补 0）
+      properties:
+        date: { type: string, description: 桶的分组键；day 粒度为 date(occurred_at) 如 "2026-09-07"，hour 粒度为 strftime('%Y-%m-%dT%H:00:00Z', occurred_at) 如 "2026-09-07T13:00:00Z" }
+        count: { type: integer, description: 该桶记录数（COUNT(*)，含 freed_bytes 为 NULL 的非孤儿清理行） }
+        totalFreedBytes: { type: integer, format: int64, description: 该桶 freed_bytes 的 SUM（SQL SUM(freed_bytes)，NULL 行不计入，COALESCE 兜底 0；即该桶有释放字节行之和） }
+        avgFreedBytes: { type: number, format: double, description: totalFreedBytes / COUNT(freed_bytes)（分母为该桶 freed_bytes 非空行数；分母为 0 时 0，不抛除零异常） }

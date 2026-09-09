@@ -1062,6 +1062,40 @@ Then 返回 200 且 totalCount=0 且 totalFreedBytes=0（from>to 空聚合不报
 And 全程聚合端点只读，不写 audit_log、不动任何业务表，响应不含 passphrase，不影响分页查询/导出端点的任何行为，不落盘、无确认头/幂等键
 ```
 
+### AT-63 freedBytes 时间序列分组（GET /audit-logs/freed-bytes-timeseries 只读分组聚合，复用既有过滤参数 + granularity 粒度，返回 FreedBytesBucket 数组，avg 分母为非空行数，不补 0 桶，按 date 升序）
+
+```gherkin
+Given audit_log 表存在多条 BACKUP_ORPHAN_CLEANED 行（freed_bytes 非空，occurred_at 跨多个日期与小时）与若干 freed_bytes 为 null 的非孤儿清理行
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries
+Then 返回 200 且响应为 FreedBytesBucket 数组，按 date 升序排列
+And 每桶 { date, count, totalFreedBytes, avgFreedBytes }：date 为 day 粒度分组键（如 2026-09-07，缺省 granularity=day）
+And 同一日期的记录归入同一桶，count 为该桶记录数（含 freed_bytes 为 null 的非孤儿清理行），totalFreedBytes 为该桶 freed_bytes 之和（SUM 不计 NULL，COALESCE 兜底 0）
+And avgFreedBytes=该桶 totalFreedBytes / 该桶 freed_bytes 非空行数（分母为非空行数非 count，避免 NULL 行稀释均值；分母为 0 时 0 不抛除零异常）
+And 只返回有数据的桶，缺失日期不出现（不补 0 桶），空表或无匹配返回 []
+And 响应不含 passphrase
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?granularity=hour
+Then 返回 200 且按小时分桶，date 为如 2026-09-07T13:00:00Z 的分组键，按 date 升序排列
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且只对 BACKUP_ORPHAN_CLEANED 行分桶
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?hasFreedBytes=true
+Then 返回 200 且只对 freed_bytes IS NOT NULL 的行分桶
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?freedBytesMin=1024
+Then 返回 200 且只对 freed_bytes >= 1024 的行分桶
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?from=ISO&to=ISO
+Then 返回 200 且只对 occurred_at 在 [from, to] 内的行分桶
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?granularity=invalid
+Then 返回 400 VALIDATION_ERROR（granularity 非 day/hour fail fast）
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?from=not-a-date
+Then 返回 400 VALIDATION_ERROR（非法 from 格式 fail fast）
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?freedBytesMin=-1
+Then 返回 400 VALIDATION_ERROR（负值 fail fast）
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?freedBytesMin=2048&freedBytesMax=512
+Then 返回 200 且空数组 []（min>max 空分组不报 400）
+When 用户调用 GET /api/audit-logs/freed-bytes-timeseries?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z
+Then 返回 200 且空数组 []（from>to 空分组不报 400）
+And 全程时间序列端点只读，不写 audit_log、不动任何业务表，响应不含 passphrase，不影响分页查询/导出/聚合统计端点的任何行为，不落盘、无确认头/幂等键
+```
+
 ### AT-56 批量密钥轮换（POST /backups/rotate-keys 逐条就地重加密：同一旧口令解密 → 同一新口令重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
 
 ```gherkin
@@ -1151,6 +1185,6 @@ And 全程后端不写文件系统（无 data/exports 下审计导出文件残�
 
 ## 8. 发布门槛
 
-- AT-01 至 AT-62 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-63 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

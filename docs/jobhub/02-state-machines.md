@@ -371,6 +371,16 @@ ABANDONED ──restore──> TODO
 - `AuditLogMapper` 新增只读 `selectFreedBytesSummary(action, resourceType, from, to, hasFreedBytes, freedBytesMin, freedBytesMax)`（一条聚合 SQL，`SELECT COUNT(*), COALESCE(SUM(freed_bytes),0), COUNT(freed_bytes) FROM audit_log <where>...`，`<where>` 与 `selectPage`/`count` 完全一致，仅 SELECT 不违背「仅追加、不提供更新/删除」语义）。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
 - 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空聚合（`totalCount=0`，不报 400）；`freedBytesMin > freedBytesMax` 返回空聚合（不报 400，与 `from > to` 一致）；`freedBytesMin`/`freedBytesMax` 为负数或非整数返回 400（`minimum: 0` + Long 类型绑定校验，fail fast）。
 
+**释放字节数时间序列分组聚合（只读）**：`GET /audit-logs/freed-bytes-timeseries` 对 `GET /audit-logs` 的全部匹配记录按时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，对每桶做释放字节数聚合统计，只读，一条 GROUP BY SQL 一次完成。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to`、`hasFreedBytes`、`freedBytesMin`、`freedBytesMax` 均可选，空/`false`/缺省=不过滤统计全量，可单独或任意组合（语义、校验全同查询端点）。返回 `FreedBytesBucket` 数组，每桶 `{ date, count, totalFreedBytes, avgFreedBytes }`。
+
+- 分组粒度：`day` 按 `date(occurred_at)` 分组（返回如 `2026-09-07`），`hour` 按 `strftime('%Y-%m-%dT%H:00:00Z', occurred_at)` 分组（返回如 `2026-09-07T13:00:00Z`）；`granularity` 非 `day`/`hour` 返回 400。`occurred_at` 以 TEXT 存 UTC ISO，`date()` 与 `strftime()` 对 TEXT ISO 字符串按字典序分组（与时间序一致）。
+- 桶聚合语义：`count` 为该桶记录数（`COUNT(*)`，含 `freed_bytes` 为 NULL 的非孤儿清理行）；`totalFreedBytes` 为该桶 `freed_bytes` 的 `SUM`（`COALESCE` 兜底 0，NULL 行不计入）；`avgFreedBytes` 为 `totalFreedBytes / COUNT(freed_bytes)`（分母为该桶 `freed_bytes` 非空行数，避免 NULL 行稀释均值；分母为 0 时空桶或全 NULL，`avgFreedBytes=0`，Java 端兜底不抛除零异常）。
+- 排序与补桶：按 `date` 升序排列（时间正序，用于趋势展示；与 `GET /audit-logs` 的 `occurred_at DESC` 不同——列表为「最新优先」、时间序列为「时间正序趋势」，二者用途不同故排序方向不同）。**不补 0 桶**：只返回有匹配记录的桶，缺失日期/小时不出现（与 SQL `GROUP BY` 自然结果一致，与聚合统计同源同风格）；空匹配返回 `[]`。
+- 与分页查询的关系：时间序列对全部匹配记录分组（非当前页），与分页查询同源同过滤；不影响分页查询/导出/聚合统计端点的任何行为。
+- 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase（审计记录从不存 passphrase）。
+- `AuditLogMapper` 新增只读 `selectFreedBytesTimeseries(action, resourceType, from, to, hasFreedBytes, freedBytesMin, freedBytesMax, granularity)`（一条 GROUP BY SQL，按 `granularity` 用 `<choose>` 切 `date(occurred_at)`/`strftime(...)` 作为 bucket 表达式，`SELECT <bucket> AS date, COUNT(*) AS count, COALESCE(SUM(freed_bytes),0) AS totalFreedBytes, COUNT(freed_bytes) AS nonNullCount FROM audit_log <where>... GROUP BY <bucket> ORDER BY 1 ASC`，`<where>` 与 `selectPage`/`count`/`selectFreedBytesSummary` 完全一致，仅 SELECT 不违背「仅追加、不提供更新/删除」语义）。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
+- 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空数组（不报 400，与聚合统计先例一致）；`freedBytesMin > freedBytesMax` 返回空数组（不报 400，与 `from > to` 一致）；`freedBytesMin`/`freedBytesMax` 为负数或非整数返回 400（`minimum: 0` + Long 类型绑定校验，fail fast）；`granularity` 非 `day`/`hour` 返回 400。
+
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。

@@ -160,6 +160,52 @@ public class AuditLogController {
 	public record FreedBytesSummary(long totalCount, long totalFreedBytes, double avgFreedBytes) {
 	}
 
+	/**
+	 * 释放字节数时间序列分组聚合（只读）：对 {@code GET /audit-logs} 的全部匹配记录按时间粒度
+	 * （{@code granularity}，{@code day} 或 {@code hour}，缺省 {@code day}）分组，对每桶做
+	 * {@code COUNT(*)}/{@code SUM(freed_bytes)}/{@code COUNT(freed_bytes)} 一条 GROUP BY SQL，返回
+	 * {@link FreedBytesBucket} 列表。过滤参数与 {@link #listAuditLogs} 完全一致
+	 * （action/resourceType/from/to/hasFreedBytes/freedBytesMin/freedBytesMax，语义/校验全同）；
+	 * 只读不写、不需确认头/幂等键、不动任何业务表；响应不含 passphrase。
+	 * <p>{@code date} 为桶的分组键（{@code day}→{@code date(occurred_at)} 如 {@code 2026-09-07}，
+	 * {@code hour}→{@code strftime('%Y-%m-%dT%H:00:00Z', occurred_at)} 如 {@code 2026-09-07T13:00:00Z}）；
+	 * {@code count}={@code COUNT(*)}（该桶记录数，含 NULL 行）；{@code totalFreedBytes}={@code SUM(freed_bytes)}
+	 * （NULL 不计入，COALESCE 兜底 0）；{@code avgFreedBytes}={@code totalFreedBytes/COUNT(freed_bytes)}
+	 * （分母为该桶非空行数，避免 NULL 行稀释均值；分母 0 兜底 0 不抛除零异常）。按 {@code date} 升序
+	 * （时间正序趋势，与 {@code GET /audit-logs} 的 {@code occurred_at DESC} 用途不同故方向不同）。
+	 * <p><b>不补 0 桶</b>：只返有数据的桶，缺失日期/小时不出现，空匹配返回空列表。
+	 */
+	@GetMapping("/audit-logs/freed-bytes-timeseries")
+	public List<FreedBytesBucket> freedBytesTimeseries(
+			@RequestParam(required = false) String action,
+			@RequestParam(required = false) String resourceType,
+			@RequestParam(required = false) String from,
+			@RequestParam(required = false) String to,
+			@RequestParam(defaultValue = "false") boolean hasFreedBytes,
+			@RequestParam(required = false) @Min(0) Long freedBytesMin,
+			@RequestParam(required = false) @Min(0) Long freedBytesMax,
+			@RequestParam(defaultValue = "day") String granularity) {
+		String validatedFrom = parseIsoUtc(from, "from");
+		String validatedTo = parseIsoUtc(to, "to");
+		if (!"day".equalsIgnoreCase(granularity) && !"hour".equalsIgnoreCase(granularity)) {
+			throw new BusinessRuleException(ErrorCode.VALIDATION_ERROR, "granularity 必须为 day 或 hour");
+		}
+		List<Map<String, Object>> rows = auditLogMapper.selectFreedBytesTimeseries(action, resourceType,
+				validatedFrom, validatedTo, hasFreedBytes, freedBytesMin, freedBytesMax, granularity);
+		return rows.stream().map(row -> {
+			String date = String.valueOf(row.get("date"));
+			long count = ((Number) row.get("count")).longValue();
+			long totalFreedBytes = ((Number) row.get("totalFreedBytes")).longValue();
+			long nonNullCount = ((Number) row.get("nonNullCount")).longValue();
+			double avgFreedBytes = nonNullCount == 0 ? 0.0 : (double) totalFreedBytes / nonNullCount;
+			return new FreedBytesBucket(date, count, totalFreedBytes, avgFreedBytes);
+		}).toList();
+	}
+
+	/** 释放字节数时间序列分组的一桶（只读）。 */
+	public record FreedBytesBucket(String date, long count, long totalFreedBytes, double avgFreedBytes) {
+	}
+
 	private void streamJson(OutputStream out, String action, String resourceType, String from, String to,
 			boolean hasFreedBytes, Long freedBytesMin, Long freedBytesMax) throws IOException {
 		out.write('[');
