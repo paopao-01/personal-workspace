@@ -14,6 +14,8 @@ import {
   exportAuditLogs,
   useAuditLogs,
   useFreedBytesSummary,
+  useFreedBytesTimeseries,
+  type TimeseriesGranularity,
 } from '@/api/audit/auditLogApi'
 
 const AUDIT_PAGE_SIZE = 20
@@ -42,6 +44,7 @@ export function AuditLogSection() {
   const [freedBytesMin, setFreedBytesMin] = useState('')
   const [freedBytesMax, setFreedBytesMax] = useState('')
   const [exporting, setExporting] = useState<'' | 'csv' | 'json'>('')
+  const [granularity, setGranularity] = useState<TimeseriesGranularity>('day')
 
   const freedBytesMinNum = freedBytesMin === '' ? undefined : Number(freedBytesMin)
   const freedBytesMaxNum = freedBytesMax === '' ? undefined : Number(freedBytesMax)
@@ -68,6 +71,17 @@ export function AuditLogSection() {
     freedBytesMin: freedBytesMinNum !== undefined && !Number.isNaN(freedBytesMinNum) ? freedBytesMinNum : undefined,
     freedBytesMax: freedBytesMaxNum !== undefined && !Number.isNaN(freedBytesMaxNum) ? freedBytesMaxNum : undefined,
   })
+
+  // 释放字节数时间序列分组（复用与查询同源的过滤条件 + 粒度切换）
+  const timeseries = useFreedBytesTimeseries({
+    action: action || undefined,
+    resourceType: resourceType || undefined,
+    from: fromLocal ? toUtcIso(fromLocal) : undefined,
+    to: toLocal ? toUtcIso(toLocal) : undefined,
+    hasFreedBytes: hasFreedBytes || undefined,
+    freedBytesMin: freedBytesMinNum !== undefined && !Number.isNaN(freedBytesMinNum) ? freedBytesMinNum : undefined,
+    freedBytesMax: freedBytesMaxNum !== undefined && !Number.isNaN(freedBytesMaxNum) ? freedBytesMaxNum : undefined,
+  }, granularity)
 
   // 当前生效的过滤条件（供导出复用，与查询一致）
   const exportFilters = {
@@ -106,6 +120,9 @@ export function AuditLogSection() {
   const onFreedBytesRangeChange = (setter: (v: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setter(event.target.value)
     setPage(1)
+  }
+  const onGranularityChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setGranularity(event.target.value as TimeseriesGranularity)
   }
 
   return (
@@ -239,6 +256,34 @@ export function AuditLogSection() {
               ? '统计失败'
               : `共 ${summary.data?.totalCount ?? 0} 条 · 释放 ${formatBytes(summary.data?.totalFreedBytes ?? 0)}（均值 ${formatBytes(summary.data?.avgFreedBytes ? Math.round(summary.data.avgFreedBytes) : 0)}/条）`}
         </p>
+
+        <div style={{ margin: '12px 0' }}>
+          <div className="flex-row" style={{ justifyContent: 'flex-start', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+            <span className="muted" style={{ marginTop: 0 }}>释放字节趋势</span>
+            <Select value={granularity} onChange={onGranularityChange} aria-label="趋势分组粒度">
+              <option value="day">按天</option>
+              <option value="hour">按小时</option>
+            </Select>
+          </div>
+          {timeseries.isLoading ? (
+            <p className="muted" style={{ margin: 0 }}>趋势统计中…</p>
+          ) : timeseries.error ? (
+            <p className="muted" style={{ margin: 0 }}>趋势统计失败</p>
+          ) : (timeseries.data ?? []).length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>无趋势数据</p>
+          ) : (
+            <Table headers={['日期', '记录数', '释放字节', '均值/条']}>
+              {(timeseries.data ?? []).map((bucket) => (
+                <tr key={bucket.date}>
+                  <td>{bucket.date}</td>
+                  <td>{bucket.count}</td>
+                  <td>{formatBytes(bucket.totalFreedBytes)}</td>
+                  <td>{formatBytes(bucket.avgFreedBytes ? Math.round(bucket.avgFreedBytes) : 0)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </div>
 
         {query.isLoading ? (
           <Spinner label="加载审计日志…" />

@@ -6,6 +6,7 @@ type Schemas = components['schemas']
 export type AuditLogEntry = Schemas['AuditLogEntry']
 export type PageAuditLogEntry = Schemas['PageAuditLogEntry']
 export type FreedBytesSummary = Schemas['FreedBytesSummary']
+export type FreedBytesBucket = Schemas['FreedBytesBucket']
 
 export const AUDIT_LOG_KEY = ['audit-logs'] as const
 
@@ -128,6 +129,33 @@ export function useFreedBytesSummary(filters: SummaryFilters) {
       filters.from ?? '', filters.to ?? '', filters.hasFreedBytes ?? false,
       filters.freedBytesMin ?? '', filters.freedBytesMax ?? ''],
     queryFn: () => fetchFreedBytesSummary(filters),
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** 时间序列分组粒度（只读，复用当前过滤条件 + granularity）。 */
+export type TimeseriesGranularity = 'day' | 'hour'
+
+/** 拉取释放字节数时间序列分组（只读，复用当前过滤条件 + granularity，无需确认头/幂等键）。
+ *  返回按 date 升序的桶数组，只含有数据的桶（不补 0）；空匹配返回 []。
+ *  每桶 date（day→2026-09-07 / hour→2026-09-07T13:00:00Z）、count（含 NULL 行）、
+ *  totalFreedBytes（SUM，NULL 不计入）、avgFreedBytes（非空行均值，分母 0 兜底 0）。 */
+export async function fetchFreedBytesTimeseries(
+  filters: SummaryFilters,
+  granularity: TimeseriesGranularity = 'day',
+): Promise<FreedBytesBucket[]> {
+  const res = await apiClient.get<FreedBytesBucket[]>('/audit-logs/freed-bytes-timeseries', {
+    params: { granularity, ...filters },
+  })
+  return res.data
+}
+
+export function useFreedBytesTimeseries(filters: SummaryFilters, granularity: TimeseriesGranularity = 'day') {
+  return useQuery<FreedBytesBucket[], Error>({
+    queryKey: [...AUDIT_LOG_KEY, 'timeseries', granularity, filters.action ?? '', filters.resourceType ?? '',
+      filters.from ?? '', filters.to ?? '', filters.hasFreedBytes ?? false,
+      filters.freedBytesMin ?? '', filters.freedBytesMax ?? ''],
+    queryFn: () => fetchFreedBytesTimeseries(filters, granularity),
     placeholderData: (prev) => prev,
   })
 }

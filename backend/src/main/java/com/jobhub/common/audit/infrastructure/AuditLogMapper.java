@@ -130,6 +130,46 @@ public interface AuditLogMapper {
 			@Param("resourceType") String resourceType, @Param("from") String from, @Param("to") String to,
 			@Param("hasFreedBytes") boolean hasFreedBytes, @Param("freedBytesMin") Long freedBytesMin,
 			@Param("freedBytesMax") Long freedBytesMax);
+
+	/**
+	 * 释放字节数时间序列分组聚合（只读）：对匹配记录按时间粒度（{@code granularity}，{@code day} 或 {@code hour}）
+	 * 分组，每桶做 {@code COUNT(*)}、{@code COALESCE(SUM(freed_bytes), 0)}、{@code COUNT(freed_bytes)} 一条
+	 * GROUP BY SQL，过滤条件与 {@link #selectPage} 完全一致（同 {@code <where>}）。按 {@code granularity} 用
+	 * {@code <choose>} 切 bucket 表达式（{@code day} 用 {@code date(occurred_at)}，{@code hour} 用
+	 * {@code strftime('%Y-%m-%dT%H:00:00Z', occurred_at)}），返回多行 Map（每行一桶，key 为
+	 * date/count/totalFreedBytes/nonNullCount），按 date 升序（时间正序趋势）。仅 SELECT，不违背仅追加语义。
+	 * <p>SQL {@code SUM(freed_bytes)} 对 NULL 行不计入（故为有释放字节行之和），{@code COALESCE} 兜底 0；
+	 * {@code COUNT(freed_bytes)} 只数非 NULL 行（作为 avg 分母，避免稀释均值）。{@code occurred_at} 以 TEXT 存
+	 * UTC ISO，{@code date()}/{@code strftime()} 对 TEXT ISO 字符串按字典序分组（与时间序一致）。
+	 */
+	@Select("<script>" +
+			"SELECT " +
+			"<choose>" +
+			"<when test='granularity == \"hour\"'>strftime('%Y-%m-%dT%H:00:00Z', occurred_at)</when>" +
+			"<otherwise>date(occurred_at)</otherwise>" +
+			"</choose>" +
+			" AS date, COUNT(*) AS count, COALESCE(SUM(freed_bytes), 0) AS totalFreedBytes, " +
+			"COUNT(freed_bytes) AS nonNullCount FROM audit_log " +
+			"<where>" +
+			"<if test='action != null and action != \"\"'>AND action = #{action}</if>" +
+			"<if test='resourceType != null and resourceType != \"\"'>AND resource_type = #{resourceType}</if>" +
+			"<if test='from != null and from != \"\"'>AND occurred_at &gt;= #{from}</if>" +
+			"<if test='to != null and to != \"\"'>AND occurred_at &lt;= #{to}</if>" +
+			"<if test='hasFreedBytes'>AND freed_bytes IS NOT NULL </if>" +
+			"<if test='freedBytesMin != null'>AND freed_bytes &gt;= #{freedBytesMin}</if>" +
+			"<if test='freedBytesMax != null'>AND freed_bytes &lt;= #{freedBytesMax}</if>" +
+			"</where>" +
+			"GROUP BY " +
+			"<choose>" +
+			"<when test='granularity == \"hour\"'>strftime('%Y-%m-%dT%H:00:00Z', occurred_at)</when>" +
+			"<otherwise>date(occurred_at)</otherwise>" +
+			"</choose>" +
+			" ORDER BY 1 ASC" +
+			"</script>")
+	List<Map<String, Object>> selectFreedBytesTimeseries(@Param("action") String action,
+			@Param("resourceType") String resourceType, @Param("from") String from, @Param("to") String to,
+			@Param("hasFreedBytes") boolean hasFreedBytes, @Param("freedBytesMin") Long freedBytesMin,
+			@Param("freedBytesMax") Long freedBytesMax, @Param("granularity") String granularity);
 }
 
 

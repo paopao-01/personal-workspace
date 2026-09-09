@@ -1739,3 +1739,82 @@ test('AT-62 audit log freed-bytes-summary aggregate (count/sum/avg)', async ({ r
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+/**
+ * AT-63 freedBytes 时间序列分组：GET /audit-logs/freed-bytes-timeseries 复用既有过滤参数 +
+ * granularity(day|hour) 粒度，返回 FreedBytesBucket 数组（date/count/totalFreedBytes/avgFreedBytes），
+ * 按 date 升序，只含有数据的桶不补 0，avg 分母为非空行数，空表/空匹配 []，
+ * min>max/from>to 空数组不报 400，非法 granularity/非法 from 400 fail fast；UI「释放字节趋势」可见。
+ * 造数同 AT-49/AT-60/AT-61/AT-62：创建备份 + 触发 orphans/clean（全量跑时删残留孤儿写 freed_bytes 非 null 审计，
+ * 单跑时可能删 0 个无审计，用条件断言容忍空 DB，强语义由后端 AT-63 集成测试覆盖）。
+ */
+test('AT-63 audit log freed-bytes-timeseries grouping (granularity day|hour, no zero-fill)', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at63-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（全量跑时删残留孤儿写 freed_bytes 非 null 的 BACKUP_ORPHAN_CLEANED 审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // 全量时间序列（day 缺省）→ 数组，按 date 升序，每桶含 date/count/totalFreedBytes/avgFreedBytes
+  const res = await request.get('/api/audit-logs/freed-bytes-timeseries')
+  expect(res.status()).toBe(200)
+  const buckets = await res.json()
+  expect(Array.isArray(buckets)).toBeTruthy()
+  if (buckets.length > 0) {
+    expect(buckets[0]).toHaveProperty('date')
+    expect(buckets[0]).toHaveProperty('count')
+    expect(buckets[0]).toHaveProperty('totalFreedBytes')
+    expect(buckets[0]).toHaveProperty('avgFreedBytes')
+    expect(buckets[0]).not.toHaveProperty('passphrase')
+    // 升序：date 单调递增
+    for (let i = 1; i < buckets.length; i++) {
+      expect(buckets[i].date >= buckets[i - 1].date).toBeTruthy()
+    }
+  }
+
+  // granularity=hour → 200，date 形如 2026-09-07T13:00:00Z
+  const hourRes = await request.get('/api/audit-logs/freed-bytes-timeseries?granularity=hour')
+  expect(hourRes.status()).toBe(200)
+  const hourBuckets = await hourRes.json()
+  if (hourBuckets.length > 0) {
+    expect(hourBuckets[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$/)
+  }
+
+  // min > max → 空数组不报 400
+  const emptyRes = await request.get('/api/audit-logs/freed-bytes-timeseries?freedBytesMin=999999&freedBytesMax=0')
+  expect(emptyRes.status()).toBe(200)
+  expect(await emptyRes.json()).toEqual([])
+
+  // 非法 granularity → 400 fail fast
+  const badGran = await request.get('/api/audit-logs/freed-bytes-timeseries?granularity=invalid')
+  expect(badGran.status()).toBe(400)
+
+  // 非法 from → 400 fail fast
+  const badFrom = await request.get('/api/audit-logs/freed-bytes-timeseries?from=not-a-date')
+  expect(badFrom.status()).toBe(400)
+
+  // from > to → 空数组不报 400
+  const fromGt = await request.get(
+    '/api/audit-logs/freed-bytes-timeseries?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z',
+  )
+  expect(fromGt.status()).toBe(200)
+  expect((await fromGt.json())).toEqual([])
+
+  // UI：设置页审计日志区块「释放字节趋势」可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+  await expect(page.getByText('释放字节趋势')).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})
