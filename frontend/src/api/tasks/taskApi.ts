@@ -77,3 +77,26 @@ export async function createTaskFromQuestion(
   )
   return res.data
 }
+
+export type TaskEvidenceAttachRequest = Schemas['TaskEvidenceAttachRequest']
+export type EvidenceReference = Schemas['EvidenceReference']
+
+export async function listTaskEvidence(taskId: string): Promise<EvidenceReference[]> {
+  const res = await apiClient.get<EvidenceReference[]>(`/tasks/${taskId}/evidence`)
+  return res.data
+}
+
+export async function attachTaskEvidence(
+  taskId: string,
+  body: TaskEvidenceAttachRequest,
+): Promise<EvidenceReference> {
+  const res = await apiClient.post<EvidenceReference>(`/tasks/${taskId}/evidence`, body)
+  return res.data
+}
+
+export async function detachTaskEvidence(
+  taskId: string,
+  evidenceId: string,
+): Promise<void> {
+  await apiClient.delete(`/tasks/${taskId}/evidence/${evidenceId}`)
+}

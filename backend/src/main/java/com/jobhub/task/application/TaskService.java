@@ -1,9 +1,12 @@
 package com.jobhub.task.application;
 
 import com.jobhub.common.error.BusinessRuleException;
+import com.jobhub.common.error.ResourceNotFoundException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.evidence.domain.Evidence;
+import com.jobhub.evidence.infrastructure.EvidenceMapper;
 import com.jobhub.review.domain.AnswerStatus;
 import com.jobhub.review.domain.InterviewQuestion;
 import com.jobhub.review.domain.KnowledgePoint;
@@ -25,13 +28,16 @@ public class TaskService {
 	private final TaskMapper taskMapper;
 	private final QuestionMapper questionMapper;
 	private final JobMapper jobMapper;
+	private final EvidenceMapper evidenceMapper;
 	private final IdGenerator ids;
 	private final UtcTime time;
 
-	public TaskService(TaskMapper taskMapper, QuestionMapper questionMapper, JobMapper jobMapper, IdGenerator ids, UtcTime time) {
+	public TaskService(TaskMapper taskMapper, QuestionMapper questionMapper, JobMapper jobMapper,
+			EvidenceMapper evidenceMapper, IdGenerator ids, UtcTime time) {
 		this.taskMapper = taskMapper;
 		this.questionMapper = questionMapper;
 		this.jobMapper = jobMapper;
+		this.evidenceMapper = evidenceMapper;
 		this.ids = ids;
 		this.time = time;
 	}
@@ -48,6 +54,30 @@ public class TaskService {
 
 	public LearningTask get(String id) {
 		return hydrate(requireTask(id));
+	}
+
+	@Transactional
+	public Evidence attachEvidence(String taskId, String evidenceId) {
+		requireTask(taskId);
+		// 校验忽略证据软删状态：已删证据的关联保留并在恢复后自动还原（与 ProjectService.replaceEvidenceRefs 一致）
+		Evidence evidence = evidenceMapper.selectByIdIncludeTrashed(evidenceId);
+		VersionCheck.requireFound(evidence, "Evidence", evidenceId);
+		taskMapper.insertEvidenceRef(taskId, evidenceId, time.now());
+		return evidence;
+	}
+
+	@Transactional
+	public void detachEvidence(String taskId, String evidenceId) {
+		requireTask(taskId);
+		int affected = taskMapper.deleteEvidenceRef(taskId, evidenceId);
+		if (affected == 0) {
+			throw new ResourceNotFoundException("TaskEvidence", taskId + "/" + evidenceId);
+		}
+	}
+
+	public List<Evidence> listEvidence(String taskId) {
+		requireTask(taskId);
+		return taskMapper.selectEvidenceRefs(taskId);
 	}
 
 	@Transactional
@@ -142,6 +172,7 @@ public class TaskService {
 	private LearningTask hydrate(LearningTask task) {
 		task.setKnowledgePoints(taskMapper.selectKnowledgePoints(task.getId()));
 		task.setSourceRefs(taskMapper.selectSourceRefs(task.getId()));
+		task.setEvidenceRefs(taskMapper.selectEvidenceRefs(task.getId()));
 		return task;
 	}
 

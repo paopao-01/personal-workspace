@@ -1,5 +1,6 @@
 package com.jobhub.task.infrastructure;
 
+import com.jobhub.evidence.domain.Evidence;
 import com.jobhub.review.domain.KnowledgePoint;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskSourceType;
@@ -144,4 +145,26 @@ public interface TaskMapper {
 
 	@Select("SELECT id, title, task_type AS type, priority, estimated_minutes, due_at, learning_goal, acceptance_criteria, verification_method, verification_result, output_url, status, created_at, updated_at, completed_at, abandoned_at, deleted_at, version FROM learning_task WHERE deleted_at IS NULL AND status IN ('TODO','IN_PROGRESS') AND due_at IS NOT NULL AND due_at <= #{until} ORDER BY due_at")
 	List<LearningTask> selectDueForDashboard(@Param("until") String until);
+
+	@Insert("""
+		INSERT OR IGNORE INTO task_evidence (task_id, evidence_id, created_at)
+		VALUES (#{taskId}, #{evidenceId}, #{now})
+		""")
+	int insertEvidenceRef(@Param("taskId") String taskId, @Param("evidenceId") String evidenceId,
+			@Param("now") String now);
+
+	@Delete("DELETE FROM task_evidence WHERE task_id=#{taskId} AND evidence_id=#{evidenceId}")
+	int deleteEvidenceRef(@Param("taskId") String taskId, @Param("evidenceId") String evidenceId);
+
+	@Select("""
+		SELECT e.id, e.type, e.title, e.url_or_path, e.deleted_at
+		FROM evidence e
+		JOIN task_evidence te ON te.evidence_id = e.id
+		WHERE te.task_id = #{taskId}
+		ORDER BY te.created_at
+		""")
+	List<Evidence> selectEvidenceRefs(@Param("taskId") String taskId);
+
+	@Select("SELECT COUNT(*) FROM task_evidence WHERE task_id=#{taskId} AND evidence_id=#{evidenceId}")
+	long countEvidenceRef(@Param("taskId") String taskId, @Param("evidenceId") String evidenceId);
 }

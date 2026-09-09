@@ -1,6 +1,7 @@
 package com.jobhub.task.domain;
 
 import com.jobhub.common.error.IllegalStateTransitionException;
+import com.jobhub.evidence.domain.Evidence;
 import com.jobhub.review.domain.KnowledgePoint;
 import java.util.List;
 import java.util.Set;
@@ -26,6 +27,7 @@ public class LearningTask {
 	private long version;
 	private List<KnowledgePoint> knowledgePoints = List.of();
 	private List<com.jobhub.task.application.TaskSourceRef> sourceRefs = List.of();
+	private List<Evidence> evidenceRefs = List.of();
 
 	public static LearningTask create(String id, String title, String type, TaskPriority priority,
 			Integer estimatedMinutes, String dueAt, String learningGoal, String acceptanceCriteria,
@@ -121,5 +123,9 @@ public class LearningTask {
 	public List<com.jobhub.task.application.TaskSourceRef> getSourceRefs() { return sourceRefs == null ? List.of() : sourceRefs; }
 	public void setSourceRefs(List<com.jobhub.task.application.TaskSourceRef> sourceRefs) {
 		this.sourceRefs = sourceRefs == null ? List.of() : sourceRefs;
+	}
+	public List<Evidence> getEvidenceRefs() { return evidenceRefs == null ? List.of() : evidenceRefs; }
+	public void setEvidenceRefs(List<Evidence> evidenceRefs) {
+		this.evidenceRefs = evidenceRefs == null ? List.of() : evidenceRefs;
 	}
 }

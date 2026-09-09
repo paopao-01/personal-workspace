@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { isApiError, isNetworkError } from '@/api/errors'
+import { useEvidence } from '@/api/projects/useProjectQueries'
 import { useTask } from '@/api/tasks/useTaskQueries'
 import { useTransitionTask, useUpdateTask } from '@/api/tasks/useTaskMutations'
+import { useAttachTaskEvidence, useDetachTaskEvidence } from '@/api/tasks/useTaskEvidence'
 import type { LearningTask, TaskPriority, TaskStatus, TaskUpdateRequest } from '@/api/tasks/taskApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
@@ -156,6 +158,104 @@ export function TaskDetailPage() {
         <Button variant="ghost" size="sm" type="button" onClick={() => navigate('/tasks')}>返回任务列表</Button>
       </div>
       <TaskEditor key={`${query.data.id}:${query.data.version}`} task={query.data} onSaved={() => { void query.refetch() }} />
+      <TaskEvidenceSection taskId={query.data.id} evidenceRefs={query.data.evidenceRefs} onSaved={() => { void query.refetch() }} />
     </div>
+  )
+}
+
+function TaskEvidenceSection({
+  taskId,
+  evidenceRefs,
+  onSaved,
+}: {
+  taskId: string
+  evidenceRefs?: { id: string; type?: string | null; title: string; urlOrPath?: string | null; trashed?: boolean }[]
+  onSaved: () => void
+}) {
+  const evidenceQuery = useEvidence()
+  const attach = useAttachTaskEvidence()
+  const detach = useDetachTaskEvidence()
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState('')
+
+  const reportError = (caught: Error) => {
+    const message = isApiError(caught) || isNetworkError(caught) ? caught.message : '证据操作失败，请稍后重试'
+    pushToast(message, 'error')
+  }
+
+  const handleAttach = async () => {
+    if (!selectedEvidenceId) {
+      pushToast('请先选择证据', 'error')
+      return
+    }
+    try {
+      await attach.mutateAsync({ taskId, evidenceId: selectedEvidenceId })
+      setSelectedEvidenceId('')
+      onSaved()
+      pushToast('证据已挂载')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const handleDetach = async (evidenceId: string) => {
+    try {
+      await detach.mutateAsync({ taskId, evidenceId })
+      onSaved()
+      pushToast('证据已卸载')
+    } catch (caught) {
+      reportError(caught as Error)
+    }
+  }
+
+  const pending = attach.isPending || detach.isPending
+  const refs = evidenceRefs ?? []
+  const options = (evidenceQuery.data ?? []).filter((item) => !refs.some((ref) => ref.id === item.id))
+
+  return (
+    <section className="card">
+      <div className="card-header"><h2 className="card-title">完成证据</h2></div>
+      <div className="card-body">
+        <p className="muted" style={{ marginTop: 0 }}>
+          挂载已有证据作为完成依据，与验证结果/产出链接并存，不影响任务状态与版本。
+        </p>
+        {refs.length > 0 ? (
+          <div className="stack">
+            {refs.map((ref) => (
+              <div className="requirement-row" key={ref.id}>
+                <div className="requirement-main">
+                  <span className="requirement-raw">{ref.title}</span>
+                  {ref.type ? <span className="muted" style={{ marginLeft: 8 }}>{ref.type}</span> : null}
+                  {ref.trashed ? (
+                    <span className="muted" style={{ marginLeft: 8 }}>（来源已删除）</span>
+                  ) : ref.urlOrPath ? (
+                    <a href={ref.urlOrPath} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>链接</a>
+                  ) : null}
+                </div>
+                <div className="requirement-actions">
+                  <Button size="sm" variant="default" type="button" disabled={pending} onClick={() => handleDetach(ref.id)}>
+                    卸载
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">暂未挂载完成证据</p>
+        )}
+        <div className="form-row" style={{ marginTop: 12 }}>
+          <Field label="挂载证据">
+            <Select value={selectedEvidenceId} onChange={(event) => setSelectedEvidenceId(event.target.value)}>
+              <option value="">选择已有证据…</option>
+              {options.map((item) => (
+                <option key={item.id} value={item.id}>{item.title}</option>
+              ))}
+            </Select>
+          </Field>
+          <Button variant="primary" type="button" disabled={pending || !selectedEvidenceId} onClick={handleAttach}>
+            {attach.isPending ? '挂载中…' : '挂载'}
+          </Button>
+        </div>
+      </div>
+    </section>
   )
 }
