@@ -5,6 +5,7 @@ import com.jobhub.common.error.VersionConflictException;
 import com.jobhub.common.id.IdGenerator;
 import com.jobhub.common.time.UtcTime;
 import com.jobhub.common.version.VersionCheck;
+import com.jobhub.skill.domain.SelfLevelHistoryEntry;
 import com.jobhub.skill.domain.SkillProfile;
 import com.jobhub.skill.infrastructure.SkillProfileMapper;
 import org.springframework.stereotype.Service;
@@ -47,7 +48,7 @@ public class SkillProfileService {
 	}
 
 	@Transactional
-	public SkillProfile updateSelfLevel(String skillId, long expectedVersion, int selfLevel) {
+	public SkillProfile updateSelfLevel(String skillId, long expectedVersion, int selfLevel, String reason, String idempotencyKey) {
 		SkillProfile profile = requireSkillProfile(skillId);
 		String now = time.now();
 		if (profile.getUserSkillId() == null) {
@@ -55,12 +56,24 @@ public class SkillProfileService {
 			if (skillProfileMapper.insertIfAbsent(ids.newId(), SINGLE_USER_ID, skillId, selfLevel, now) == 0) {
 				throw new VersionConflictException(requireSkillProfile(skillId).getVersion());
 			}
+			// 追加写历史：首次自评 fromLevel=null（无前值）
+			skillProfileMapper.insertHistory(ids.newId(), requireSkillProfile(skillId).getUserSkillId(),
+					null, selfLevel, reason, idempotencyKey, now);
 			return requireSkillProfile(skillId);
 		}
+		Integer oldLevel = profile.getSelfLevel();
 		VersionCheck.requireAffected(
 			skillProfileMapper.updateSelfLevel(profile.getUserSkillId(), selfLevel, expectedVersion, now),
 			profile.getVersion());
+		// 追加写历史：fromLevel=旧值，toLevel=新值
+		skillProfileMapper.insertHistory(ids.newId(), profile.getUserSkillId(),
+				oldLevel, selfLevel, reason, idempotencyKey, now);
 		return requireSkillProfile(skillId);
+	}
+
+	public List<SelfLevelHistoryEntry> listSelfLevelHistory(String skillId) {
+		requireSkillProfile(skillId);
+		return skillProfileMapper.selectHistoryBySkillId(skillId);
 	}
 
 	private SkillProfile requireSkillProfile(String skillId) {

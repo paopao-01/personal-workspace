@@ -85,4 +85,59 @@ test('P1 skills profile shows unrated skills and supports self-level updates', a
   expect(redisAfter!.evidenceStatus).toBe('VALID')
   // 首次自评创建 user_skill 后为初始版本 0
   expect(redisAfter!.version).toBe(0)
+
+  // AT-66：自评历史——首次 from=null→3（经 UI 保存，不带 reason），再次 PUT 5 → from=3→to=5，列表升序
+  const firstHistory = await request.get(`/api/skills/${redis!.skillId}/self-level/history`)
+  expect(firstHistory.ok(), `GET history returned ${firstHistory.status()}`).toBe(true)
+  const firstEntries = (await firstHistory.json()) as Array<{
+    fromLevel: number | null
+    toLevel: number
+    reason: string | null
+  }>
+  expect(firstEntries).toHaveLength(1)
+  expect(firstEntries[0].fromLevel).toBeNull()
+  expect(firstEntries[0].toLevel).toBe(3)
+  expect(firstEntries[0].reason).toBeNull()
+
+  // 再次自评 3 → 5（带 reason），历史追加第二行
+  const secondPut = await request.put(`/api/skills/${redis!.skillId}/self-level`, {
+    headers: {
+      'Idempotency-Key': `e2e-at66-second-${crypto.randomUUID()}`,
+      'If-Match-Version': '0',
+    },
+    data: { selfLevel: 5, reason: '项目实战熟练' },
+  })
+  expect(secondPut.ok(), `PUT self-level=5 returned ${secondPut.status()}`).toBe(true)
+
+  const secondHistory = await request.get(
+    `/api/skills/${redis!.skillId}/self-level/history`,
+  )
+  const secondEntries = (await secondHistory.json()) as Array<{
+    fromLevel: number | null
+    toLevel: number
+    reason: string | null
+    occurredAt: string
+  }>
+  expect(secondEntries).toHaveLength(2)
+  // 升序：首条 from=null→3，次条 from=3→5
+  expect(secondEntries[0].fromLevel).toBeNull()
+  expect(secondEntries[0].toLevel).toBe(3)
+  expect(secondEntries[1].fromLevel).toBe(3)
+  expect(secondEntries[1].toLevel).toBe(5)
+  expect(secondEntries[1].reason).toBe('项目实战熟练')
+  expect(secondEntries[1].occurredAt).toBeTruthy()
+
+  // 不存在的技能 → 404
+  const unknownHistory = await request.get(
+    `/api/skills/99999999-9999-9999-9999-999999999999/self-level/history`,
+  )
+  expect(unknownHistory.status()).toBe(404)
+
+  // UI：展开自评历史区块可见轨迹与列表
+  const historyRow = page.locator('.requirement-row').filter({ hasText: skillName })
+  await historyRow.getByRole('button', { name: '查看自评历史' }).click()
+  await expect(historyRow.getByText('自评历史')).toBeVisible()
+  // 轨迹 span 存在（— → 3 / 5 → 5 / 5）
+  await expect(historyRow.locator('span', { hasText: '— → 3 / 5' })).toBeVisible()
+  await expect(historyRow.locator('span', { hasText: '3 / 5 → 5 / 5' })).toBeVisible()
 })

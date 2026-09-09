@@ -62,6 +62,7 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM task_evidence");
 		jdbc.execute("DELETE FROM evidence");
 		jdbc.execute("DELETE FROM project");
+		jdbc.execute("DELETE FROM user_skill_self_level_history");
 		jdbc.execute("DELETE FROM user_skill");
 		jdbc.execute("DELETE FROM skill_alias");
 		jdbc.execute("DELETE FROM skill");

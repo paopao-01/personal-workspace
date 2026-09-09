@@ -798,6 +798,20 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/SelfLevelUpdateRequest' } } }
       responses:
         '200': { description: 已更新, content: { application/json: { schema: { $ref: '#/components/schemas/SkillProfile' } } } }
+  /skills/{skillId}/self-level/history:
+    parameters: [ { $ref: '#/components/parameters/SkillId' } ]
+    get:
+      tags: [SkillsAndEvidence]
+      summary: 查询技能自评等级变更历史
+      description: |
+        只读端点，返回某技能自评等级的追加写历史轨迹。每次 PUT /skills/{skillId}/self-level 成功后追加一行历史，
+        首次自评 fromLevel 为 null（无前值），后续更新 fromLevel 为旧值、toLevel 为新值。按 occurred_at 升序
+        （时间正序趋势，与 GET /audit-logs 的 DESC 最新优先用途不同故方向不同）。技能不存在返回 404；技能存在
+        但从未自评返回 []（只返有记录的条目，不补缺失，与 timeseries 同风格）。只读、不动业务表、响应不含 passphrase。
+        reason 持久化于历史行（nullable）。
+      responses:
+        '200': { description: 自评历史, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SelfLevelHistoryEntry' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /projects:
     get:
       tags: [SkillsAndEvidence]
@@ -2796,7 +2810,17 @@ components:
       required: [selfLevel]
       properties:
         selfLevel: { type: integer, minimum: 0, maximum: 5 }
-        reason: { type: string, maxLength: 1000 }
+        reason: { type: string, maxLength: 1000, description: 用户填写理由，持久化于自评历史行（nullable，首次或无理由时为 null） }
+    SelfLevelHistoryEntry:
+      type: object
+      required: [id, fromLevel, toLevel, occurredAt]
+      description: 自评等级变更历史条目（追加写，不更新不删除）；fromLevel 为 null 表示首次自评无前值。
+      properties:
+        id: { type: string, format: uuid }
+        fromLevel: { type: integer, minimum: 0, maximum: 5, nullable: true, description: 变更前等级；首次自评为 null }
+        toLevel: { type: integer, minimum: 0, maximum: 5 }
+        reason: { type: string, nullable: true, maxLength: 1000 }
+        occurredAt: { type: string, format: date-time, description: UTC instant }
     SkillCreateRequest:
       type: object
       required: [name]

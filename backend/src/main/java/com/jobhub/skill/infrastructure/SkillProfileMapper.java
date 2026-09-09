@@ -1,5 +1,6 @@
 package com.jobhub.skill.infrastructure;
 
+import com.jobhub.skill.domain.SelfLevelHistoryEntry;
 import com.jobhub.skill.domain.SkillProfile;
 import org.apache.ibatis.annotations.*;
 import java.util.List;
@@ -60,4 +61,23 @@ public interface SkillProfileMapper {
 		""")
 	int insertIfAbsent(@Param("id") String id, @Param("userId") String userId, @Param("skillId") String skillId,
 			@Param("selfLevel") int selfLevel, @Param("now") String now);
+
+	@Insert("""
+			INSERT INTO user_skill_self_level_history (id, user_skill_id, from_level, to_level, reason, idempotency_key, occurred_at)
+			VALUES (#{id}, #{userSkillId}, #{fromLevel}, #{toLevel}, #{reason}, #{idempotencyKey}, #{occurredAt})
+			""")
+	int insertHistory(@Param("id") String id, @Param("userSkillId") String userSkillId,
+			@Param("fromLevel") Integer fromLevel, @Param("toLevel") int toLevel,
+			@Param("reason") String reason, @Param("idempotencyKey") String idempotencyKey,
+			@Param("occurredAt") String occurredAt);
+
+	@Select("""
+			SELECT h.id AS id, h.from_level AS fromLevel, h.to_level AS toLevel,
+			       h.reason AS reason, h.occurred_at AS occurredAt
+			FROM user_skill_self_level_history h
+			JOIN user_skill us ON us.id = h.user_skill_id
+			WHERE us.skill_id = #{skillId}
+			ORDER BY h.occurred_at ASC, h.id ASC
+			""")
+	List<SelfLevelHistoryEntry> selectHistoryBySkillId(@Param("skillId") String skillId);
 }
