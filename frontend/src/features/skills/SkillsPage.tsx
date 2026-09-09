@@ -5,7 +5,7 @@ import {
   useSelfLevelHistory,
 } from '@/api/skills/useSkillQueries'
 import { useCreateSkill, useUpdateSelfLevel } from '@/api/skills/useSkillMutations'
-import type { SkillProfile } from '@/api/skills/skillApi'
+import type { SkillProfile, SelfLevelHistoryEntry } from '@/api/skills/skillApi'
 import { pushToast } from '@/components/feedback/toastStore'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -19,6 +19,87 @@ import {
 } from '@/features/skills/skillLabels'
 
 const LEVEL_OPTIONS = [0, 1, 2, 3, 4, 5]
+
+// 轻量 sparkline 折线图：以每条历史行 toLevel（0–5）按 occurredAt 升序为数据点，
+// 内联 SVG 手写（无图表库依赖），Y 轴固定 0–5，每个数据点 hover 显示「等级 N · 时间」。
+// 折线是可视化补充，不替代下方轨迹文本与表格，不输出趋势结论/归因。
+function SelfLevelTrendChart({ entries }: { entries: SelfLevelHistoryEntry[] }) {
+  // 数据点 = 每条历史行的 toLevel，按 occurredAt 升序（useSelfLevelHistory 已返回升序）
+  const points = entries.map((e) => e.toLevel)
+  if (points.length === 0) return null
+
+  const W = 220
+  const H = 80
+  const padX = 8
+  const padTop = 8
+  const padBottom = 12
+  const plotW = W - padX * 2
+  const plotH = H - padTop - padBottom
+  const maxY = 5 // 等级域 0–5
+
+  const xFor = (i: number) =>
+    points.length === 1 ? padX + plotW / 2 : padX + (plotW * i) / (points.length - 1)
+  const yFor = (level: number) => padTop + plotH * (1 - level / maxY)
+
+  const coords = points.map((lvl, i) => ({ x: xFor(i), y: yFor(lvl), lvl }))
+
+  const areaPath =
+    coords.length > 0
+      ? `M${coords[0].x.toFixed(1)},${(padTop + plotH).toFixed(1)} ` +
+        coords.map((c) => `L${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ') +
+        `L${coords[coords.length - 1].x.toFixed(1)},${(padTop + plotH).toFixed(1)} Z`
+      : ''
+
+  return (
+    <svg
+      role="img"
+      aria-label="自评等级趋势折线图"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: '100%', maxWidth: W, height: H, display: 'block' }}
+    >
+      {/* 基线（等级 0）与上限（等级 5）两条参考线 */}
+      <line
+        x1={padX}
+        y1={padTop + plotH}
+        x2={W - padX}
+        y2={padTop + plotH}
+        stroke="var(--border)"
+        strokeWidth={1}
+      />
+      <line
+        x1={padX}
+        y1={padTop}
+        x2={W - padX}
+        y2={padTop}
+        stroke="var(--border)"
+        strokeWidth={1}
+        strokeDasharray="3 3"
+      />
+      {areaPath && <path d={areaPath} fill="var(--primary-soft)" opacity={0.5} />}
+      <polyline
+        points={coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ')}
+        fill="none"
+        stroke="var(--primary)"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      {coords.map((c, i) => (
+        <circle
+          key={entries[i].id}
+          cx={c.x}
+          cy={c.y}
+          r={3}
+          fill="var(--primary)"
+          stroke="var(--surface)"
+          strokeWidth={1}
+        >
+          <title>{`等级 ${c.lvl} · ${formatUtc(entries[i].occurredAt)}`}</title>
+        </circle>
+      ))}
+    </svg>
+  )
+}
 
 function SelfLevelHistorySection({ skill }: { skill: SkillProfile }) {
   const [open, setOpen] = useState(false)
@@ -60,6 +141,7 @@ function SelfLevelHistorySection({ skill }: { skill: SkillProfile }) {
         <EmptyState icon="📜" text="暂无自评历史" />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <SelfLevelTrendChart entries={entries} />
           <div className="requirement-meta" style={{ fontSize: 13 }}>
             等级轨迹：
             {entries.map((entry, index) => {
