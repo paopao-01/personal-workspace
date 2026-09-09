@@ -1597,4 +1597,75 @@ test('AT-60 audit log hasFreedBytes filter (only freed_bytes IS NOT NULL rows)',
   })
 })
 
+/**
+ * AT-61 freedBytes 数值范围过滤参数：freedBytesMin/freedBytesMax 闭区间按 freed_bytes 数值过滤，
+ * NULL 行自动排除（SQL 与 NULL 数值比较求值为 false），min>max 空结果不报 400，
+ * 导出端点同步过滤，负值 400 fail fast；UI「释放字节下界/上界」输入框可见。
+ * 造数同 AT-49/AT-60：创建备份 + 触发 orphans/clean（全量跑时删残留孤儿写 freed_bytes 非 null 审计，
+ * 单跑时可能删 0 个无审计，用条件断言容忍空 DB，强语义由后端 AT-61 集成测试覆盖）。
+ */
+test('AT-61 audit log freedBytesMin/freedBytesMax range filter', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at61-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
 
+  // 触发一次孤儿清理（全量跑时删残留孤儿写 freed_bytes 非 null 的 BACKUP_ORPHAN_CLEANED 审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // freedBytesMin=0 → 只返回 freed_bytes >= 0 的记录（即 freed_bytes 非 null 的孤儿清理行，NULL 行自动排除）
+  const minRes = await request.get('/api/audit-logs?freedBytesMin=0&page=1&pageSize=20')
+  expect(minRes.status()).toBe(200)
+  const minBody = await minRes.json()
+  expect(Array.isArray(minBody.items)).toBe(true)
+  for (const item of minBody.items as Record<string, unknown>[]) {
+    expect(item.freedBytes).not.toBeNull()
+    expect(item.action).toBe('BACKUP_ORPHAN_CLEANED')
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // freedBytesMin > freedBytesMax → 空结果不报 400（合法但无匹配，与 from > to 先例一致）
+  const emptyRes = await request.get('/api/audit-logs?freedBytesMin=999999&freedBytesMax=0')
+  expect(emptyRes.status()).toBe(200)
+  const emptyBody = await emptyRes.json()
+  expect(emptyBody.total).toBe(0)
+
+  // 负值 → 400 fail fast（minimum: 0 校验）
+  const badRes = await request.get('/api/audit-logs?freedBytesMin=-1')
+  expect(badRes.status()).toBe(400)
+
+  // 非整数 → 400 fail fast（Long 类型绑定校验）
+  const badFmt = await request.get('/api/audit-logs?freedBytesMin=abc')
+  expect(badFmt.status()).toBe(400)
+
+  // 导出端点同步范围过滤：freedBytesMin=0 的 JSON 只含 freedBytes 非 null 元素
+  const exportRes = await request.get('/api/audit-logs/export?format=json&freedBytesMin=0')
+  expect(exportRes.status()).toBe(200)
+  const exportBody = await exportRes.json()
+  expect(Array.isArray(exportBody)).toBe(true)
+  for (const item of exportBody as Record<string, unknown>[]) {
+    expect(item.freedBytes).not.toBeNull()
+    expect(item).not.toHaveProperty('passphrase')
+  }
+
+  // 导出 freedBytesMin 负值 → 写流前 fail fast 400
+  const badExport = await request.get('/api/audit-logs/export?freedBytesMin=-1&format=csv')
+  expect(badExport.status()).toBe(400)
+
+  // UI：设置页审计日志区块「释放字节下界/上界」输入框可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+  await expect(page.getByRole('spinbutton', { name: '按释放字节下界过滤（含边界）' })).toBeVisible()
+  await expect(page.getByRole('spinbutton', { name: '按释放字节上界过滤（含边界）' })).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})

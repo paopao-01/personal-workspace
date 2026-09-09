@@ -11,6 +11,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
@@ -62,6 +63,17 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR, "Missing required parameter: " + ex.getParameterName(),
 						traceId, fieldErrors));
+	}
+
+	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
+	public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+		String traceId = newTraceId();
+		String name = ex.getParameter() != null ? ex.getParameter().getParameterName() : "parameter";
+		log.warn("Type mismatch traceId={} param={} value={}", traceId, name, ex.getValue());
+		List<FieldError> fieldErrors = List.of(new FieldError(name, "must be a valid " + ex.getRequiredType().getSimpleName()));
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(ErrorCode.VALIDATION_ERROR,
+						name + " must be a valid " + ex.getRequiredType().getSimpleName(), traceId, fieldErrors));
 	}
 
 	@ExceptionHandler(ConstraintViolationException.class)

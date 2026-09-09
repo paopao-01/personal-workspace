@@ -939,4 +939,168 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		assertThat(exportAuditLogs("?hasFreedBytes=true&format=xml").getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
 	}
+
+	// ==================== AT-61 freedBytes 数值范围过滤参数（freedBytesMin/freedBytesMax 闭区间，NULL 行自动排除） ====================
+
+	/** 造 3 条 BACKUP_ORPHAN_CLEANED（freed_bytes=512/1024/2048）+ 1 条 BACKUP_DELETED（null）+ 1 条 REQUIREMENT_MERGED（null）。
+	 *  occurred_at 递增使 DESC 排序可预测（i 越大越新），freed_bytes 各异使范围过滤可区分。 */
+	private void seedFreedBytesRangeRows() {
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 512L,
+				"2026-09-07T10:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 1024L,
+				"2026-09-07T11:00:00Z");
+		insertOrphanAuditRow(UUID.randomUUID().toString(), "Orphan .enc file removed.", 2048L,
+				"2026-09-07T12:00:00Z");
+		insertAuditRow("BACKUP_DELETED", "BACKUP_RECORD", UUID.randomUUID().toString(),
+				"Backup record deleted.", "2026-09-07T13:00:00Z");
+		insertAuditRow("REQUIREMENT_MERGED", "JOB_REQUIREMENT", UUID.randomUUID().toString(),
+				"Merged into requirement.", "2026-09-07T14:00:00Z");
+	}
+
+	@Test
+	void AT61_freedBytesMinFiltersByLowerBoundExcludingNull() {
+		seedFreedBytesRangeRows();
+		// freedBytesMin=1024 → 只含 freed_bytes >= 1024 的记录（1024 与 2048，512 被排除）
+		String body = listAuditLogs("?freedBytesMin=1024&page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<Long> freedBytes = JsonProbe.collectArrayField(body, "items", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(1024L, 2048L);
+		// 不含 freed_bytes 为 null 的 BACKUP_DELETED 与 REQUIREMENT_MERGED（SQL 与 NULL 数值比较求值为 false）
+		List<String> actions = JsonProbe.collectArrayField(body, "items", "action");
+		assertThat(actions).doesNotContain("BACKUP_DELETED", "REQUIREMENT_MERGED");
+	}
+
+	@Test
+	void AT61_freedBytesMaxFiltersByUpperBoundExcludingNull() {
+		seedFreedBytesRangeRows();
+		// freedBytesMax=1024 → 只含 freed_bytes <= 1024 的记录（512 与 1024，2048 被排除）
+		String body = listAuditLogs("?freedBytesMax=1024").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<Long> freedBytes = JsonProbe.collectArrayField(body, "items", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(512L, 1024L);
+		// 不含 freed_bytes 为 null 的记录
+		List<String> actions = JsonProbe.collectArrayField(body, "items", "action");
+		assertThat(actions).doesNotContain("BACKUP_DELETED", "REQUIREMENT_MERGED");
+	}
+
+	@Test
+	void AT61_freedBytesMinAndMaxRangeFiltersClosedInterval() {
+		seedFreedBytesRangeRows();
+		// min=512 & max=1024 → 闭区间 [512, 1024]，即 512 与 1024 两条
+		String body = listAuditLogs("?freedBytesMin=512&freedBytesMax=1024").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<Long> freedBytes = JsonProbe.collectArrayField(body, "items", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(512L, 1024L);
+	}
+
+	@Test
+	void AT61_freedBytesMinGreaterThanMaxReturnsEmptyNot400() {
+		seedFreedBytesRangeRows();
+		// min=2048 > max=512 → 空结果（合法但无匹配，不报 400，与 from > to 先例一致）
+		String body = listAuditLogs("?freedBytesMin=2048&freedBytesMax=512").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		assertThat(JsonProbe.arraySize(body, "items")).isZero();
+	}
+
+	@Test
+	void AT61_negativeFreedBytesMinReturns400() {
+		seedFreedBytesRangeRows();
+		// 负值 fail fast（minimum: 0 校验）
+		assertThat(listAuditLogs("?freedBytesMin=-1").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT61_nonIntegerFreedBytesMinReturns400() {
+		seedFreedBytesRangeRows();
+		// 非整数 fail fast（Long 类型绑定校验）
+		assertThat(listAuditLogs("?freedBytesMin=abc").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT61_freedBytesMinCombinedWithHasFreedBytes() {
+		seedFreedBytesRangeRows();
+		// freedBytesMin=1024 & hasFreedBytes=true → 只含 freed_bytes >= 1024（范围已隐式含 NOT NULL，两者并列不冲突）
+		String body = listAuditLogs("?freedBytesMin=1024&hasFreedBytes=true").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		List<Long> freedBytes = JsonProbe.collectArrayField(body, "items", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(1024L, 2048L);
+	}
+
+	@Test
+	void AT61_freedBytesMinCombinedWithAction() {
+		seedFreedBytesRangeRows();
+		// freedBytesMin=1024 & action=BACKUP_ORPHAN_CLEANED → 全为 BACKUP_ORPHAN_CLEANED 且 freed_bytes >= 1024
+		String body = listAuditLogs("?freedBytesMin=1024&action=BACKUP_ORPHAN_CLEANED").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(2L);
+		assertThat(JsonProbe.collectArrayField(body, "items", "action"))
+				.containsOnly("BACKUP_ORPHAN_CLEANED");
+		List<Long> freedBytes = JsonProbe.collectArrayField(body, "items", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(1024L, 2048L);
+	}
+
+	@Test
+	void AT61_omittedFreedBytesMinAndMaxReturnsAllBackwardCompatible() {
+		seedFreedBytesRangeRows();
+		// 不传 freedBytesMin/freedBytesMax → 缺省=不过滤，返回全部 5 条（向后兼容）
+		String body = listAuditLogs("?page=1&pageSize=20").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isEqualTo(5L);
+	}
+
+	@Test
+	void AT61_freedBytesRangeWithActionBackupDeletedReturnsEmpty() {
+		seedFreedBytesRangeRows();
+		// min=512 & max=1024 & action=BACKUP_DELETED → 空（BACKUP_DELETED 行 freed_bytes 为 null，与范围过滤组合无匹配）
+		String body = listAuditLogs("?freedBytesMin=512&freedBytesMax=1024&action=BACKUP_DELETED").getBody();
+		assertThat(JsonProbe.lng(body, "total")).isZero();
+		assertThat(JsonProbe.arraySize(body, "items")).isZero();
+	}
+
+	@Test
+	void AT61_exportJsonFiltersByFreedBytesMin() {
+		seedFreedBytesRangeRows();
+		// JSON 导出：只含 freedBytes >= 1024 的元素（导出端点同步范围过滤）
+		String json = new String(exportAuditLogs("?format=json&freedBytesMin=1024").getBody(), StandardCharsets.UTF_8);
+		assertThat(JsonProbe.arraySize(json, "")).isEqualTo(2);
+		List<Long> freedBytes = JsonProbe.collectArrayField(json, "", "freedBytes").stream()
+				.map(v -> v == null ? null : Long.valueOf(v.toString())).toList();
+		assertThat(freedBytes).containsExactlyInAnyOrder(1024L, 2048L);
+	}
+
+	@Test
+	void AT61_exportCsvFiltersByFreedBytesRange() {
+		seedFreedBytesRangeRows();
+		// CSV 导出：数据行只含 freedBytes 列在 [512, 1024] 的记录
+		String csv = csvText(exportAuditLogs("?format=csv&freedBytesMin=512&freedBytesMax=1024").getBody());
+		assertThat(csv).startsWith("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+		long dataRows = java.util.Arrays.stream(csv.replace("\r\n", "\n").split("\n", -1))
+				.filter(l -> !l.isEmpty() && !l.startsWith("id,")).count();
+		assertThat(dataRows).isEqualTo(2);
+		// 不含 2048 的孤儿清理行与 freed_bytes 为 null 的非孤儿清理行
+		assertThat(csv).doesNotContain("2048").doesNotContain("BACKUP_DELETED").doesNotContain("REQUIREMENT_MERGED");
+	}
+
+	@Test
+	void AT61_exportRejectsNegativeFreedBytesMinBeforeWritingBody() {
+		seedFreedBytesRangeRows();
+		// freedBytesMin 负值 → 写流前 fail fast 400，不开始写响应体
+		assertThat(exportAuditLogs("?freedBytesMin=-1&format=csv").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT61_exportMinGreaterThanMaxReturnsEmptyNot400() {
+		seedFreedBytesRangeRows();
+		// min > max → 空结果不报 400（JSON 为 []，CSV 仅表头）
+		String json = new String(exportAuditLogs("?freedBytesMin=2048&freedBytesMax=512&format=json").getBody(),
+				StandardCharsets.UTF_8);
+		assertThat(json).isEqualTo("[]");
+		byte[] csvBody = exportAuditLogs("?freedBytesMin=2048&freedBytesMax=512&format=csv").getBody();
+		assertThat(csvText(csvBody).trim())
+				.isEqualTo("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+	}
 }

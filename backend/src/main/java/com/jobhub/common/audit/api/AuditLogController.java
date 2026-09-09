@@ -40,12 +40,17 @@ public class AuditLogController {
 	}
 
 	/**
-	 * 分页查询全量审计日志（只读）。action、resourceType、from、to、hasFreedBytes 均可选，空/hasFreedBytes=false
-	 * 时不过滤返回全量，可单独或任意组合。action/resourceType 按字符串精确匹配；from（起始含，
+	 * 分页查询全量审计日志（只读）。action、resourceType、from、to、hasFreedBytes、freedBytesMin、freedBytesMax 均可选，
+	 * 空/hasFreedBytes=false/缺省时不过滤返回全量，可单独或任意组合。action/resourceType 按字符串精确匹配；from（起始含，
 	 * {@code occurred_at >= from}）与 to（结束含，{@code occurred_at <= to}）按 occurred_at 时间范围过滤，
 	 * 均为 ISO-8601 UTC 字符串，非法格式返回 400；hasFreedBytes=true 只返回 freed_bytes IS NOT NULL 的记录
-	 * （孤儿清理行释放字节数有值的，排除 V27 前历史 NULL 行）。按 occurred_at DESC 排序；V26 补 occurred_at
-	 * 单列索引、V28 补 action+occurred_at 复合索引（action 非空走复合索引、action 为空退回单列索引）。
+	 * （孤儿清理行释放字节数有值的，排除 V27 前历史 NULL 行）；freedBytesMin（含边界 {@code freed_bytes >= freedBytesMin}）
+	 * 与 freedBytesMax（含边界 {@code freed_bytes <= freedBytesMax}）按释放字节数范围过滤（非负整数闭区间，SQL 中
+	 * freed_bytes 与数值比较对 NULL 行求值为 NULL→false 自动排除非孤儿清理行，隐式含 NOT NULL 语义，无需另加
+	 * hasFreedBytes；hasFreedBytes 保持独立不与范围参数耦合）；freedBytesMin>freedBytesMax 返回空结果不报 400（与
+	 * from>to 先例一致）；freedBytesMin/freedBytesMax 为负数或非整数返回 400（{@code @Min(0)} + Long 类型绑定校验）。
+	 * 按 occurred_at DESC 排序；V26 补 occurred_at 单列索引、V28 补 action+occurred_at 复合索引（action 非空走复合索引、
+	 * action 为空退回单列索引）；freed_bytes 非索引列，带范围过滤时走索引定位后回表过滤或全表扫描（本地量小可接受）。
 	 */
 	@GetMapping("/audit-logs")
 	public PageAuditLogEntryResponse listAuditLogs(
@@ -55,20 +60,24 @@ public class AuditLogController {
 			@RequestParam(required = false) String resourceType,
 			@RequestParam(required = false) String from,
 			@RequestParam(required = false) String to,
-			@RequestParam(defaultValue = "false") boolean hasFreedBytes) {
+			@RequestParam(defaultValue = "false") boolean hasFreedBytes,
+			@RequestParam(required = false) @Min(0) Long freedBytesMin,
+			@RequestParam(required = false) @Min(0) Long freedBytesMax) {
 		String validatedFrom = parseIsoUtc(from, "from");
 		String validatedTo = parseIsoUtc(to, "to");
-		long total = auditLogMapper.count(action, resourceType, validatedFrom, validatedTo, hasFreedBytes);
+		long total = auditLogMapper.count(action, resourceType, validatedFrom, validatedTo, hasFreedBytes,
+				freedBytesMin, freedBytesMax);
 		int offset = (page - 1) * pageSize;
 		return PageAuditLogEntryResponse.from(
-				auditLogMapper.selectPage(action, resourceType, validatedFrom, validatedTo, hasFreedBytes, pageSize, offset),
+				auditLogMapper.selectPage(action, resourceType, validatedFrom, validatedTo, hasFreedBytes,
+						freedBytesMin, freedBytesMax, pageSize, offset),
 				total, page, pageSize);
 	}
 
 	/**
 	 * 导出全量审计日志为 CSV 或 JSON 文件（只读，流式下载）。过滤参数与 {@link #listAuditLogs} 完全一致
-	 * （action/resourceType/from/to/hasFreedBytes，空/hasFreedBytes=false=不过滤导出全量，可单独或任意组合，
-	 * 按 occurred_at DESC 排序）；{@code format} 选 {@code csv} 或 {@code json}（默认 {@code json}）。
+	 * （action/resourceType/from/to/hasFreedBytes/freedBytesMin/freedBytesMax，空/hasFreedBytes=false/缺省=不过滤导出
+	 * 全量，可单独或任意组合，按 occurred_at DESC 排序）；{@code format} 选 {@code csv} 或 {@code json}（默认 {@code json}）。
 	 *
 	 * <p>流式分批生成、内存有界：用 {@link StreamingResponseBody} 按 {@link #EXPORT_BATCH_SIZE}（500）分批调
 	 * {@link AuditLogMapper#selectPage selectPage}（offset 递增）逐批写入响应输出流，用户仍一次性下载完整 CSV/JSON
@@ -77,9 +86,11 @@ public class AuditLogController {
 	 * 的持久化导出不同——审计导出是只读即时下载）。本地单用户审计量小，不设行数上限。响应不含 passphrase，
 	 * 省略恒 null 的快照字段。
 	 *
-	 * <p>{@code from}/{@code to}/{@code format} 校验在写流前 fail fast（返回 400 前不开始写响应体）；
-	 * {@code from}/{@code to} 非法格式返回 400；{@code from > to} 返回空结果（CSV 仅表头、JSON 为
-	 * {@code []}，不报 400）；{@code format} 非 {@code csv}/{@code json} 返回 400。
+	 * <p>{@code from}/{@code to}/{@code format}/{@code freedBytesMin}/{@code freedBytesMax} 校验在写流前 fail fast
+	 * （返回 400 前不开始写响应体）；{@code from}/{@code to} 非法格式返回 400；{@code from > to} 返回空结果
+	 * （CSV 仅表头、JSON 为 {@code []}，不报 400）；{@code freedBytesMin > freedBytesMax} 返回空结果（不报 400，
+	 * 与 {@code from > to} 一致）；{@code freedBytesMin}/{@code freedBytesMax} 为负数或非整数返回 400；
+	 * {@code format} 非 {@code csv}/{@code json} 返回 400。
 	 */
 	@GetMapping("/audit-logs/export")
 	public ResponseEntity<StreamingResponseBody> exportAuditLogs(
@@ -88,6 +99,8 @@ public class AuditLogController {
 			@RequestParam(required = false) String from,
 			@RequestParam(required = false) String to,
 			@RequestParam(defaultValue = "false") boolean hasFreedBytes,
+			@RequestParam(required = false) @Min(0) Long freedBytesMin,
+			@RequestParam(required = false) @Min(0) Long freedBytesMax,
 			@RequestParam(defaultValue = "json") String format) {
 		String validatedFrom = parseIsoUtc(from, "from");
 		String validatedTo = parseIsoUtc(to, "to");
@@ -102,8 +115,8 @@ public class AuditLogController {
 		String stamp = Instant.now().toString().replace(":", "");
 		String filename = "audit-logs-" + stamp + (csv ? ".csv" : ".json");
 		StreamingResponseBody body = csv
-				? out -> streamCsv(out, action, resourceType, validatedFrom, validatedTo, hasFreedBytes)
-				: out -> streamJson(out, action, resourceType, validatedFrom, validatedTo, hasFreedBytes);
+				? out -> streamCsv(out, action, resourceType, validatedFrom, validatedTo, hasFreedBytes, freedBytesMin, freedBytesMax)
+				: out -> streamJson(out, action, resourceType, validatedFrom, validatedTo, hasFreedBytes, freedBytesMin, freedBytesMax);
 		return ResponseEntity.ok()
 				.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename)
 				.contentType(csv ? MediaType.valueOf("text/csv") : MediaType.APPLICATION_JSON)
@@ -114,12 +127,13 @@ public class AuditLogController {
 	static final int EXPORT_BATCH_SIZE = 500;
 
 	private void streamJson(OutputStream out, String action, String resourceType, String from, String to,
-			boolean hasFreedBytes) throws IOException {
+			boolean hasFreedBytes, Long freedBytesMin, Long freedBytesMax) throws IOException {
 		out.write('[');
 		boolean first = true;
 		int offset = 0;
 		while (true) {
-			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, hasFreedBytes, EXPORT_BATCH_SIZE, offset);
+			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, hasFreedBytes,
+					freedBytesMin, freedBytesMax, EXPORT_BATCH_SIZE, offset);
 			if (batch.isEmpty()) {
 				break;
 			}
@@ -148,13 +162,14 @@ public class AuditLogController {
 	}
 
 	private void streamCsv(OutputStream out, String action, String resourceType, String from, String to,
-			boolean hasFreedBytes) throws IOException {
+			boolean hasFreedBytes, Long freedBytesMin, Long freedBytesMax) throws IOException {
 		out.write(UTF8_BOM);
 		out.write(csvRow(CSV_COLUMNS).getBytes(StandardCharsets.UTF_8));
 		out.write(CRLF);
 		int offset = 0;
 		while (true) {
-			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, hasFreedBytes, EXPORT_BATCH_SIZE, offset);
+			List<AuditLogEntry> batch = auditLogMapper.selectPage(action, resourceType, from, to, hasFreedBytes,
+					freedBytesMin, freedBytesMax, EXPORT_BATCH_SIZE, offset);
 			if (batch.isEmpty()) {
 				break;
 			}

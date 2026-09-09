@@ -993,6 +993,43 @@ Then 返回 400 VALIDATION_ERROR（hasFreedBytes 不影响 format 校验，写�
 And 全程 hasFreedBytes 仅作过滤输入不回显到响应，响应 schema 不变（PageAuditLogEntry 不变），不写 audit_log、不动任何业务表
 ```
 
+### AT-61 freedBytes 数值范围过滤参数（GET /audit-logs 与 GET /audit-logs/export 新增 freedBytesMin/freedBytesMax 过滤：非负整数闭区间，NULL 行自动排除，min>max 空结果不报 400，可与 action/resourceType/from/to/hasFreedBytes 组合，缺省不过滤）
+
+```gherkin
+Given audit_log 表存在 3 条 BACKUP_ORPHAN_CLEANED 行（freed_bytes 分别为 512、1024、2048）与 1 条 BACKUP_DELETED 行（freed_bytes 为 null）与 1 条 REQUIREMENT_MERGED 行（freed_bytes 为 null）
+When 用户调用 GET /api/audit-logs?freedBytesMin=1024&page=1&pageSize=20
+Then 返回 200 且 items 只含 freed_bytes >= 1024 的记录（即 1024 与 2048 两条，512 被排除）
+And items 不含 freed_bytes 为 null 的 BACKUP_DELETED 与 REQUIREMENT_MERGED 行（SQL 中 freed_bytes >= 1024 对 NULL 求值为 false，NULL 行自动排除，隐式含 NOT NULL 语义，无需另加 hasFreedBytes）
+When 用户调用 GET /api/audit-logs?freedBytesMax=1024
+Then 返回 200 且 items 只含 freed_bytes <= 1024 的记录（即 512 与 1024 两条，2048 被排除）
+And items 不含 freed_bytes 为 null 的记录（NULL 行自动排除）
+When 用户调用 GET /api/audit-logs?freedBytesMin=512&freedBytesMax=1024
+Then 返回 200 且 items 只含 freed_bytes 在 [512, 1024] 闭区间的记录（即 512 与 1024 两条）
+When 用户调用 GET /api/audit-logs?freedBytesMin=2048&freedBytesMax=512
+Then 返回 200 且 items 为空且 total=0（min > max 返回空结果，合法但无匹配，不报 400，与 from > to 先例一致）
+When 用户调用 GET /api/audit-logs?freedBytesMin=-1
+Then 返回 400 VALIDATION_ERROR（负值 fail fast，minimum: 0 校验）
+When 用户调用 GET /api/audit-logs?freedBytesMin=abc
+Then 返回 400 VALIDATION_ERROR（非整数 fail fast，Long 类型绑定校验）
+When 用户调用 GET /api/audit-logs?freedBytesMin=1024&hasFreedBytes=true
+Then 返回 200 且 items 只含 freed_bytes >= 1024 的记录（freedBytesMin 与 hasFreedBytes 正交可组合，范围参数已隐式含 NOT NULL，两者并列不冲突）
+When 用户调用 GET /api/audit-logs?freedBytesMin=1024&action=BACKUP_ORPHAN_CLEANED
+Then 返回 200 且 items 全为 BACKUP_ORPHAN_CLEANED 且 freed_bytes >= 1024（freedBytesMin 与 action 组合）
+When 用户调用 GET /api/audit-logs（不传 freedBytesMin/freedBytesMax）
+Then 返回 200 且 items 含全部 5 条记录（缺省=不过滤，向后兼容）
+When 用户调用 GET /api/audit-logs?freedBytesMin=512&freedBytesMax=1024&action=BACKUP_DELETED
+Then 返回 200 且 items 为空（BACKUP_DELETED 行 freed_bytes 为 null，与范围过滤组合无匹配）
+When 用户调用 GET /api/audit-logs/export?format=json&freedBytesMin=1024
+Then 返回 200 且 JSON 数组只含 freedBytes >= 1024 的元素（导出端点同步范围过滤）
+When 用户调用 GET /api/audit-logs/export?format=csv&freedBytesMin=512&freedBytesMax=1024
+Then 返回 200 且 CSV 数据行只含 freedBytes 列在 [512, 1024] 的记录（导出端点同步范围过滤）
+When 用户调用 GET /api/audit-logs/export?freedBytesMin=-1&format=csv
+Then 返回 400 VALIDATION_ERROR（freedBytesMin 负值写流前 fail fast，不开始写响应体）
+When 用户调用 GET /api/audit-logs/export?freedBytesMin=2048&freedBytesMax=512&format=json
+Then 返回 200 且 JSON 为 []（min > max 空结果不报 400，CSV 仅表头）
+And 全程 freedBytesMin/freedBytesMax 仅作过滤输入不回显到响应，响应 schema 不变（PageAuditLogEntry 不变），不写 audit_log、不动任何业务表，freed_bytes 非索引列走索引定位后回表过滤或全表扫描（本地量小可接受）
+```
+
 ### AT-56 批量密钥轮换（POST /backups/rotate-keys 逐条就地重加密：同一旧口令解密 → 同一新口令重新加密多个备份，逐条独立事务，部分成功不阻塞其他）
 
 ```gherkin
@@ -1082,6 +1119,6 @@ And 全程后端不写文件系统（无 data/exports 下审计导出文件残�
 
 ## 8. 发布门槛
 
-- AT-01 至 AT-60 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-61 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
