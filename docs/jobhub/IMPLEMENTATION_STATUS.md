@@ -1,5 +1,35 @@
 # JobHub 实现进度与动态交接
 
+### 窗口 2026-09-10-1
+
+- 目标：实现「技能自评历史趋势折线图」最小切片——纯前端可视化扩展，在 `SelfLevelHistorySection` 展开区块的等级轨迹文本**上方**新增内联 SVG sparkline 折线图组件 `SelfLevelTrendChart`（无图表库依赖），以每条历史行 `toLevel`（0–5）按 `occurredAt` 升序为数据点连成折线，首次自评 `fromLevel=null` 也以 `toLevel` 作为一个点，Y 轴固定 0–5（等级域），X 轴时间正序不标具体日期，每个数据点 hover 显示「等级 N · <时间>」；折线是可视化补充，不替代下方轨迹文本与表格，不输出趋势结论/能力等级/归因/行动建议。承接 2026-09-09-7「下一窗口只做」候选切片「技能自评历史趋势折线图可视化[当前仅文本轨迹，可引入轻量 sparkline]」（经用户从 4 候选中拍板方向为「自评历史趋势折线图」）。当前自评历史区块只有文本轨迹 span（— → 3 / 5 → 5 / 5）与时间/from→to/reason 表格，缺直观的等级涨跌可视化——本切片把文本轨迹升级为内联 SVG 折线图，无需新端点/迁移/表（复用既有 `GET /skills/{skillId}/self-level/history` 数据）。
+- 状态：**DONE**。
+- 已完成：
+  - 设计澄清（bounded 路径 + brainstorming）：bounded 切片经用户拍板——(1) 切片方向为「自评历史趋势折线图」（从 4 候选[自评历史趋势折线图 / 自评历史按时间范围过滤 / 任务完成证据批量挂载端点 / 任务列表 evidenceRefs N+1 优化]拍板，折线图是上一切片 AT-66 文本轨迹的自然延伸，用户价值直观；时间范围过滤改动小但价值有限、批量挂载端点边际便利、N+1 优化纯性能本地量小均未选）；(2) **不引入图表库**（recharts/d3），内联 SVG 手写（与项目零图表库依赖惯例一致，上一切片交接明示「无图表库依赖，用轻量文本轨迹，留后续切片如需」，本切片即兑现）；(3) 数据点 = 每条历史行 `toLevel`（fromLevel 是「从哪来」与前一行的 toLevel 重复，故不作为独立点），首次自评 fromLevel=null 也以 toLevel 作为一个点；(4) 折线放在轨迹文本**上方**，保留既有轨迹文本与表格（折线是可视化补充不替代精确值）；(5) Y 轴固定 0–5（等级域），X 轴时间正序不标具体日期（保持 sparkline 紧凑，靠 hover `<title>` + 下方表格查精确值，避免信息重复）；(6) 不输出趋势结论/能力等级/归因/行动建议（与全仓「不推断」方针一致）。
+  - 规格（按权威顺序）：`01-page-spec.md P10` 自评历史区块条在「等级变更轨迹文本与列表」前补「在轨迹文本上方提供轻量 sparkline 折线图（内联 SVG，无图表库依赖）：以每条历史行的 `toLevel`（0–5）按 `occurredAt` 升序为数据点连成折线，首次自评 `fromLevel=null` 也以 `toLevel` 作为一个点，Y 轴固定 0–5，X 轴时间正序不标具体日期，每个数据点 hover 显示「等级 N · <时间>」；折线是可视化补充，不替代下方轨迹文本与表格，不输出趋势结论/能力等级/归因或行动建议。从未自评显示「暂无自评历史」（折线不渲染）」。`05-acceptance-test-cases.md` 新增 AT-67（展开区块渲染 SVG sparkline + 数据点数=历史条目数 + 每点取 toLevel 升序 + hover title 含等级与时间 + 轨迹文本与表格仍存在 + 折线 Y 轴 0–5 不标日期 + 不输出趋势结论 + 单点不报错 + 空历史不渲染折线 + PUT 后实时刷新 + 无新端点/迁移不改后端不改三维度独立性不改 PUT 响应 schema）+ 发布门槛升 AT-67（AT-01~AT-67 全通过）。`jobhub-prd.md §10` 追加「技能自评历史趋势折线图已实现最小切片（AT-67，纯前端可视化扩展，无新端点/迁移/表）」标注。（本切片无 OpenAPI/状态机/数据库变更——复用既有 GET /skills/{skillId}/self-level/history 端点数据，纯前端 SVG 可视化，非状态转换。）
+  - 前端 `src/features/skills/SkillsPage.tsx` 新增 `SelfLevelTrendChart` 组件（内联 SVG，`role="img"` + `aria-label="自评等级趋势折线图"`，viewBox 220×80，padX=8/padTop=8/padBottom=12，plotW/plotH 派生，maxY=5；`xFor(i)` 单点居中/多点均匀分布，`yFor(level)` 按 1-level/maxY 映射；coords 数组；areaPath 用 `--primary-soft` opacity 0.5 填充区域；`<polyline>` points 用 `--primary` strokeWidth 2 描边；每个数据点 `<circle>` r=3 + `<title>` 含「等级 N · formatUtc(occurredAt)」；基线 0 与上限 5 两条参考线 `--border`；空数组返回 null 不渲染）；`SelfLevelHistorySection` 非空分支在「等级轨迹：」文本上方插入 `<SelfLevelTrendChart entries={entries} />`；import `SelfLevelHistoryEntry` 类型。
+  - E2E `p1-skills-profile.spec.ts` 既有 AT-66 末尾追加 AT-67（展开自评历史区块→SVG `[aria-label="自评等级趋势折线图"]` 可见→`circle` 数据点数=2→第一点 title 以「等级 3 · 」开头→第二点 title 以「等级 5 · 」开头→下方 `table` 可见→「等级轨迹：」文本可见）。
+- 未完成：不引入图表库（内联 SVG 手写，与项目零图表库依赖惯例一致）；不加新端点/迁移/表（复用既有 GET /skills/{skillId}/self-level/history，零 OpenAPI 变更，不需 gen-types）；不做 Y 轴刻度标签/网格线（极简 sparkline，靠 hover + 下方表格查精确值，避免信息重复）；不输出趋势结论/能力等级/归因/行动建议（与全仓「不推断」方针一致）；不改后端任何行为；不改三维度独立性；不改 PUT self-level 响应 schema；不做自评历史按时间范围过滤（留后续切片如需）；不做折线图轴时间标签（保持紧凑）；不做空历史占位折线（空历史显示「暂无自评历史」不渲染 SVG）。
+- 单窗口边界：本切片 6 文件（规格 3[page-spec/AT/prd] + 状态 1[本文件] + 前端 1[SkillsPage] + E2E 1[扩 p1-skills-profile]），在 MASTER_PROMPT ≤10 文件边界内。因纯前端可视化只需新增 1 个 SVG 组件 + 嵌入 + page-spec/AT/prd 三处语义 + E2E 扩既有用例，无后端/迁移/端点/OpenAPI/gen-types 变更，是迄今最小切片之一。
+- 修改文件：
+  - 规格：`docs/jobhub/01-page-spec.md`（P10 自评历史区块补 sparkline 折线图语义）、`docs/jobhub/05-acceptance-test-cases.md`（新增 AT-67 + 发布门槛升 AT-67）、`jobhub-prd.md`（§10 追加 AT-67 标注）、本文件。
+  - 前端：`src/features/skills/SkillsPage.tsx`（新增 `SelfLevelTrendChart` 内联 SVG 组件 + 嵌入 `SelfLevelHistorySection` + import `SelfLevelHistoryEntry`）、`e2e/p1-skills-profile.spec.ts`（扩既有用例加 AT-67）。
+- 已运行验证：
+  - `cd frontend && npm run typecheck`：通过（无错误）。
+  - `cd frontend && npm run lint`：通过（oxlint 无告警）。
+  - `cd frontend && npm run build`：通过（仅有既有 chunk-size 提示）。
+  - `cd frontend && npx playwright test e2e/p1-skills-profile.spec.ts --reporter=dot --workers=1`：1 passed（34.9s，含新增 AT-67 断言）。
+  - `cd frontend && npx playwright test --reporter=dot --workers=1`：56 passed（1.7m，全量回归全绿，含新增 AT-67）。
+  - 后端无改动，不跑后端测试（无 OpenAPI/迁移/枚举/状态机变更，纯前端可视化切片）。
+- 验证结果：技能自评历史趋势折线图链路（展开自评历史区块→SVG sparkline 折线图可见→数据点数=历史条目数[2]→每点取对应历史行 toLevel 升序[3,5]→hover title 含「等级 N · 时间」→折线下方轨迹文本与表格仍存在→折线是可视化补充不替代精确值→Y 轴固定 0–5 不标日期→不输出趋势结论/能力等级/归因/行动建议→单点不报错→空历史不渲染 SVG→PUT 后 history query invalidate 实时刷新→复用既有 GET /skills/{skillId}/self-level/history 无新端点/迁移/表→不改后端任何行为→不改三维度独立性→不改 PUT self-level 响应 schema）有浏览器级 E2E 覆盖；纯前端切片无 OpenAPI/迁移/状态机/数据库变更（复用 AT-66 已建 history 端点数据）；内联 SVG 手写不引入图表库（与项目零图表库依赖惯例一致）；折线区域用 `--primary-soft`、描边 `--primary`、参考线 `--border`、circle 描边 `--surface`，复用 CSS token 明暗模式自适应。
+- 已知问题：
+  - sparkline X 轴不标具体日期（保持紧凑），精确时间靠 hover `<title>` + 下方表格「时间」列查（避免信息重复）；Y 轴不标刻度（等级 0–5 域固定，靠 hover 查精确值）。
+  - 数据点 `<circle>` 的 `<title>` 在 SVG 内（非 HTML title 属性），Playwright 以 `locator('title')` 断言其文本（SVG `<title>` 元素）。
+  - 单数据点时 `xFor` 返回中点（不左对齐），避免单点贴边；`points.length === 1` 时 `polyline` points 退化为单点仍渲染一个 circle。
+  - 全量 E2E 仍输出既有 React Router future flag 提示，不影响断言。
+- 下一窗口只做：由用户指定下一个高级趋势最小切片（候选：自评历史按时间范围过滤[from/to query 参数，给 GET history 加 from/to 过滤]、自评历史折线图轴时间标签[给 sparkline X 轴加日期标签]、任务列表回显 evidenceRefs N+1 优化[fetch-join 或批量查询，纯性能本地量小价值有限]、任务完成证据批量挂载端点[逐条已幂等静默可用，边际便利]、其他用户指定切片）；先定义 OpenAPI、状态机、数据库语义、页面路径和验收场景，再开发。（技能自评历史趋势折线图已完成；第三方日历 ICS 订阅已随 V1.0 跨端需求从规格移除，不再作为候选。）
+- 不要重复做：不要重建 SelfLevelTrendChart 内联 SVG 逻辑（已建 viewBox 220×80 + toLevel 数据点 + Y 轴 0–5 + areaPath/polyline/circle + hover title）；不要引入图表库（recharts/d3，与项目零图表库依赖惯例一致，内联 SVG 手写已实现）；不要把折线数据点改成 fromLevel（fromLevel 是「从哪来」与前一行 toLevel 重复，故用 toLevel）；不要去掉既有轨迹文本与表格（折线是可视化补充不替代精确值）；不要给 sparkline 加 Y 轴刻度/网格线（极简靠 hover + 表格查精确值避免信息重复）；不要给折线加 X 轴日期标签（保持紧凑，留后续切片如需）；不要输出趋势结论/能力等级/归因/行动建议（与全仓「不推断」方针一致）；不要加新端点/迁移/表（复用既有 GET history 数据，零 OpenAPI 变更）；不要改后端任何行为；不要改三维度独立性；不要改 PUT self-level 响应 schema；不要做审计创建/恢复/武装、第三方日历 ICS 订阅。
+
 ### 窗口 2026-09-09-7
 
 - 目标：实现「技能自评历史与趋势」最小切片——skill 域扩展，新增 `user_skill_self_level_history` 追加写历史表（V30 迁移，仿 `application_status_log`，`id` PK + `user_skill_id` FK + `from_level` nullable + `to_level` NOT NULL 0–5 + `reason` + `idempotency_key` + `occurred_at`，不 UPDATE/DELETE，不回填 V30 前已发生自评），每次 PUT `/skills/{skillId}/self-level` 成功后追加一行历史（首次自评 `from_level=null` 无前值，后续更新 `from_level=旧值`、`to_level=新值`），新增只读端点 `GET /skills/{skillId}/self-level/history` 按 `occurred_at` 升序返回 `List<SelfLevelHistoryEntry>`（时间正序趋势，区别于 `GET /audit-logs` 的 DESC 最新优先用途），技能不存在 404、技能存在但从未自评返回 `[]`（不补缺失，与 timeseries 同风格）。承接 2026-09-09-6「下一窗口只做」候选切片「技能自评历史与趋势[skill 域扩展，需 V30 建 user_skill_self_level_history 表 + PUT self-level 时写历史 + GET /skills/{skillId}/self-level/history 端点]」（经用户从 3 候选中拍板方向为「技能自评历史与趋势」）。当前 `user_skill.self_level` 是单点快照，每次 PUT 覆盖旧值，无法回答"我这几个月哪些技能在涨/跌"——技能自评无历史轨迹，等级变化不可追溯。本切片把单点快照升级为可追溯的追加写历史。`reason` 字段从「接受但不持久化」升级为「持久化于历史行」（nullable，`SelfLevelUpdateRequest.reason` 规格注释已修订）。幂等由 PUT 端点 `Idempotency-Key` 经全局 `IdempotencyInterceptor` 保证（重放不重复写历史行），`idempotency_key` 列存下用于追溯。不改 PUT 响应 schema（仍返回 `SkillProfile`）、不影响 `user_skill.version` 递增逻辑与三维度独立性（历史只跟踪 `self_level`，不动 `evidence_status`/`interview_performance`）。

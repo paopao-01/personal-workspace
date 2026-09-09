@@ -140,4 +140,18 @@ test('P1 skills profile shows unrated skills and supports self-level updates', a
   // 轨迹 span 存在（— → 3 / 5 → 5 / 5）
   await expect(historyRow.locator('span', { hasText: '— → 3 / 5' })).toBeVisible()
   await expect(historyRow.locator('span', { hasText: '3 / 5 → 5 / 5' })).toBeVisible()
+
+  // AT-67：自评历史趋势折线图——展开区块后渲染内联 SVG sparkline，
+  // 数据点数 = 历史条目数（2），每个点 hover title 含「等级 N · 时间」，
+  // 轨迹文本与表格仍存在（折线是可视化补充）。复用既有 history 数据，无新端点。
+  const trendSvg = historyRow.locator('svg[aria-label="自评等级趋势折线图"]')
+  await expect(trendSvg).toBeVisible()
+  const trendPoints = trendSvg.locator('circle')
+  await expect(trendPoints).toHaveCount(2)
+  // 第一个点 toLevel=3，第二个点 toLevel=5
+  await expect(trendPoints.nth(0).locator('title')).toHaveText(/^等级 3 · /)
+  await expect(trendPoints.nth(1).locator('title')).toHaveText(/^等级 5 · /)
+  // 折线下方轨迹文本与表格仍存在（折线不替代精确值）
+  await expect(historyRow.locator('table')).toBeVisible()
+  await expect(historyRow.getByText('等级轨迹：')).toBeVisible()
 })

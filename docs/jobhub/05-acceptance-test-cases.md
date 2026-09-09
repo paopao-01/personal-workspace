@@ -1263,8 +1263,27 @@ And 全程 history 写入不影响 user_skill.version 的递增逻辑（version 
 And 全程 reason 持久化于历史行（nullable，无理由时为 null）
 ```
 
+### AT-67 技能自评历史趋势折线图（SelfLevelHistorySection 展开区块内联 SVG sparkline，纯前端可视化，无新端点/迁移/表）
+
+```gherkin
+Given 一个已存在技能 skillA 且已有两条自评历史（首次 fromLevel=null→toLevel=3，二次 fromLevel=3→toLevel=5，按 occurredAt 升序）
+When 用户在技能画像行点击「查看自评历史」展开区块
+Then 区块内渲染一个内联 SVG sparkline 折线图
+And 折线数据点数等于历史条目数（2 个点），每个点取对应历史行的 toLevel（3、5），按时间正序排列
+And 每个数据点带 title 提示，hover 显示「等级 N · <该条 occurredAt 本地化时间>」
+And 折线下方仍展示等级轨迹文本（— → 3 / 5 → 5 / 5）与时间/from→to/reason 列表表格（折线是可视化补充，不替代精确值）
+And 折线 Y 轴固定 0–5（等级域），不标具体日期，不输出趋势结论、能力等级、归因或行动建议
+When 技能仅有一次自评（历史条目数为 1）
+Then 折线渲染为单个数据点（不报错）
+When 技能从未自评（历史为空数组 []）
+Then 区块显示「暂无自评历史」，不渲染折线 SVG
+When 用户 PUT 自评更新等级
+Then 折线随 PUT 后 history query invalidate 实时刷新（新增一个数据点）
+And 全程不调用任何新端点（复用既有 GET /skills/{skillId}/self-level/history），不新增表/迁移，不改后端任何行为，不改三维度独立性，不改 PUT self-level 响应 schema
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-66 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-67 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。
