@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 全量审计日志只读查询 REST 接口：分页查询 {@code audit_log} 表，可按 action/resourceType/from/to 过滤。
@@ -125,6 +126,39 @@ public class AuditLogController {
 
 	/** 流式导出每批最多 fetch 500 条，offset 递增直到某批不足 500 条停止（内存只持有一批）。 */
 	static final int EXPORT_BATCH_SIZE = 500;
+
+	/**
+	 * 释放字节数聚合统计（只读）：对 {@code GET /audit-logs} 的全部匹配记录做 {@code COUNT(*)}/
+	 * {@code SUM(freed_bytes)}/{@code COUNT(freed_bytes)} 一条聚合 SQL，返回 {@link FreedBytesSummary}。
+	 * 过滤参数与 {@link #listAuditLogs} 完全一致（action/resourceType/from/to/hasFreedBytes/freedBytesMin/
+	 * freedBytesMax，语义/校验全同）；只读不写、不需确认头/幂等键、不动任何业务表；响应不含 passphrase。
+	 * <p>{@code totalCount}={@code COUNT(*)}（含 NULL 行）；{@code totalFreedBytes}={@code SUM(freed_bytes)}
+	 * （NULL 不计入，COALESCE 兜底 0）；{@code avgFreedBytes}={@code totalFreedBytes/COUNT(freed_bytes)}
+	 * （分母为非空行数，避免 NULL 行稀释均值；分母 0 兜底 0 不抛除零异常）。空匹配/全 NULL/空表均 0。
+	 */
+	@GetMapping("/audit-logs/freed-bytes-summary")
+	public FreedBytesSummary freedBytesSummary(
+			@RequestParam(required = false) String action,
+			@RequestParam(required = false) String resourceType,
+			@RequestParam(required = false) String from,
+			@RequestParam(required = false) String to,
+			@RequestParam(defaultValue = "false") boolean hasFreedBytes,
+			@RequestParam(required = false) @Min(0) Long freedBytesMin,
+			@RequestParam(required = false) @Min(0) Long freedBytesMax) {
+		String validatedFrom = parseIsoUtc(from, "from");
+		String validatedTo = parseIsoUtc(to, "to");
+		Map<String, Object> row = auditLogMapper.selectFreedBytesSummary(action, resourceType,
+				validatedFrom, validatedTo, hasFreedBytes, freedBytesMin, freedBytesMax);
+		long totalCount = ((Number) row.get("totalCount")).longValue();
+		long totalFreedBytes = ((Number) row.get("totalFreedBytes")).longValue();
+		long nonNullCount = ((Number) row.get("nonNullCount")).longValue();
+		double avgFreedBytes = nonNullCount == 0 ? 0.0 : (double) totalFreedBytes / nonNullCount;
+		return new FreedBytesSummary(totalCount, totalFreedBytes, avgFreedBytes);
+	}
+
+	/** 释放字节数聚合统计响应（只读）。 */
+	public record FreedBytesSummary(long totalCount, long totalFreedBytes, double avgFreedBytes) {
+	}
 
 	private void streamJson(OutputStream out, String action, String resourceType, String from, String to,
 			boolean hasFreedBytes, Long freedBytesMin, Long freedBytesMax) throws IOException {

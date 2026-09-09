@@ -1669,3 +1669,73 @@ test('AT-61 audit log freedBytesMin/freedBytesMax range filter', async ({ reques
     headers: { 'X-Confirm-Permanent-Delete': 'true' },
   })
 })
+
+/**
+ * AT-62 freedBytes 聚合统计：GET /audit-logs/freed-bytes-summary 复用既有过滤参数返回
+ * totalCount/totalFreedBytes/avgFreedBytes，avg 分母为非空行数，空表/全 NULL/空匹配兜底 0，
+ * from>to/min>max 空聚合不报 400，非法 from/负值 400 fail fast；UI「释放字节汇总」可见。
+ * 造数同 AT-49/AT-60/AT-61：创建备份 + 触发 orphans/clean（全量跑时删残留孤儿写 freed_bytes 非 null 审计，
+ * 单跑时可能删 0 个无审计，用条件断言容忍空 DB，强语义由后端 AT-62 集成测试覆盖）。
+ */
+test('AT-62 audit log freed-bytes-summary aggregate (count/sum/avg)', async ({ request, page }) => {
+  const suffix = Date.now()
+  // 造一份合法加密备份（保证 backup-dir 有 .enc 文件可扫描）
+  const createRes = await request.post('/api/backups', {
+    headers: { 'Idempotency-Key': `e2e-at62-create-${suffix}-${crypto.randomUUID()}` },
+    data: { passphrase: `secret-${suffix}!Strong` },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+
+  // 触发一次孤儿清理（全量跑时删残留孤儿写 freed_bytes 非 null 的 BACKUP_ORPHAN_CLEANED 审计）
+  await request.post('/api/backups/orphans/clean', {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+
+  // 全量聚合 → totalCount >= 0，totalFreedBytes >= 0，avgFreedBytes >= 0
+  const res = await request.get('/api/audit-logs/freed-bytes-summary')
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.totalCount).toBeGreaterThanOrEqual(0)
+  expect(body.totalFreedBytes).toBeGreaterThanOrEqual(0)
+  expect(body.avgFreedBytes).toBeGreaterThanOrEqual(0)
+  expect(body).not.toHaveProperty('passphrase')
+
+  // avgFreedBytes：若有非空行则 avg = totalFreedBytes / 非空行数（<= totalFreedBytes 当非空行数 >= 1）
+  if (body.totalFreedBytes > 0) {
+    expect(body.avgFreedBytes).toBeLessThanOrEqual(body.totalFreedBytes)
+  }
+
+  // min > max → 空聚合不报 400，totalCount=0
+  const emptyRes = await request.get('/api/audit-logs/freed-bytes-summary?freedBytesMin=999999&freedBytesMax=0')
+  expect(emptyRes.status()).toBe(200)
+  const emptyBody = await emptyRes.json()
+  expect(emptyBody.totalCount).toBe(0)
+  expect(emptyBody.totalFreedBytes).toBe(0)
+  expect(emptyBody.avgFreedBytes).toBe(0)
+
+  // 负值 → 400 fail fast
+  const badRes = await request.get('/api/audit-logs/freed-bytes-summary?freedBytesMin=-1')
+  expect(badRes.status()).toBe(400)
+
+  // 非法 from → 400 fail fast
+  const badFrom = await request.get('/api/audit-logs/freed-bytes-summary?from=not-a-date')
+  expect(badFrom.status()).toBe(400)
+
+  // from > to → 空聚合不报 400
+  const fromGt = await request.get(
+    '/api/audit-logs/freed-bytes-summary?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z',
+  )
+  expect(fromGt.status()).toBe(200)
+  expect((await fromGt.json()).totalCount).toBe(0)
+
+  // UI：设置页审计日志区块「释放字节汇总」可见
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible()
+  await expect(page.getByText('释放字节汇总')).toBeVisible()
+
+  // 清理本次产生的备份
+  await request.delete(`/api/backups/${created.id}`, {
+    headers: { 'X-Confirm-Permanent-Delete': 'true' },
+  })
+})

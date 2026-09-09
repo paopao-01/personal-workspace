@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * AT-50 全量审计日志查询（GET /api/audit-logs 只读分页查询，可按 action/resourceType 过滤）。
@@ -1102,5 +1103,132 @@ class AuditLogQueryIntegrationTest extends AbstractIntegrationTest {
 		byte[] csvBody = exportAuditLogs("?freedBytesMin=2048&freedBytesMax=512&format=csv").getBody();
 		assertThat(csvText(csvBody).trim())
 				.isEqualTo("id,resourceType,resourceId,action,reason,freedBytes,occurredAt");
+	}
+
+	// ==================== AT-62 freedBytes 聚合统计（GET /audit-logs/freed-bytes-summary 只读聚合） ====================
+
+	/** GET /api/audit-logs/freed-bytes-summary 只读聚合（query 形如 "?action=X&freedBytesMin=N"）。 */
+	private ResponseEntity<String> fetchFreedBytesSummary(String query) {
+		return restTemplate.getForEntity(url("/audit-logs/freed-bytes-summary" + query), String.class);
+	}
+
+	@Test
+	void AT62_summaryAggregatesAllMatchingRows() {
+		// 3 条 BACKUP_ORPHAN_CLEANED（freed_bytes=512/1024/2048）+ 2 条非孤儿清理（null）
+		seedFreedBytesRangeRows();
+		ResponseEntity<String> res = fetchFreedBytesSummary("");
+		assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+		String body = res.getBody();
+		// totalCount=5（含 2 条 freed_bytes 为 null 的非孤儿清理行）
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(5);
+		// totalFreedBytes=3584（512+1024+2048，SUM 不计 NULL，COALESCE 兜底 0）
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isEqualTo(3584L);
+		// avgFreedBytes=3584/3≈1194.67（分母为 freed_bytes 非空行数 3，非 totalCount 5）
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isCloseTo(3584.0 / 3, within(0.01));
+		assertThat(body).doesNotContain("passphrase");
+	}
+
+	@Test
+	void AT62_summaryFiltersByAction() {
+		seedFreedBytesRangeRows();
+		// action=BACKUP_ORPHAN_CLEANED → 只聚合 3 条孤儿清理行
+		String body = fetchFreedBytesSummary("?action=BACKUP_ORPHAN_CLEANED").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(3);
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isEqualTo(3584L);
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isCloseTo(3584.0 / 3, within(0.01));
+	}
+
+	@Test
+	void AT62_summaryAllNullRowsReturnsZeros() {
+		seedFreedBytesRangeRows();
+		// action=BACKUP_DELETED → 1 条全 NULL 行（SUM 兜底 0，分母 COUNT(freed_bytes)=0 时 avg 兜底 0）
+		String body = fetchFreedBytesSummary("?action=BACKUP_DELETED").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(1);
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isZero();
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isZero();
+	}
+
+	@Test
+	void AT62_summaryFiltersByHasFreedBytes() {
+		seedFreedBytesRangeRows();
+		// hasFreedBytes=true → 只统计 freed_bytes IS NOT NULL 的 3 条
+		String body = fetchFreedBytesSummary("?hasFreedBytes=true").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(3);
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isEqualTo(3584L);
+	}
+
+	@Test
+	void AT62_summaryFiltersByFreedBytesMin() {
+		seedFreedBytesRangeRows();
+		// freedBytesMin=1024 → 2 条（1024+2048=3072）
+		String body = fetchFreedBytesSummary("?freedBytesMin=1024").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(2);
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isEqualTo(3072L);
+	}
+
+	@Test
+	void AT62_summaryFiltersByFreedBytesRange() {
+		seedFreedBytesRangeRows();
+		// min=512 & max=1024 → 2 条（512+1024=1536，avg=768）
+		String body = fetchFreedBytesSummary("?freedBytesMin=512&freedBytesMax=1024").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isEqualTo(2);
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isEqualTo(1536L);
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isCloseTo(768.0, within(0.01));
+	}
+
+	@Test
+	void AT62_summaryMinGreaterThanMaxReturnsZerosNot400() {
+		seedFreedBytesRangeRows();
+		// min=2048 > max=512 → 空聚合不报 400
+		String body = fetchFreedBytesSummary("?freedBytesMin=2048&freedBytesMax=512").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isZero();
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isZero();
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isZero();
+	}
+
+	@Test
+	void AT62_summaryEmptyTableReturnsZeros() {
+		// audit_log 空表（@BeforeEach 已清表）
+		String body = fetchFreedBytesSummary("").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isZero();
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isZero();
+		assertThat(JsonProbe.dbl(body, "avgFreedBytes")).isZero();
+	}
+
+	@Test
+	void AT62_summaryRejectsInvalidFrom() {
+		seedFreedBytesRangeRows();
+		assertThat(fetchFreedBytesSummary("?from=not-a-date").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT62_summaryRejectsNegativeFreedBytesMin() {
+		seedFreedBytesRangeRows();
+		assertThat(fetchFreedBytesSummary("?freedBytesMin=-1").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void AT62_summaryFromGreaterThanToReturnsZerosNot400() {
+		seedFreedBytesRangeRows();
+		// from > to → 空聚合不报 400
+		String body = fetchFreedBytesSummary("?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z").getBody();
+		assertThat(JsonProbe.intVal(body, "totalCount")).isZero();
+		assertThat(JsonProbe.lng(body, "totalFreedBytes")).isZero();
+	}
+
+	@Test
+	void AT62_summaryDoesNotMutateAnyBusinessTable() {
+		seedFreedBytesRangeRows();
+		fetchFreedBytesSummary("");
+		fetchFreedBytesSummary("?action=BACKUP_ORPHAN_CLEANED");
+		// 聚合只读：audit_log 行数不变（仍 5 条），不动 backup_record/data_export
+		Long auditCount = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log", Long.class);
+		assertThat(auditCount).isEqualTo(5L);
+		Long backupCount = jdbc.queryForObject("SELECT COUNT(*) FROM backup_record", Long.class);
+		assertThat(backupCount).isZero();
+		Long exportCount = jdbc.queryForObject("SELECT COUNT(*) FROM data_export", Long.class);
+		assertThat(exportCount).isZero();
 	}
 }

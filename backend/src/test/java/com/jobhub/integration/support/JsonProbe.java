@@ -33,6 +33,12 @@ public final class JsonProbe {
 		return node == null ? null : node.asInt();
 	}
 
+	/** 读取根字段为双精度浮点（聚合统计 avg 用）。 */
+	public static Double dbl(String json, String path) {
+		JsonNode node = node(json, path);
+		return node == null ? null : node.asDouble();
+	}
+
 	/** 读取根字段为布尔；字段缺省或 JSON null 返回 null。 */
 	public static Boolean bool(String json, String path) {
 		JsonNode node = node(json, path);

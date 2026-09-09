@@ -5,6 +5,7 @@ import type { components } from '@/api/generated/types'
 type Schemas = components['schemas']
 export type AuditLogEntry = Schemas['AuditLogEntry']
 export type PageAuditLogEntry = Schemas['PageAuditLogEntry']
+export type FreedBytesSummary = Schemas['FreedBytesSummary']
 
 export const AUDIT_LOG_KEY = ['audit-logs'] as const
 
@@ -101,4 +102,32 @@ export async function exportAuditLogs(
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+/** 聚合统计过滤条件（与查询/导出同源同过滤）。 */
+type SummaryFilters = {
+  action?: string
+  resourceType?: string
+  from?: string
+  to?: string
+  hasFreedBytes?: boolean
+  freedBytesMin?: number
+  freedBytesMax?: number
+}
+
+/** 拉取释放字节数聚合统计（只读，复用当前过滤条件，无需确认头/幂等键）。
+ *  返回 totalCount（含 NULL 行）/totalFreedBytes（SUM，NULL 不计入）/avgFreedBytes（非空行均值）。 */
+export async function fetchFreedBytesSummary(filters: SummaryFilters): Promise<FreedBytesSummary> {
+  const res = await apiClient.get<FreedBytesSummary>('/audit-logs/freed-bytes-summary', { params: filters })
+  return res.data
+}
+
+export function useFreedBytesSummary(filters: SummaryFilters) {
+  return useQuery<FreedBytesSummary, Error>({
+    queryKey: [...AUDIT_LOG_KEY, 'summary', filters.action ?? '', filters.resourceType ?? '',
+      filters.from ?? '', filters.to ?? '', filters.hasFreedBytes ?? false,
+      filters.freedBytesMin ?? '', filters.freedBytesMax ?? ''],
+    queryFn: () => fetchFreedBytesSummary(filters),
+    placeholderData: (prev) => prev,
+  })
 }

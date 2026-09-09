@@ -363,6 +363,14 @@ ABANDONED ──restore──> TODO
 - `AuditLogMapper` 复用既有只读 `selectPage(action, resourceType, from, to, hasFreedBytes, freedBytesMin, freedBytesMax, pageSize, offset)`（分批 fetch，offset 递增）与 `count`；不再使用一次性 `selectAll` 全量加载（流式后该只读方法保留不删，但导出端点不再调用）。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
 - 已知限制：OFFSET 分批随 offset 增大扫描成本上升（SQLite 需扫描跳过 offset 行），本地单用户审计量小可接受；若未来数据量显著增长可改 keyset 分批（按 `occurred_at` 锚点 + `id` 兜底）避免深翻页，超出本切片范围。
 
+**释放字节数聚合统计（只读）**：`GET /audit-logs/freed-bytes-summary` 对 `GET /audit-logs` 的全部匹配记录做释放字节数聚合统计，只读，一条 SQL 一次完成。过滤参数与查询端点完全一致：`action`、`resourceType`、`from`、`to`、`hasFreedBytes`、`freedBytesMin`、`freedBytesMax` 均可选，空/`false`/缺省=不过滤统计全量，可单独或任意组合（语义、校验、排序无关全同查询端点）。返回 `FreedBytesSummary { totalCount, totalFreedBytes, avgFreedBytes }`。
+
+- 聚合语义：`totalCount` 为匹配记录总数（`COUNT(*)`，含 `freed_bytes` 为 NULL 的非孤儿清理行）；`totalFreedBytes` 为匹配行 `freed_bytes` 的 `SUM`（`SUM(freed_bytes)`，NULL 行不计入，`COALESCE` 兜底 0，故为有释放字节行之和）；`avgFreedBytes` 为 `totalFreedBytes / COUNT(freed_bytes)`（分母为 `freed_bytes` 非空行数，非 `totalCount`，避免非孤儿清理 NULL 行稀释均值；分母为 0 时空匹配或全 NULL，`avgFreedBytes=0`，Java 端兜底不抛除零异常）。
+- 与分页查询的关系：聚合统计对全部匹配记录汇总（非当前页），与分页查询同源同过滤；不影响分页查询/导出端点的任何行为。空匹配（如过滤无结果）返回 `totalCount=0`/`totalFreedBytes=0`/`avgFreedBytes=0`。
+- 只读查询：**不写** `audit_log`、**不需** `X-Confirm-Permanent-Delete` 确认头（非销毁性）、**不需** `Idempotency-Key`（GET 幂等天然）、**不动** `backup_record`/文件系统/任何业务表。响应不含 passphrase（审计记录从不存 passphrase）。
+- `AuditLogMapper` 新增只读 `selectFreedBytesSummary(action, resourceType, from, to, hasFreedBytes, freedBytesMin, freedBytesMax)`（一条聚合 SQL，`SELECT COUNT(*), COALESCE(SUM(freed_bytes),0), COUNT(freed_bytes) FROM audit_log <where>...`，`<where>` 与 `selectPage`/`count` 完全一致，仅 SELECT 不违背「仅追加、不提供更新/删除」语义）。复用 V1 既有 `audit_log` 表，**不新增表/列/迁移/索引**。
+- 错误处理：`from`/`to` 非法格式（非 ISO-8601 UTC）返回 400；`from > to` 返回空聚合（`totalCount=0`，不报 400）；`freedBytesMin > freedBytesMax` 返回空聚合（不报 400，与 `from > to` 一致）；`freedBytesMin`/`freedBytesMax` 为负数或非整数返回 400（`minimum: 0` + Long 类型绑定校验，fail fast）。
+
 **恢复后弱口令重设提示**：`POST /backups/restore` 恢复成功后，对用户本次提交的 passphrase（已在调用栈内存中，用于解密）复用强度评估纯函数（与 §9 强度门槛同一算法，单一事实来源）做一次内存评估。**当评估未达 strong（`score<70`，即弱或中）** 时置响应 `passphraseResetRecommended=true`，提示用户该备份口令未达强、建议用强口令新建备份替换；强口令为 `false`。
 
 - 触发时机：恢复成功（`ImportService.restore` 完成、`cleanOrphans` 之后）于事务内同步评估；恢复失败（passphrase 错误、文件损坏、非合法 JSON）在到达恢复前即返回 422，不触发评估。
