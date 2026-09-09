@@ -1,5 +1,7 @@
 package com.jobhub.task.api;
 
+import com.jobhub.evidence.api.EvidenceReferenceResponse;
+import com.jobhub.evidence.domain.Evidence;
 import com.jobhub.task.application.*;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskStatus;
@@ -10,6 +12,7 @@ import jakarta.validation.constraints.Min;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api")
@@ -77,6 +80,24 @@ public class TaskController {
 			request.acceptanceCriteria(), request.verificationMethod()));
 		HttpStatus status = "LINK_EXISTING".equals(request.mode()) ? HttpStatus.OK : HttpStatus.CREATED;
 		return ResponseEntity.status(status).body(LearningTaskResponse.from(task));
+	}
+
+	@GetMapping("/tasks/{id}/evidence")
+	public List<EvidenceReferenceResponse> listEvidence(@PathVariable String id) {
+		return service.listEvidence(id).stream().map(EvidenceReferenceResponse::fromEvidence).toList();
+	}
+
+	@PostMapping("/tasks/{id}/evidence")
+	public ResponseEntity<EvidenceReferenceResponse> attachEvidence(@PathVariable String id,
+			@Valid @RequestBody TaskEvidenceAttachRequest request) {
+		Evidence evidence = service.attachEvidence(id, request.evidenceId());
+		return ResponseEntity.ok(EvidenceReferenceResponse.fromEvidence(evidence));
+	}
+
+	@DeleteMapping("/tasks/{id}/evidence/{evidenceId}")
+	public ResponseEntity<Void> detachEvidence(@PathVariable String id, @PathVariable String evidenceId) {
+		service.detachEvidence(id, evidenceId);
+		return ResponseEntity.noContent().build();
 	}
 
 	private TaskCreateCommand toCreateCommand(TaskCreateRequest request) {

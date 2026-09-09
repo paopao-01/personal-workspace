@@ -737,6 +737,38 @@ paths:
       responses:
         '200': { description: 转换成功, content: { application/json: { schema: { $ref: '#/components/schemas/LearningTask' } } } }
         '422': { $ref: '#/components/responses/IllegalTransition' }
+  /tasks/{taskId}/evidence:
+    parameters: [ { $ref: '#/components/parameters/TaskId' } ]
+    get:
+      tags: [Tasks]
+      summary: 获取任务关联的完成证据列表
+      description: 只读挂载，非状态转换。按挂载时间升序返回 EvidenceReference 数组；引用处于回收站的证据 trashed=true（界面显示"来源已删除"）。不修改 learning_task / evidence 表任何行。
+      responses:
+        '200': { description: 证据引用列表, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EvidenceReference' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Tasks]
+      summary: 为任务挂载完成证据
+      description: 只读挂载，非状态转换。INSERT OR IGNORE 静默幂等——重复挂载同一证据返回 200 不重复插入。不依赖任务状态（任何状态可挂载），不 bump learning_task.version，不修改 status / verification_*。挂载不存在的证据或任务返回 404。证据软删不联动删关联行。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskEvidenceAttachRequest' } } }
+      responses:
+        '200': { description: 挂载成功（重复挂载幂等）, content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceReference' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /tasks/{taskId}/evidence/{evidenceId}:
+    parameters: [ { $ref: '#/components/parameters/TaskId' }, { $ref: '#/components/parameters/EvidenceId' } ]
+    delete:
+      tags: [Tasks]
+      summary: 卸载任务的证据关联
+      description: 只读挂载，非状态转换。DELETE 关联行不 bump learning_task.version，不修改 status / verification_*。卸载不存在的关联返回 404（区别于挂载的幂等静默）。证据软删不联动删关联行。
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '204': { description: 卸载成功 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
 
   /skills/profile:
     get:
@@ -2724,6 +2756,11 @@ components:
         targetStatus: { $ref: '#/components/schemas/TaskStatus' }
         verificationResult: { type: string, maxLength: 5000 }
         note: { type: string, maxLength: 1000 }
+    TaskEvidenceAttachRequest:
+      type: object
+      required: [evidenceId]
+      properties:
+        evidenceId: { type: string, format: uuid, description: 要挂载的既有证据 id }
     LearningTask:
       type: object
       required: [id, title, status, version]
@@ -2742,6 +2779,7 @@ components:
         verificationMethod: { type: string, nullable: true }
         verificationResult: { type: string, nullable: true }
         outputUrl: { type: string, nullable: true }
+        evidenceRefs: { type: array, items: { $ref: '#/components/schemas/EvidenceReference' }, description: 关联完成证据（只读挂载，非状态转换；由 application 层装配） }
         version: { type: integer }
     SkillProfile:
       type: object

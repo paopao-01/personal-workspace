@@ -23,7 +23,7 @@
 | 投递 | `application_record` | `application_status_log` | 唯一的当前投递状态来源。 |
 | 面试 | `interview_schedule` | `interview_reminder`、`interview_checklist_item` | 日程状态与结果分离。 |
 | 复盘 | `interview_review` | `interview_question`、`question_knowledge` | 每场面试仅一份当前复盘。 |
-| 学习任务 | `learning_task` | `task_source` | 支持一个任务关联多个问题、岗位和知识点。 |
+| 学习任务 | `learning_task` | `task_source`、`task_evidence` | 支持一个任务关联多个问题、岗位和知识点；并挂载多条完成证据（`task_evidence`，只读挂载非状态转换）。 |
 | 运维与可追溯 | `notification`、`notification_channel`、`channel_delivery`、`audit_log`、`idempotency_record`、`data_export`、`trash_item` | — | 记录提醒、通知渠道配置与各渠道独立投递状态、关键操作、重复写入和导出。 |
 | AI（P1/V0.2） | `ai_provider`、`ai_job`、`ai_job_item` | `ai_provider`(V7)、`ai_job`(V7/V9/V12/V13/V14)、`ai_job_item`(V7/V8/V14) | 可切换供应商配置（api_key 仅本地、不导出不回显）、异步任务审计（模型/提示词版本、重试、失败原因、输出）与候选变更条目（逐项采纳/拒绝）；`RESUME_DRAFT`、`QUESTION_CLASSIFICATION`、`ANSWER_QUALITY_ANALYSIS`、`TASK_SUGGESTION` 只保存必要输入快照与候选，均不自动覆盖主数据。任务建议采纳后通过 `task_id` 回链新建学习任务。供应商仅允许永久删除未激活且未被 `ai_job` 引用的配置，已引用配置为保留审计记录。 |
 | 模拟面试（V18–V21） | `mock_interview_session` | `mock_interview_turn` | 会话保存项目不可变快照与 AI 任务审计关联；首轮生成成功后保存讲解稿和首个追问。活动会话可保存用户作答并创建 `MOCK_INTERVIEW_FOLLOW_UP` 审计任务，成功后追加下一条 AI 追问。每个用户作答轮次至多关联一个 `MOCK_INTERVIEW_ANSWER_EVALUATION` 审计任务；成功后在该轮次保存 AI 评分、反馈、依据及完成时间。评分统计与双时间窗口对比均直接聚合已保存评分，不物化能力推断；窗口对比只在每窗至少两条评分时计算平均分及其算术差值。轮次只作为会话练习内容，绝不写回项目、技能、证据、岗位要求或任务。 |
@@ -56,6 +56,7 @@
 - 学习任务建议候选复用 `ai_job_item.payload_json`；采纳后以问题版本锁创建 `learning_task` 和 `task_source`，并在 `ai_job_item.task_id` 保存回链，不自动修改问题或技能。
 - `learning_task` 完成不改变 `user_skill.self_level`，也不删除历史薄弱题。
 - `task_source` 使用多态来源：`QUESTION`、`JOB_REQUIREMENT`、`SKILL`、`KNOWLEDGE_POINT`、`MANUAL`。服务层校验 `source_id` 的真实存在性。
+- `task_evidence`（V29）仿 `skill_evidence`/`project_evidence`（V1 第 82-94 行），PK 双键 `task_id`+`evidence_id` + `created_at`，`INSERT OR IGNORE` 静默幂等（重复挂载不报错不重复插入），无 `ON DELETE CASCADE`（任务/证据软删不联动删关联行，保留引用并显示"来源已删除"，恢复后自动还原）。挂载/卸载不改变 `learning_task.version`（只读挂载非聚合根编辑，与 `task_source` 的 `insertSource` 不 bump version 一致），不修改 `status`/`verification_method`/`verification_result`/`output_url`，不修改 `evidence` 表任何行。`GET /tasks/{id}` 详情回显 `evidenceRefs`（只读投影，由 application 层 hydrate 装配，仿 `ProjectService` 装配 `evidenceRefs`）。挂载校验证据存在用 `selectByIdIncludeTrashed`（忽略软删状态，已删证据的关联保留并在恢复后自动还原，与 `project_evidence` 一致）。
 - 投递渠道与简历版本效果对比（`GET /analytics/channel-effectiveness`）是只读实时聚合，不新增任何表或外键：按 `application_record.channel`（NOT NULL 自由文本）与 `application_record.resume_version`（可空自由文本，与 `resume_version` 表无外键硬关联）的原始填写文本 `GROUP BY`，未填写简历版本归入 `null` 组。计数采用状态近似口径（见状态机 §3.1），不 JOIN `interview_schedule`，不持久化聚合结果，不输出趋势结论。
 - 投递漏斗转化时间序列（`GET /analytics/funnel`）是只读实时聚合，不新增任何表或外键、不新增迁移/索引（复用 V1 既有 `application_record`）：按投递日期 `application_record.applied_at`（TEXT 存 UTC ISO）与时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，对每桶做投递漏斗聚合。**一条 GROUP BY SQL 一次完成**：按 `granularity` 用 `<choose>` 切 bucket 表达式（`day` 用 `date(applied_at)`，`hour` 用 `strftime('%Y-%m-%dT%H:00:00Z', applied_at)`），`SELECT <bucket> AS date, COUNT(*) AS total, SUM(CASE WHEN status != 'DRAFT' THEN 1 ELSE 0 END) AS applied, SUM(CASE WHEN status IN ('INTERVIEWING','OFFER') THEN 1 ELSE 0 END) AS interviewed, SUM(CASE WHEN status = 'OFFER' THEN 1 ELSE 0 END) AS offered FROM application_record WHERE deleted_at IS NULL <if from>AND applied_at >= #{from}</if> <if to>AND applied_at <= #{to}</if> GROUP BY <bucket> ORDER BY 1 ASC`，`applied_at` 以 TEXT 存 UTC ISO，`date()`/`strftime()` 按字典序分组（与时间序一致），`applied_at >= ?`/`<= ?` 字符串比较正确。计数口径同状态机 §3.1（`applied`=`status != 'DRAFT'`、`interviewed`=`status IN ('INTERVIEWING','OFFER')`、`offered`=`status = 'OFFER'`，不 JOIN `interview_schedule`）。返回 `List<FunnelBucket>`，每桶 `{ date, total, applied, interviewed, offered, interviewRate, offerRate }`：`interviewRate`=`interviewed/applied`、`offerRate`=`offered/applied`（`applied` 为 0 时 Java 端兜底返回 0 不抛除零异常）。按 `date` 升序排列（时间正序趋势）。**不补 0 桶**：只返回有投递记录的桶，缺失日期/小时不出现，空匹配返回 `[]`。`FunnelMapper` 新增只读 `selectFunnel(from, to, granularity)` 返回 `List<Map<String, Object>>` 多行每行一桶，不新增方法以外的方法。`from`/`to` 均可选 ISO-8601 UTC，含边界，非法格式返回 400；`from > to` 返回空数组（不报 400，与 timeseries 先例一致）；`granularity` 非 `day`/`hour` 返回 400。只读不写、不需确认头/幂等键、不动 `application_record`/任何业务表。聚合只输出原始计数与转化率，不输出趋势结论、能力等级、归因或行动建议。
 
@@ -71,6 +72,7 @@
 | 面试复盘问题 | `interview_question(review_id, deleted_at)` |
 | 薄弱知识点 | `question_knowledge(knowledge_point_id, question_id)` + 问题的回答状态索引 |
 | 任务列表 | `learning_task(status, due_at, priority)` |
+| 任务证据挂载 | `task_evidence(task_id)` |
 | 最近删除 | `trash_item(expires_at, deleted_at)` |
 | 渠道投递扫描 | `channel_delivery(channel_type, status)` |
 

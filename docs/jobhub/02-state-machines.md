@@ -264,6 +264,16 @@ ABANDONED ──restore──> TODO
 
 任务完成不会自动提升技能自评等级，也不会自动把薄弱点清零。只有用户显式修改技能自评或后续面试表现改善时，相关显示才可变化。
 
+### 8.1 任务证据关联（只读挂载，非状态转换）
+
+`POST /tasks/{taskId}/evidence`、`DELETE /tasks/{taskId}/evidence/{evidenceId}`、`GET /tasks/{taskId}/evidence` 是只读挂载操作，不产生状态转移，也不修改 `learning_task` 的 `verification_method`/`verification_result`/`output_url` 三个自由文本字段或 `status`/`version`。
+
+- 挂载/卸载不依赖任务当前状态（任何状态均可挂载/卸载证据，包括 `COMPLETED`/`ABANDONED`），不触发 `transition`。
+- 重复挂载同一证据静默幂等（`INSERT OR IGNORE`），返回 200 与证据引用摘要；卸载不存在的关联返回 404；挂载不存在的证据或任务返回 404。
+- 证据软删除不联动删 `task_evidence` 关联行（与 `skill_evidence`/`project_evidence` 一致，无 `ON DELETE CASCADE`），引用方通过 `trashed` 字段显示"来源已删除"，证据恢复后自动还原。
+- 任务完成（`transition → COMPLETED`）不强制要求挂载证据；证据挂载不自动完成任务。二者独立。证据挂载不替代自由文本验证字段，二者并存。
+- 挂载/卸载不改变 `learning_task.version`（只读挂载非聚合根编辑，与 `task_source` 的 `insertSource` 不 bump version 一致）。
+
 ## 9. 备份记录
 
 备份记录为追加型只读历史，无状态转换。生成后除「密钥轮换」操作可就地更新 `salt`/`iv`/`size_bytes` 三列（见下文「密钥轮换（就地重加密）」节，受审计）外，其余字段（`id`/`created_at`/`algorithm`/`pbkdf2_iterations`/`data_export_id`/`file_path`/`file_name`）不可修改；删除为物理删除（hard delete），不可恢复，不进入最近删除（`trash_item`）：经 `DELETE /backups/{backupId}` 物理删除记录行并配套清理落盘密文文件，须携带 `X-Confirm-Permanent-Delete: true` 确认头。恢复为无状态只读转换：上传 .enc 文件 + passphrase → 解密 → 行级幂等恢复，不改写任何 `backup_record`，也不产生恢复记录。

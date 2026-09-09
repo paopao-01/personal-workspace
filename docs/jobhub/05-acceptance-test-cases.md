@@ -1208,8 +1208,39 @@ Then 返回 200 且空数组 []（from>to 空分组不报 400）
 And 全程漏斗端点只读，不写 application_record、不动任何业务表，不影响 channel-effectiveness 端点的任何行为，不落盘、无确认头/幂等键，不输出趋势结论、能力等级、归因或行动建议
 ```
 
+### AT-65 任务完成证据关联（POST /tasks/{taskId}/evidence 挂载、DELETE /tasks/{taskId}/evidence/{evidenceId} 卸载、GET /tasks/{taskId}/evidence 列表，只读挂载非状态转换，INSERT OR IGNORE 幂等，不 bump version，不动业务表，软删证据保留关联显示"来源已删除"）
+
+```gherkin
+Given 一个已存在的学习任务（status=TODO）和两条已创建的证据（evidenceA、evidenceB）
+When 用户调用 POST /api/tasks/{taskId}/evidence（body {evidenceId: evidenceA}，带 Idempotency-Key）
+Then 返回 200 且响应为 EvidenceReference，id=evidenceA，trashed=false
+And task_evidence 表存在一行 (taskId, evidenceA)
+When 用户用同一 Idempotency-Key 重复提交相同请求体
+Then 返回 200 且 id 不变（幂等回放，不重复插入），task_evidence 仍只有一行
+When 用户对同一任务再次挂载 evidenceB
+Then 返回 200，GET /api/tasks/{taskId}/evidence 返回 2 条证据，按挂载时间升序排列（evidenceA 在前）
+When 用户对另一任务 task2 挂载 evidenceA
+Then task2 的证据列表只含 evidenceA，task1 的证据列表不受影响（跨任务隔离）
+When 用户调用 DELETE /api/tasks/{taskId}/evidence/{evidenceA}
+Then 返回 204，GET /api/tasks/{taskId}/evidence 返回 1 条（evidenceB）
+When 用户再次 DELETE 同一关联
+Then 返回 404（未挂载的关联不存在，区别于挂载的幂等静默）
+When 用户挂载不存在的证据 id（随机 UUID）
+Then 返回 404（Evidence 不存在）
+When 用户挂载到不存在的任务 id
+Then 返回 404（LearningTask 不存在）
+When 用户将任务 transition 到 IN_PROGRESS 再挂载 evidenceA
+Then 返回 200（挂载不依赖任务状态，任何状态可挂载）
+When 用户将任务 transition 到 COMPLETED（不挂载任何证据也允许，verificationResult 缺省"未验证完成"）
+Then 任务 status=COMPLETED，evidenceRefs 不影响 transition 行为，证据挂载不自动完成任务
+And 全程挂载/卸载不修改 learning_task 的 version、status、verification_method、verification_result、output_url
+And 全程挂载/卸载不修改 evidence 表任何行（只读挂载，不动业务表；挂载/卸载是 append/remove 非聚合根编辑，与 task_source 一致不 bump version）
+And 软删除 evidenceA 后，已挂载 evidenceA 的任务 GET /tasks/{id} 详情 evidenceRefs 中该条 trashed=true（界面显示"来源已删除"），恢复 evidenceA 后 trashed=false（关联自动还原，无 ON DELETE CASCADE）
+And GET /api/tasks/{taskId} 详情响应含 evidenceRefs 数组（只读投影，由 application 层装配，列表接口 GET /tasks 分页不回显以避免 N+1）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-64 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-65 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

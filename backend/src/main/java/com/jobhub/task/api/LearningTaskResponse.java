@@ -1,5 +1,6 @@
 package com.jobhub.task.api;
 
+import com.jobhub.evidence.api.EvidenceReferenceResponse;
 import com.jobhub.review.api.KnowledgePointResponse;
 import com.jobhub.task.domain.LearningTask;
 import com.jobhub.task.domain.TaskPriority;
@@ -22,6 +23,7 @@ public record LearningTaskResponse(
 	String verificationMethod,
 	String verificationResult,
 	String outputUrl,
+	List<EvidenceReferenceResponse> evidenceRefs,
 	long version
 ) {
 	public static LearningTaskResponse from(LearningTask task) {
@@ -40,6 +42,7 @@ public record LearningTaskResponse(
 			task.getVerificationMethod(),
 			task.getVerificationResult(),
 			task.getOutputUrl(),
+			task.getEvidenceRefs().stream().map(EvidenceReferenceResponse::fromEvidence).toList(),
 			task.getVersion()
 		);
 	}

@@ -41,6 +41,7 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM notification_channel");
 		// user_setting 为 V1 种子行，不删除；重置为种子值，保证依赖默认提醒节点的用例互不串扰
 		jdbc.update("UPDATE user_setting SET time_zone='Asia/Shanghai', default_reminder_offsets_json='[1440,120,30]', version=0");
+		jdbc.execute("DELETE FROM task_evidence");
 		jdbc.execute("DELETE FROM task_source");
 		jdbc.execute("DELETE FROM learning_task");
 		jdbc.execute("DELETE FROM question_knowledge");
@@ -58,6 +59,7 @@ public class DatabaseCleaner {
 		jdbc.execute("DELETE FROM project_evidence");
 		jdbc.execute("DELETE FROM skill_evidence");
 		jdbc.execute("DELETE FROM evidence_attachment");
+		jdbc.execute("DELETE FROM task_evidence");
 		jdbc.execute("DELETE FROM evidence");
 		jdbc.execute("DELETE FROM project");
 		jdbc.execute("DELETE FROM user_skill");
