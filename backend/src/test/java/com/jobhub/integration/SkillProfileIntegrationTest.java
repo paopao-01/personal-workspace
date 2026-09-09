@@ -84,6 +84,112 @@ class SkillProfileIntegrationTest extends AbstractIntegrationTest {
 		assertThat(JsonProbe.arrStr(profile, "", 0, "evidenceStatus")).isEqualTo("NO_EVIDENCE");
 	}
 
+	@Test
+	void AT66_selfLevelHistoryWritesFromNullOnFirstAndFromOldOnSubsequent() {
+		String skillId = "30000000-0000-0000-0000-000000000010";
+		seedSkill(skillId, "SpringBoot");
+
+		// 首次自评：fromLevel=null（无前值），reason 持久化
+		String first = restTemplate.exchange(url("/skills/" + skillId + "/self-level"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"selfLevel\":3,\"reason\":\"能讲清自动装配\"}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class).getBody();
+		assertThat(JsonProbe.lng(first, "selfLevel")).isEqualTo(3);
+
+		String historyAfterFirst = restTemplate.getForEntity(
+			url("/skills/" + skillId + "/self-level/history"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(historyAfterFirst, "")).isEqualTo(1);
+		assertThat(JsonProbe.str(historyAfterFirst, "0.fromLevel")).isEqualTo("null");
+		assertThat(JsonProbe.intVal(historyAfterFirst, "0.toLevel")).isEqualTo(3);
+		assertThat(JsonProbe.arrStr(historyAfterFirst, "", 0, "reason")).isEqualTo("能讲清自动装配");
+		assertThat(JsonProbe.arrStr(historyAfterFirst, "", 0, "occurredAt")).isNotNull();
+		assertThat(JsonProbe.arrStr(historyAfterFirst, "", 0, "id")).isNotNull();
+	}
+
+	@Test
+	void AT66_subsequentUpdateWritesFromOldLevel() {
+		String skillId = "30000000-0000-0000-0000-000000000011";
+		seedSkill(skillId, "Docker");
+		putSelfLevel(skillId, 3, 0, "first");
+		// 再次自评 fromLevel=旧值 3 → toLevel=5
+		String updated = restTemplate.exchange(url("/skills/" + skillId + "/self-level"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"selfLevel\":5}",
+				"Idempotency-Key", TestFixtures.newKey(), "If-Match-Version", "0"), String.class).getBody();
+		assertThat(JsonProbe.lng(updated, "selfLevel")).isEqualTo(5);
+
+		String history = restTemplate.getForEntity(
+			url("/skills/" + skillId + "/self-level/history"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(history, "")).isEqualTo(2);
+		// 升序：首条 from=null→3，次条 from=3→5
+		assertThat(JsonProbe.str(history, "0.fromLevel")).isEqualTo("null");
+		assertThat(JsonProbe.intVal(history, "0.toLevel")).isEqualTo(3);
+		assertThat(JsonProbe.intVal(history, "1.fromLevel")).isEqualTo(3);
+		assertThat(JsonProbe.intVal(history, "1.toLevel")).isEqualTo(5);
+		// 第二次 PUT 未带 reason，历史行 reason 为 null
+		assertThat(JsonProbe.str(history, "1.reason")).isEqualTo("null");
+	}
+
+	@Test
+	void AT66_idempotencyReplayDoesNotDuplicateHistory() {
+		String skillId = "30000000-0000-0000-0000-000000000012";
+		seedSkill(skillId, "Kubernetes");
+		String key = TestFixtures.newKey();
+		restTemplate.exchange(url("/skills/" + skillId + "/self-level"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"selfLevel\":4}", "Idempotency-Key", key, "If-Match-Version", "0"),
+			String.class);
+		// 用同一 Idempotency-Key 重放
+		restTemplate.exchange(url("/skills/" + skillId + "/self-level"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders("{\"selfLevel\":4}", "Idempotency-Key", key, "If-Match-Version", "0"),
+			String.class);
+		String history = restTemplate.getForEntity(
+			url("/skills/" + skillId + "/self-level/history"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(history, "")).isEqualTo(1);
+	}
+
+	@Test
+	void AT66_unknownSkillReturns404() {
+		ResponseEntity<String> resp = restTemplate.getForEntity(
+			url("/skills/99999999-9999-9999-9999-999999999999/self-level/history"), String.class);
+		assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+	}
+
+	@Test
+	void AT66_skillWithNoHistoryReturnsEmptyArray() {
+		String skillId = "30000000-0000-0000-0000-000000000013";
+		seedSkill(skillId, "RabbitMQ");
+		ResponseEntity<String> resp = restTemplate.getForEntity(
+			url("/skills/" + skillId + "/self-level/history"), String.class);
+		assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(JsonProbe.arraySize(resp.getBody(), "")).isEqualTo(0);
+	}
+
+	@Test
+	void AT66_historyDoesNotAffectThreeDimensionIndependenceAndVersionLogic() {
+		String skillId = "30000000-0000-0000-0000-000000000014";
+		seedSkill(skillId, "Redis");
+		// 首次自评创建记录 version=0、selfLevel=2
+		putSelfLevel(skillId, 2, 0, null);
+		// 二次更新仍以 version=0 作乐观锁基线（首次创建为初始版本 0），更新后 version=1、selfLevel=4
+		putSelfLevel(skillId, 4, 0, null);
+		// 三维度独立：evidence_status 仍 NO_EVIDENCE；version 由乐观锁管理递增
+		String profile = restTemplate.getForEntity(url("/skills/profile"), String.class).getBody();
+		assertThat(JsonProbe.lng(profile, "0.selfLevel")).isEqualTo(4);
+		assertThat(JsonProbe.arrStr(profile, "", 0, "evidenceStatus")).isEqualTo("NO_EVIDENCE");
+		assertThat(JsonProbe.lng(profile, "0.version")).isEqualTo(1);
+		// 历史两条，version 递增逻辑不受历史写入影响
+		String history = restTemplate.getForEntity(
+			url("/skills/" + skillId + "/self-level/history"), String.class).getBody();
+		assertThat(JsonProbe.arraySize(history, "")).isEqualTo(2);
+	}
+
+	private void putSelfLevel(String skillId, int level, int version, String reason) {
+		String body = reason != null
+				? "{\"selfLevel\":" + level + ",\"reason\":\"" + reason + "\"}"
+				: "{\"selfLevel\":" + level + "}";
+		restTemplate.exchange(url("/skills/" + skillId + "/self-level"), HttpMethod.PUT,
+			TestFixtures.httpWithHeaders(body, "Idempotency-Key", TestFixtures.newKey(),
+				"If-Match-Version", String.valueOf(version)), String.class);
+	}
+
 	private void seedSkill(String skillId, String name) {
 		jdbc.update("INSERT INTO skill (id, name, normalized_name, category, is_system, created_at, updated_at) VALUES (?,?,?,?,1,?,?)",
 			skillId, name, name.toLowerCase() + "-profile", "后端", NOW, NOW);

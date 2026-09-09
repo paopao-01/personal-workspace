@@ -453,6 +453,10 @@ ABANDONED ──restore──> TODO
 
 `self_level`（0–5）、`evidence_status`（`NO_EVIDENCE / WEAK / VALID`）和 `interview_performance` 是相互独立的字段。修改任一字段不得自动覆盖另外两项；JD 差距与任务完成都不能直接修改 `self_level`。
 
+#### 8.1.1 技能自评历史（追加写，非状态转换）
+
+`user_skill_self_level_history` 记录每次 PUT `/skills/{skillId}/self-level` 成功后的自评等级变更，追加写（append-only），不 UPDATE/DELETE。首次自评 `fromLevel` 为 null（无前值），后续更新 `fromLevel` 为旧值、`toLevel` 为新值；`reason` 持久化于历史行（nullable）。`GET /skills/{skillId}/self-level/history` 只读列表，按 `occurred_at` 升序（时间正序趋势，区别于 `GET /audit-logs` 的 DESC 最新优先用途）。技能不存在返回 404；技能存在但从未自评返回 `[]`（只返有记录的条目，不补缺失）。幂等：PUT 端点的 `Idempotency-Key` 经全局 `IdempotencyInterceptor` 拦截重放不重复写历史行（与既有 self-level 幂等一致），`idempotency_key` 列存下用于追溯。不回填 V30 前已发生的自评（只 V30 后的 PUT 才写历史）；不改 PUT 响应 schema（仍返回 `SkillProfile`）；不影响 `user_skill.version` 递增逻辑与三维度独立性（历史只跟踪 `self_level`，不动 `evidence_status`/`interview_performance`）。
+
 ### 8.2 软删除与最近删除
 
 ```text

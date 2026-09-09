@@ -23,8 +23,11 @@ export function useUpdateSelfLevel() {
     { skillId: string; version: number; body: SelfLevelUpdateRequest }
   >({
     mutationFn: ({ skillId, version, body }) => updateSelfLevel(skillId, version, body),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['skills', 'profile'] })
+      queryClient.invalidateQueries({
+        queryKey: ['skills', 'self-level-history', variables.skillId],
+      })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })

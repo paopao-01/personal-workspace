@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { isApiError, isNetworkError } from '@/api/errors'
 import {
   useSkillProfiles,
+  useSelfLevelHistory,
 } from '@/api/skills/useSkillQueries'
 import { useCreateSkill, useUpdateSelfLevel } from '@/api/skills/useSkillMutations'
 import type { SkillProfile } from '@/api/skills/skillApi'
@@ -18,6 +19,105 @@ import {
 } from '@/features/skills/skillLabels'
 
 const LEVEL_OPTIONS = [0, 1, 2, 3, 4, 5]
+
+function SelfLevelHistorySection({ skill }: { skill: SkillProfile }) {
+  const [open, setOpen] = useState(false)
+  const historyQuery = useSelfLevelHistory(skill.skillId, open)
+
+  if (!open) {
+    return (
+      <div className="requirement-actions" style={{ marginTop: 4 }}>
+        <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(true)}>
+          查看自评历史
+        </Button>
+      </div>
+    )
+  }
+
+  if (historyQuery.isLoading) {
+    return (
+      <div className="requirement-actions" style={{ marginTop: 4 }}>
+        <Spinner label="加载自评历史…" />
+        <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(false)}>
+          收起
+        </Button>
+      </div>
+    )
+  }
+
+  const entries = historyQuery.data ?? []
+  return (
+    <div className="requirement-actions" style={{ marginTop: 4, flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="requirement-raw" style={{ fontSize: 13, fontWeight: 500 }}>
+          自评历史
+        </span>
+        <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(false)}>
+          收起
+        </Button>
+      </div>
+      {entries.length === 0 ? (
+        <EmptyState icon="📜" text="暂无自评历史" />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className="requirement-meta" style={{ fontSize: 13 }}>
+            等级轨迹：
+            {entries.map((entry, index) => {
+              const fromLabel =
+                entry.fromLevel === null || entry.fromLevel === undefined
+                  ? '—'
+                  : selfLevelLabel(entry.fromLevel)
+              const arrow = index === 0 ? '' : ' → '
+              return (
+                <span key={entry.id}>
+                  {arrow}
+                  {fromLabel} → {selfLevelLabel(entry.toLevel)}
+                </span>
+              )
+            })}
+          </div>
+          <table className="meta-table" style={{ width: '100%', fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>时间</th>
+                <th style={{ textAlign: 'left' }}>变化</th>
+                <th style={{ textAlign: 'left' }}>理由</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => {
+                const fromLabel =
+                  entry.fromLevel === null || entry.fromLevel === undefined
+                    ? '—'
+                    : selfLevelLabel(entry.fromLevel)
+                return (
+                  <tr key={entry.id}>
+                    <td>{formatUtc(entry.occurredAt)}</td>
+                    <td>
+                      {fromLabel} → {selfLevelLabel(entry.toLevel)}
+                    </td>
+                    <td>{entry.reason ?? '—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatUtc(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleString('zh-CN', { hour12: false })
+  } catch {
+    return iso
+  }
+}
 
 export function SkillsPage() {
   const skillsQuery = useSkillProfiles()
@@ -167,6 +267,7 @@ export function SkillsPage() {
                       保存
                     </Button>
                   </div>
+                  <SelfLevelHistorySection skill={skill} />
                 </div>
               ))}
             </div>

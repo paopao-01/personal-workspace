@@ -17,7 +17,7 @@
 | 聚合 | 主表 | 从表/关联表 | 说明 |
 |---|---|---|---|
 | 用户设置 | `user_profile` | `user_setting` | 本地单用户仅一条用户记录。 |
-| 技能与证据 | `skill`、`user_skill`、`project`、`evidence` | `skill_alias`、`skill_evidence`、`project_evidence` | 技能自评、证据状态和面试表现独立保存。 |
+| 技能与证据 | `skill`、`user_skill`、`project`、`evidence` | `skill_alias`、`skill_evidence`、`project_evidence`、`user_skill_self_level_history` | 技能自评、证据状态和面试表现独立保存；自评等级变更追加写历史（V30）。 |
 | 附件证据引用 | `evidence_attachment` | — | 一条证据可维护多条本地路径或外部链接及人工填写的类型、大小、说明；只保存引用元数据，不保存或读取文件内容。 |
 | 岗位 | `job_posting` | `job_requirement`、`requirement_skill`、`requirement_match` | JD 更新导致要求重新确认，不删除历史依据。 |
 | 投递 | `application_record` | `application_status_log` | 唯一的当前投递状态来源。 |
@@ -59,6 +59,7 @@
 - `task_evidence`（V29）仿 `skill_evidence`/`project_evidence`（V1 第 82-94 行），PK 双键 `task_id`+`evidence_id` + `created_at`，`INSERT OR IGNORE` 静默幂等（重复挂载不报错不重复插入），无 `ON DELETE CASCADE`（任务/证据软删不联动删关联行，保留引用并显示"来源已删除"，恢复后自动还原）。挂载/卸载不改变 `learning_task.version`（只读挂载非聚合根编辑，与 `task_source` 的 `insertSource` 不 bump version 一致），不修改 `status`/`verification_method`/`verification_result`/`output_url`，不修改 `evidence` 表任何行。`GET /tasks/{id}` 详情回显 `evidenceRefs`（只读投影，由 application 层 hydrate 装配，仿 `ProjectService` 装配 `evidenceRefs`）。挂载校验证据存在用 `selectByIdIncludeTrashed`（忽略软删状态，已删证据的关联保留并在恢复后自动还原，与 `project_evidence` 一致）。
 - 投递渠道与简历版本效果对比（`GET /analytics/channel-effectiveness`）是只读实时聚合，不新增任何表或外键：按 `application_record.channel`（NOT NULL 自由文本）与 `application_record.resume_version`（可空自由文本，与 `resume_version` 表无外键硬关联）的原始填写文本 `GROUP BY`，未填写简历版本归入 `null` 组。计数采用状态近似口径（见状态机 §3.1），不 JOIN `interview_schedule`，不持久化聚合结果，不输出趋势结论。
 - 投递漏斗转化时间序列（`GET /analytics/funnel`）是只读实时聚合，不新增任何表或外键、不新增迁移/索引（复用 V1 既有 `application_record`）：按投递日期 `application_record.applied_at`（TEXT 存 UTC ISO）与时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，对每桶做投递漏斗聚合。**一条 GROUP BY SQL 一次完成**：按 `granularity` 用 `<choose>` 切 bucket 表达式（`day` 用 `date(applied_at)`，`hour` 用 `strftime('%Y-%m-%dT%H:00:00Z', applied_at)`），`SELECT <bucket> AS date, COUNT(*) AS total, SUM(CASE WHEN status != 'DRAFT' THEN 1 ELSE 0 END) AS applied, SUM(CASE WHEN status IN ('INTERVIEWING','OFFER') THEN 1 ELSE 0 END) AS interviewed, SUM(CASE WHEN status = 'OFFER' THEN 1 ELSE 0 END) AS offered FROM application_record WHERE deleted_at IS NULL <if from>AND applied_at >= #{from}</if> <if to>AND applied_at <= #{to}</if> GROUP BY <bucket> ORDER BY 1 ASC`，`applied_at` 以 TEXT 存 UTC ISO，`date()`/`strftime()` 按字典序分组（与时间序一致），`applied_at >= ?`/`<= ?` 字符串比较正确。计数口径同状态机 §3.1（`applied`=`status != 'DRAFT'`、`interviewed`=`status IN ('INTERVIEWING','OFFER')`、`offered`=`status = 'OFFER'`，不 JOIN `interview_schedule`）。返回 `List<FunnelBucket>`，每桶 `{ date, total, applied, interviewed, offered, interviewRate, offerRate }`：`interviewRate`=`interviewed/applied`、`offerRate`=`offered/applied`（`applied` 为 0 时 Java 端兜底返回 0 不抛除零异常）。按 `date` 升序排列（时间正序趋势）。**不补 0 桶**：只返回有投递记录的桶，缺失日期/小时不出现，空匹配返回 `[]`。`FunnelMapper` 新增只读 `selectFunnel(from, to, granularity)` 返回 `List<Map<String, Object>>` 多行每行一桶，不新增方法以外的方法。`from`/`to` 均可选 ISO-8601 UTC，含边界，非法格式返回 400；`from > to` 返回空数组（不报 400，与 timeseries 先例一致）；`granularity` 非 `day`/`hour` 返回 400。只读不写、不需确认头/幂等键、不动 `application_record`/任何业务表。聚合只输出原始计数与转化率，不输出趋势结论、能力等级、归因或行动建议。
+- 技能自评历史（`user_skill_self_level_history`，V30）仿 `application_status_log`（V1 第 174-182 行）追加写只读历史，记录每次 PUT `/skills/{skillId}/self-level` 成功后的自评等级变更。`id` PK + `user_skill_id` FK + `from_level`（nullable，首次自评无前值）+ `to_level`（NOT NULL，0–5）+ `reason`（nullable，持久化用户填写理由）+ `idempotency_key`（nullable，追溯用）+ `occurred_at`（UTC ISO）。追加写（append-only），不 UPDATE/DELETE，不回填 V30 前已发生的自评。首次自评 `from_level` 为 null，后续更新 `from_level` 为旧值。`SkillProfileMapper` 新增 `insertHistory`（追加写）+ `selectHistoryBySkillId`（只读列表）。`GET /skills/{skillId}/self-level/history` 按 `occurred_at` 升序返回（时间正序趋势），技能不存在 404，技能存在但从未自评返回 `[]`（不补缺失）。幂等由 PUT 端点 `Idempotency-Key` 经全局 `IdempotencyInterceptor` 保证（重放不重复写历史行）。不改变 `user_skill.version` 递增逻辑与三维度独立性（历史只跟踪 `self_level`，不动 `evidence_status`/`interview_performance`），不改 PUT 响应 schema（仍返回 `SkillProfile`）。索引 `idx_usself_history(user_skill_id, occurred_at)` 支持按技能升序查询。
 
 ## 4. 索引与查询支持
 
@@ -73,6 +74,7 @@
 | 薄弱知识点 | `question_knowledge(knowledge_point_id, question_id)` + 问题的回答状态索引 |
 | 任务列表 | `learning_task(status, due_at, priority)` |
 | 任务证据挂载 | `task_evidence(task_id)` |
+| 技能自评历史 | `user_skill_self_level_history(user_skill_id, occurred_at)` |
 | 最近删除 | `trash_item(expires_at, deleted_at)` |
 | 渠道投递扫描 | `channel_delivery(channel_type, status)` |
 

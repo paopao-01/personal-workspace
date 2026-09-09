@@ -5,9 +5,19 @@ type Schemas = components['schemas']
 export type SkillProfile = Schemas['SkillProfile']
 export type SkillCreateRequest = Schemas['SkillCreateRequest']
 export type SelfLevelUpdateRequest = Schemas['SelfLevelUpdateRequest']
+export type SelfLevelHistoryEntry = Schemas['SelfLevelHistoryEntry']
 
 export async function listSkillProfiles(): Promise<SkillProfile[]> {
   const res = await apiClient.get<SkillProfile[]>('/skills/profile')
+  return res.data
+}
+
+export async function listSelfLevelHistory(
+  skillId: string,
+): Promise<SelfLevelHistoryEntry[]> {
+  const res = await apiClient.get<SelfLevelHistoryEntry[]>(
+    `/skills/${skillId}/self-level/history`,
+  )
   return res.data
 }
 

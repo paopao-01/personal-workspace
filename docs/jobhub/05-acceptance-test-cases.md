@@ -1239,8 +1239,32 @@ And 软删除 evidenceA 后，已挂载 evidenceA 的任务 GET /tasks/{id} 详�
 And GET /api/tasks/{taskId} 详情响应含 evidenceRefs 数组（只读投影，由 application 层装配，列表接口 GET /tasks 分页不回显以避免 N+1）
 ```
 
+### AT-66 技能自评历史与趋势（GET /skills/{skillId}/self-level/history 只读列表，PUT self-level 时追加写历史，按 occurred_at 升序，reason 持久化，不动三维度独立性，不回填历史）
+
+```gherkin
+Given 一个已存在的技能（skillA，尚无 user_skill 记录，selfLevel=null）
+When 用户调用 PUT /api/skills/{skillId}/self-level（body {selfLevel:3, reason:"能讲清持久化"}，If-Match-Version:0，带 Idempotency-Key）
+Then 返回 200 且响应 selfLevel=3（SkillProfile 不变，PUT 响应 schema 不改）
+And user_skill_self_level_history 表存在一行，fromLevel=null（首次自评无前值），toLevel=3，reason="能讲清持久化"，occurredAt 非空
+When 用户再次 PUT 同一技能（body {selfLevel:5}，If-Match-Version:0，带新 Idempotency-Key）
+Then 返回 200，selfLevel=5，version=1
+And user_skill_self_level_history 表存在两行，第二行 fromLevel=3（旧值），toLevel=5
+When 用户调用 GET /api/skills/{skillId}/self-level/history
+Then 返回 200 且为长度 2 的数组，按 occurredAt 升序（时间正序趋势，第一行 fromLevel=null→toLevel=3，第二行 fromLevel=3→toLevel=5）
+And 每条含 id（uuid）/fromLevel/toLevel/reason/occurredAt 字段
+When 用户用同一 Idempotency-Key 重放首次 PUT 请求
+Then 返回 200 且为首次缓存响应（幂等回放），user_skill_self_level_history 仍只有两行（不重复写历史行）
+When 用户查询不存在的技能 id（随机 UUID）的 history
+Then 返回 404（技能不存在）
+When 用户查询存在但从未自评的技能 history
+Then 返回 200 且为空数组 []（只返有记录的条目，不补缺失）
+And 全程 history 写入不修改 evidence_status（仍 NO_EVIDENCE）、不修改 interview_performance、不改变三维度独立性（§8.1）
+And 全程 history 写入不影响 user_skill.version 的递增逻辑（version 由 PUT self-level 乐观锁管理，历史行只追加不 bump）
+And 全程 reason 持久化于历史行（nullable，无理由时为 null）
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-65 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-66 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

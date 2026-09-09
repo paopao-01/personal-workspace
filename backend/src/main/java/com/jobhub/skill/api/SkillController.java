@@ -31,11 +31,18 @@ public class SkillController {
 	@PutMapping("/skills/{skillId}/self-level")
 	public ResponseEntity<SkillProfileResponse> updateSelfLevel(@PathVariable String skillId,
 			@RequestHeader(value = "If-Match-Version", required = false) Long version,
+			@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
 			@Valid @RequestBody SelfLevelUpdateRequest request) {
 		if (version == null) {
 			return ResponseEntity.badRequest().build();
 		}
-		SkillProfile profile = service.updateSelfLevel(skillId, version, request.selfLevel());
+		SkillProfile profile = service.updateSelfLevel(skillId, version, request.selfLevel(),
+				request.reason(), idempotencyKey);
 		return ResponseEntity.ok(SkillProfileResponse.from(profile));
+	}
+
+	@GetMapping("/skills/{skillId}/self-level/history")
+	public List<SelfLevelHistoryEntryResponse> selfLevelHistory(@PathVariable String skillId) {
+		return SelfLevelHistoryEntryResponse.fromList(service.listSelfLevelHistory(skillId));
 	}
 }
