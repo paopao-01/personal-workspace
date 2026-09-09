@@ -1183,8 +1183,33 @@ Then 返回 400（from 非 ISO-8601 UTC，写流前 fail fast，不开始写响�
 And 全程后端不写文件系统（无 data/exports 下审计导出文件残留），不创建 data_export 记录，不动 audit_log/backup_record 表
 ```
 
+### AT-64 投递漏斗转化时间序列（GET /analytics/funnel 只读分组聚合，按 applied_at 与 granularity 分组，返回 FunnelBucket 数组，复用 §3.1 口径，不补 0 桶，按 date 升序）
+
+```gherkin
+Given application_record 表存在多条非软删投递（applied_at 跨多个日期与小时，status 覆盖 DRAFT/APPLIED/INTERVIEWING/OFFER/REJECTED）
+When 用户调用 GET /api/analytics/funnel
+Then 返回 200 且响应为 FunnelBucket 数组，按 date 升序排列
+And 每桶 { date, total, applied, interviewed, offered, interviewRate, offerRate }：date 为 day 粒度分组键（如 2026-09-07，缺省 granularity=day）
+And 同一日期的投递归入同一桶，total 为该桶全部非软删投递数（COUNT(*) 含 DRAFT），applied 为 status != DRAFT 的数（漏斗顶部）
+And interviewed 为 status IN (INTERVIEWING, OFFER) 的数，offered 为 status = OFFER 的数
+And interviewRate = interviewed / applied（applied 为 0 时 0 不抛除零异常），offerRate = offered / applied
+And 只返回有投递记录的桶，缺失日期不出现（不补 0 桶），空表或无匹配返回 []
+And 软删投递（deleted_at 非空）不计入，DRAFT 行不计入 applied 但计入 total
+When 用户调用 GET /api/analytics/funnel?granularity=hour
+Then 返回 200 且按小时分桶，date 为如 2026-09-07T13:00:00Z 的分组键，按 date 升序排列
+When 用户调用 GET /api/analytics/funnel?from=ISO&to=ISO
+Then 返回 200 且只对 applied_at 在 [from, to] 内的投递分桶
+When 用户调用 GET /api/analytics/funnel?granularity=invalid
+Then 返回 400 VALIDATION_ERROR（granularity 非 day/hour fail fast）
+When 用户调用 GET /api/analytics/funnel?from=not-a-date
+Then 返回 400 VALIDATION_ERROR（非法 from 格式 fail fast）
+When 用户调用 GET /api/analytics/funnel?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z
+Then 返回 200 且空数组 []（from>to 空分组不报 400）
+And 全程漏斗端点只读，不写 application_record、不动任何业务表，不影响 channel-effectiveness 端点的任何行为，不落盘、无确认头/幂等键，不输出趋势结论、能力等级、归因或行动建议
+```
+
 ## 8. 发布门槛
 
-- AT-01 至 AT-63 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
+- AT-01 至 AT-64 必须全部通过；状态转换和数据安全场景不得以人工口头验证替代自动化测试。
 - 后端集成测试必须在临时 SQLite 数据库中执行迁移；前端端到端测试必须覆盖 AT-01、AT-09、AT-11、AT-15、AT-18、AT-20。
 - 合并前运行 OpenAPI 引用校验、数据库迁移测试、后端测试和前端静态检查；任一失败不得发布。

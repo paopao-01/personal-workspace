@@ -150,6 +150,10 @@
 
 按投递日期范围（可选）筛选，展示两张原始计数表：按投递渠道（`application_record.channel` 原始填写文本）分组、按简历版本（`application_record.resume_version` 原始填写文本，未填写归为「未指定版本」）分组。每组展示投递数、面试数、Offer 数原始计数；Offer 率仅在样本充足（`applicationCount >= 2`）时显示，否则显示「信息不足」。页面明确标注：计数采用状态近似口径（面试数 = `INTERVIEWING`/`OFFER`，Offer 数 = `OFFER`），不 JOIN 面试记录；渠道与版本按原始填写文本分组，不做归一化或去重；不输出趋势结论、能力等级、归因或行动建议。
 
+### P08C 投递漏斗转化趋势 `/analytics/funnel`
+
+按投递日期范围（可选 `from`/`to`，`datetime-local`，留空=不过滤，前端将本地时间转 UTC ISO 后提交）与时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）筛选，以 `GET /api/analytics/funnel?from=ISO&to=ISO&granularity=day|hour`（只读，无需确认头与幂等键）拉取按 `applied_at` 分组的时间序列。按 `date` 升序展示表格，列含「日期」（`day` 粒度如 `2026-09-07`、`hour` 粒度如 `2026-09-07T13:00:00Z`）、「投递数」（`applied`，`status != 'DRAFT'`，漏斗顶部）、「面试数」（`interviewed`，`status IN ('INTERVIEWING','OFFER')`）、「Offer 数」（`offered`，`status = 'OFFER'`）、「面试转化率」（`interviewRate`，百分比展示）、「Offer 转化率」（`offerRate`，百分比展示）。只展示有投递记录的桶，缺失日期/小时不补 0 行（与后端不补 0 一致）；空匹配显示「无趋势数据」。提供 `day`/`hour` 粒度切换（下拉，默认 `day`，切换重置趋势不重置其他）。页面明确标注：计数采用状态近似口径（同 P08B），不 JOIN 面试记录；分母为 `applied`（已投递），`applied` 为 0 时转化率兜底 0；不输出趋势结论、能力等级、归因或行动建议。趋势随过滤变更刷新，不改变其他状态，不落盘后端、不动任何业务表。
+
 ### P09 学习任务 `/tasks`
 
 **目标**：把薄弱点转为可验证的改进，而非仅记录待办。

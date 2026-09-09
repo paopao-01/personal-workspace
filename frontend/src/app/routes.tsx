@@ -13,6 +13,7 @@ import { InterviewReviewPage } from '@/features/reviews/InterviewReviewPage'
 import { ReviewAnalysisPage } from '@/features/reviews/ReviewAnalysisPage'
 import { WeakKnowledgePointsPage } from '@/features/reviews/WeakKnowledgePointsPage'
 import { ChannelEffectivenessPage } from '@/features/analytics/ChannelEffectivenessPage'
+import { FunnelPage } from '@/features/analytics/FunnelPage'
 import { TaskListPage } from '@/features/tasks/TaskListPage'
 import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
@@ -46,6 +47,7 @@ export function AppRouter() {
         <Route path="/interviews/:interviewId/review" element={<InterviewReviewPage />} />
         <Route path="/reviews/analysis" element={<ReviewAnalysisPage />} />
         <Route path="/analytics/channel-effectiveness" element={<ChannelEffectivenessPage />} />
+        <Route path="/analytics/funnel" element={<FunnelPage />} />
         <Route path="/knowledge-points/weak" element={<WeakKnowledgePointsPage />} />
         <Route path="/tasks" element={<TaskListPage />} />
         <Route path="/tasks/:taskId" element={<TaskDetailPage />} />

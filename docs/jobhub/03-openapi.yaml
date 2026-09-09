@@ -588,6 +588,51 @@ paths:
       responses:
         '200': { description: 渠道与版本效果原始计数, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelEffectivenessReport' } } } }
         '400': { $ref: '#/components/responses/ValidationError' }
+  /analytics/funnel:
+    get:
+      tags: [Reviews]
+      summary: 投递漏斗转化时间序列（按 applied_at 分组，返回每桶投递/面试/Offer 原始计数与转化率，只读）
+      description: |
+        按投递日期（`application_record.applied_at`）与时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，
+        对每桶做投递漏斗聚合统计（只读，一条 GROUP BY SQL 一次完成）。`from`/`to` 均可选，缺省不过滤返回全量；
+        均为 ISO-8601 UTC 字符串（含边界：`applied_at >= from`、`applied_at <= to`），非法格式返回 400。
+        返回 `FunnelBucket` 数组，每桶 `{ date, total, applied, interviewed, offered, interviewRate, offerRate }`：
+        `date` 为桶的分组键（`day` 粒度为 `date(applied_at)` 如 `2026-09-07`，`hour` 粒度为
+        `strftime('%Y-%m-%dT%H:00:00Z', applied_at)` 如 `2026-09-07T13:00:00Z`）；`total` 为该桶全部非软删投递数
+        （`COUNT(*)`，含 `DRAFT`）；`applied` 为已投递数（`status != 'DRAFT'`，漏斗顶部）；`interviewed` 为已进入面试数
+        （`status IN ('INTERVIEWING','OFFER')`，复用 §3.1 既有口径，不 JOIN `interview_schedule`）；`offered` 为已拿 Offer 数
+        （`status = 'OFFER'`）；`interviewRate` = `interviewed / applied`（`applied` 为 0 时 `0`，不抛除零异常）；
+        `offerRate` = `offered / applied`（`applied` 为 0 时 `0`）。
+        按 `date` 升序排列（时间正序，用于趋势展示）。**不补 0 桶**：只返回有投递记录的桶，缺失日期/小时不出现
+        （与 SQL `GROUP BY` 自然结果一致）；空匹配（如过滤无结果）返回 `[]`。软删投递（`deleted_at IS NOT NULL`）不计入。
+        只读查询：不写任何表、不需 `X-Confirm-Permanent-Delete`、不需 `Idempotency-Key`（GET 幂等天然）、
+        不动 `application_record`/任何业务表。`from > to` 返回空数组（不报 400，与 timeseries 先例一致）；
+        `granularity` 非 `day`/`hour` 返回 400。
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: 按投递起始时间过滤（可选，含边界 `applied_at >= from`），ISO-8601 UTC 字符串；非法格式返回 400。
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: 按投递结束时间过滤（可选，含边界 `applied_at <= to`），ISO-8601 UTC 字符串；非法格式返回 400。
+        - name: granularity
+          in: query
+          required: false
+          schema: { type: string, enum: [day, hour], default: day }
+          description: 分组粒度（可选，缺省 `day`）；`day` 按 `date(applied_at)` 分组返回如 `2026-09-07`，`hour` 按 `strftime('%Y-%m-%dT%H:00:00Z', applied_at)` 分组返回如 `2026-09-07T13:00:00Z`；非 `day`/`hour` 返回 400。
+      responses:
+        '200':
+          description: 投递漏斗转化时间序列（按 date 升序，只含有投递记录的桶）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FunnelBucket' }
+        '400': { $ref: '#/components/responses/ValidationError' }
   /knowledge-points/weak:
     get:
       tags: [Reviews]
@@ -2600,6 +2645,18 @@ components:
         interviewCount: { type: integer }
         offerCount: { type: integer }
         offerRate: { type: number, format: float, nullable: true, description: Offer 率；applicationCount < 2 时为 null（信息不足） }
+    FunnelBucket:
+      type: object
+      required: [date, total, applied, interviewed, offered, interviewRate, offerRate]
+      description: 投递漏斗转化时间序列的一桶（对 application_record 按 applied_at 与 granularity 分组后每桶的漏斗计数与转化率，只读，一条 GROUP BY SQL 一次完成；按 date 升序，只含有投递记录的桶不补 0）
+      properties:
+        date: { type: string, description: 桶的分组键；day 粒度为 date(applied_at) 如 "2026-09-07"，hour 粒度为 strftime('%Y-%m-%dT%H:00:00Z', applied_at) 如 "2026-09-07T13:00:00Z" }
+        total: { type: integer, description: 该桶全部非软删投递数（COUNT(*)，含 DRAFT） }
+        applied: { type: integer, description: 已投递数（status != DRAFT，漏斗顶部） }
+        interviewed: { type: integer, description: 已进入面试数（status IN INTERVIEWING, OFFER，复用 §3.1 口径，不 JOIN interview_schedule） }
+        offered: { type: integer, description: 已拿 Offer 数（status = OFFER） }
+        interviewRate: { type: number, format: double, description: 面试转化率 = interviewed / applied（applied 为 0 时 0，不抛除零异常） }
+        offerRate: { type: number, format: double, description: Offer 转化率 = offered / applied（applied 为 0 时 0，不抛除零异常） }
     ReviewQuestionStats:
       type: object
       required: [totalCount, fullyAnsweredCount, partiallyAnsweredCount, unansweredCount, fullyAnswered]

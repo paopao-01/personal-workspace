@@ -106,6 +106,19 @@ APPLIED / RESUME_PASSED / INTERVIEWING ──reject──> REJECTED
 
 渠道与简历版本均按 `application_record` 的 `channel`、`resume_version` 字段**原始填写文本**分组，不做归一化、合并或去重；未填写简历版本的投递归入 `resumeVersion` 为 `null` 的组。聚合只输出原始计数与可选 Offer 率，不输出趋势结论、能力等级、归因或行动建议。
 
+### 3.2 投递漏斗转化时间序列（只读，非状态转换）
+
+`GET /analytics/funnel` 是只读聚合，不产生状态转移，也不修改任何投递。按投递日期（`application_record.applied_at`）与时间粒度（`granularity`，`day` 或 `hour`，缺省 `day`）分组，对每桶做投递漏斗聚合。计数口径复用 §3.1 的状态近似口径，新增「全量桶」与「面试/Offer 转化率」：
+
+- `total`：`COUNT(*)`，`deleted_at IS NULL`（该桶全部非软删投递，含 `DRAFT`）。
+- `applied`：`status != 'DRAFT'` 且 `deleted_at IS NULL`（已投递，漏斗顶部，口径同 §3.1 `applicationCount`）。
+- `interviewed`：`status IN ('INTERVIEWING','OFFER')`（已进入面试阶段，口径同 §3.1 `interviewCount`，不 JOIN `interview_schedule`）。
+- `offered`：`status = 'OFFER'`（口径同 §3.1 `offerCount`）。
+- `interviewRate`：`applied > 0` 时为 `interviewed / applied`，否则 `0`（不抛除零异常）。
+- `offerRate`：`applied > 0` 时为 `offered / applied`，否则 `0`（不抛除零异常；与 §3.1 的 `offerRate` 不同——§3.1 在 `applicationCount < 2` 时返回 `null` 信息不足，漏斗按桶返回具体转化率，分母为 0 时兜底 0）。
+
+分桶键 `date`：`day` 粒度为 `date(applied_at)` 如 `2026-09-07`，`hour` 粒度为 `strftime('%Y-%m-%dT%H:00:00Z', applied_at)` 如 `2026-09-07T13:00:00Z`；`applied_at` 以 TEXT 存 UTC ISO，`date()`/`strftime()` 按字典序分组（与时间序一致）。按 `date` 升序排列（时间正序趋势）。**不补 0 桶**：只返回有投递记录的桶，缺失日期/小时不出现（与 SQL `GROUP BY` 自然结果一致）；空匹配返回 `[]`。`from`/`to` 均可选，ISO-8601 UTC，含边界 `applied_at >= from`/`applied_at <= to`，非法格式返回 400；`from > to` 返回空数组（不报 400，与 timeseries 先例一致）；`granularity` 非 `day`/`hour` 返回 400。只读不写、不需确认头/幂等键、不动 `application_record`/任何业务表。聚合只输出原始计数与转化率，不输出趋势结论、能力等级、归因或行动建议。
+
 ## 4. 面试日程与结果状态机
 
 ### 4.1 日程状态
